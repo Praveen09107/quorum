@@ -4,7 +4,64 @@ their own tests to this same file in their own session, per the batch's
 own documented pattern (QUORUM_GATE_SPECIFICATION.md §4)."""
 from datetime import datetime
 
-from quorum_backend.gate.validators import availability_check, deadline_conflict_check
+from quorum_backend.gate.validators import (
+    availability_check,
+    deadline_conflict_check,
+    recipient_check,
+)
+
+
+class FakeContacts:
+    def __init__(self, known: set[str]):
+        self._known = known
+
+    def is_known_contact(self, email: str) -> bool:
+        return email in self._known
+
+
+def test_recipient_check_verified_true_for_thread_participant():
+    finding = recipient_check(
+        "priya@x.com", ["priya@x.com", "me@x.com"], FakeContacts(set())
+    )
+    assert finding.evidence_state == "verified_true"
+
+
+def test_recipient_check_verified_true_for_known_contact_not_in_thread():
+    finding = recipient_check(
+        "priya@x.com", ["me@x.com"], FakeContacts({"priya@x.com"})
+    )
+    assert finding.evidence_state == "verified_true"
+
+
+def test_recipient_check_verified_false_for_unknown_non_thread_recipient():
+    finding = recipient_check(
+        "stranger@x.com", ["me@x.com", "priya@x.com"], FakeContacts({"priya@x.com"})
+    )
+    assert finding.evidence_state == "verified_false"
+
+
+def test_recipient_check_no_data_found_when_no_recipient():
+    finding = recipient_check(None, ["me@x.com"], FakeContacts(set()))
+    assert finding.evidence_state == "no_data_found"
+
+
+def test_recipient_check_flags_large_reply_all_as_no_data_found_not_hard_fail():
+    finding = recipient_check(
+        "priya@x.com",
+        ["priya@x.com", "a@x.com", "b@x.com", "c@x.com", "d@x.com", "e@x.com"],
+        FakeContacts(set()),
+        is_reply_all=True,
+    )
+    assert finding.evidence_state == "no_data_found"
+
+
+def test_recipient_check_small_reply_all_does_not_trigger_the_flag():
+    # is_reply_all=True but only 3 participants — below the >5 threshold,
+    # so this should verify normally, not get the reply-all treatment.
+    finding = recipient_check(
+        "priya@x.com", ["priya@x.com", "a@x.com", "b@x.com"], FakeContacts(set()), is_reply_all=True
+    )
+    assert finding.evidence_state == "verified_true"
 
 
 class FakeTasks:
