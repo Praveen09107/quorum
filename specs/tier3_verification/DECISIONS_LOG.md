@@ -1074,10 +1074,26 @@ Two named tests from the kickoff prompt (`test_recipient_check_verified_true_for
 
 ---
 
+### DEC-054 — `IMPL_04`: Commitment Validator — the First Clean Kickoff-Prompt Check in Four Sessions
+
+**Status:** CONFIRMED
+
+**Decision:** `commitment_check` and its `_terms_overlap` helper are real and tested. Unlike the three sessions before it, this kickoff prompt's stated signature was checked against the real spec (`IMPL_04_VALIDATOR_COMMITMENT.md`) and found accurate — no missing parameter this time. Stated plainly rather than silently, matching this project's own established precedent (`MOBILE_14` in the original spec corpus reported a clean contract check the same honest way, rather than manufacturing a finding to match a streak).
+
+An unbacked commitment resolves to `verified_false` (confidence 0.9), not merely flagged for Stage B judgment — this validator protects against a draft fabricating a promise the user never made (money, time, an obligation), a materially more dangerous failure mode than an ordinary factual error, since it puts words in the user's mouth rather than just getting a fact wrong.
+
+The term-overlap arithmetic for both new tests was hand-verified before trusting the assertions: the backed case shares 5 real terms (`reply`, `to`, `priya`, `about`, `thursday`) against the `min_shared_terms=2` threshold; the unbacked case shares 0.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **28 passed** (24 prior + 4 new: the two named plus a no-commitments case and a one-unbacked-among-several case).
+
+**Affects:** `backend/src/quorum_backend/gate/validators.py` (extended), `backend/tests/test_gate_validators_batch2.py` (extended), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-054*
+*Next entry: DEC-055*

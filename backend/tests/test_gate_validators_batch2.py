@@ -6,9 +6,42 @@ from datetime import datetime
 
 from quorum_backend.gate.validators import (
     availability_check,
+    commitment_check,
     deadline_conflict_check,
     recipient_check,
 )
+
+
+def test_commitment_check_verified_true_when_backed_by_intent():
+    finding = commitment_check(
+        draft_commitments=["I will reply to Priya about Thursday's meeting"],
+        user_stated_intent=["can you reply to Priya about Thursday"],
+    )
+    assert finding.evidence_state == "verified_true"
+
+
+def test_commitment_check_verified_false_when_unbacked():
+    finding = commitment_check(
+        draft_commitments=["I will personally cover the flight costs"],
+        user_stated_intent=["can you reply to Priya about Thursday"],
+    )
+    assert finding.evidence_state == "verified_false"
+
+
+def test_commitment_check_verified_true_when_no_commitments():
+    finding = commitment_check(draft_commitments=[], user_stated_intent=["anything"])
+    assert finding.evidence_state == "verified_true"
+
+
+def test_commitment_check_one_unbacked_among_several_still_fails():
+    finding = commitment_check(
+        draft_commitments=[
+            "I will reply to Priya about Thursday's meeting",
+            "I will personally cover the flight costs",
+        ],
+        user_stated_intent=["can you reply to Priya about Thursday"],
+    )
+    assert finding.evidence_state == "verified_false"
 
 
 class FakeContacts:

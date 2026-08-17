@@ -11,6 +11,7 @@ adapter at deployment with zero change to validator logic.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from typing import Protocol
 
@@ -129,6 +130,50 @@ def recipient_check(
         evidence_state="verified_true",
         confidence=1.0,
     )
+
+
+def commitment_check(
+    draft_commitments: list[str],
+    user_stated_intent: list[str],
+) -> Finding:
+    """Real term-overlap check between draft commitments and stated user
+    intent. Protects against a draft implying a promise the user never
+    actually made -- a fabricated commitment, not merely a factual error,
+    which is why an unbacked one is a hard verified_false, not deferred.
+    """
+    if not draft_commitments:
+        return Finding(
+            validator="CommitmentCheck",
+            claim="No commitments in draft to check",
+            evidence_state="verified_true",
+            confidence=1.0,
+        )
+
+    unbacked = [
+        c
+        for c in draft_commitments
+        if not any(_terms_overlap(c, intent) for intent in user_stated_intent)
+    ]
+
+    if not unbacked:
+        return Finding(
+            validator="CommitmentCheck",
+            claim=f"All {len(draft_commitments)} commitment(s) backed by stated user intent",
+            evidence_state="verified_true",
+            confidence=1.0,
+        )
+    return Finding(
+        validator="CommitmentCheck",
+        claim=f"{len(unbacked)} commitment(s) with no basis in stated intent: {unbacked}",
+        evidence_state="verified_false",
+        confidence=0.9,
+    )
+
+
+def _terms_overlap(a: str, b: str, min_shared_terms: int = 2) -> bool:
+    terms_a = set(re.findall(r"[a-z0-9]+", a.lower()))
+    terms_b = set(re.findall(r"[a-z0-9]+", b.lower()))
+    return len(terms_a & terms_b) >= min_shared_terms
 
 
 def availability_check(
