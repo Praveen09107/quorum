@@ -74,6 +74,63 @@ def deadline_conflict_check(
     )
 
 
+class ContactsAdapter(Protocol):
+    def is_known_contact(self, email: str) -> bool: ...
+
+
+def recipient_check(
+    recipient_email: str | None,
+    thread_participants: list[str],
+    contacts: ContactsAdapter,
+    is_reply_all: bool = False,
+) -> Finding:
+    """Real thread/contact verification, plus the reply-all hazard flag.
+
+    No recipient at all is genuinely unresolved (no_data_found, not
+    verified_true) -- unlike a missing time slot or commitment, a missing
+    recipient on an outbound action is itself worth flagging rather than
+    silently treated as nothing-to-check.
+
+    A recipient who is neither a thread participant nor a known contact is
+    a real, structural red flag -- verified_false, hard-fail. A large
+    reply-all is deliberately NOT a hard-fail (no_data_found instead) --
+    see this session's report/DECISIONS_LOG for why.
+    """
+    if recipient_email is None:
+        return Finding(
+            validator="RecipientCheck",
+            claim="No recipient in proposal",
+            evidence_state="no_data_found",
+            confidence=0.3,
+        )
+
+    in_thread = recipient_email in thread_participants
+    known = contacts.is_known_contact(recipient_email)
+
+    if not in_thread and not known:
+        return Finding(
+            validator="RecipientCheck",
+            claim=f"{recipient_email} is neither in the thread nor a known contact",
+            evidence_state="verified_false",
+            confidence=1.0,
+        )
+
+    if is_reply_all and len(thread_participants) > 5:
+        return Finding(
+            validator="RecipientCheck",
+            claim=f"Reply-all to {len(thread_participants)} participants — flagged, not blocked",
+            evidence_state="no_data_found",
+            confidence=0.5,
+        )
+
+    return Finding(
+        validator="RecipientCheck",
+        claim=f"{recipient_email} verified as {'thread participant' if in_thread else 'known contact'}",
+        evidence_state="verified_true",
+        confidence=1.0,
+    )
+
+
 def availability_check(
     proposed_start: datetime | None,
     proposed_end: datetime | None,

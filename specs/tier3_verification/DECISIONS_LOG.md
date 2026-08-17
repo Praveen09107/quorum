@@ -1060,10 +1060,24 @@ A real design question surfaced while building, worth recording precisely: `avai
 
 ---
 
+### DEC-053 — `IMPL_03`: Recipient Validator, and the Third Consecutive Kickoff-Prompt Signature Gap
+
+**Status:** CONFIRMED
+
+**Decision:** `recipient_check` and its `ContactsAdapter` Protocol are real and tested. This is the **third** consecutive session where the pasted kickoff prompt's stated signature omitted the real spec's last parameter — `is_reply_all: bool = False` here, after `buffer_minutes` (`IMPL_01`) and `tasks: TasksAdapter` (`IMPL_02`). Worth stating plainly now that it's a confirmed pattern, not a one-off: every kickoff prompt in this batch so far has dropped exactly the last parameter of the real function signature. Built to the real, 4-parameter spec each time; the discrepancy is checked and reported every session, not silently absorbed.
+
+Two named tests from the kickoff prompt (`test_recipient_check_verified_true_for_thread_participant`, `test_recipient_check_flags_large_reply_all_as_no_data_found_not_hard_fail`) matched the real spec's documented branches directly. A third named test (`test_recipient_check_verified_false_for_unknown_non_thread_recipient`) wasn't reproduced in full in the original `IMPL_03` spec document, but its behavior is unambiguous from the real function logic already built — implemented directly from that logic, not guessed.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **24 passed** (18 prior + 6 new: the three named plus a known-contact-not-in-thread case, a no-recipient case, and a small-reply-all-doesn't-trigger-the-flag case).
+
+**Affects:** `backend/src/quorum_backend/gate/validators.py` (extended), `backend/tests/test_gate_validators_batch2.py` (extended), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-053*
+*Next entry: DEC-054*
