@@ -12,12 +12,13 @@
 | Layer | Status |
 |---|---|
 | `backend/src/quorum_backend/gate/schemas.py` | Real, tested. Full `QUORUM_DATA_CONTRACTS.md` §1 schema set (`ActionType`, `EvidenceRef`, `Finding`, `Objection`, `ContextSnapshot`, `ActionProposal`, `GateVerdict`, `ResourceClaim`, `Position`, `ImpactDelta`). `NegotiationOption` deliberately not yet added — no session has needed it yet. |
-| `backend/src/quorum_backend/gate/validators.py` | Real, tested. `CalendarAdapter` + `availability_check` (`IMPL_01`). `TasksAdapter` + `deadline_conflict_check` (`IMPL_02`). `ContactsAdapter` + `recipient_check` (`IMPL_03`). `commitment_check` + `_terms_overlap` (`IMPL_04`). `pii_leak_check` (`IMPL_05`) — real, but its full integration needs `MOBILE_03`'s real flagged-span output, not yet built here; tested against synthetic spans in the meantime. `provenance_check` (`IMPL_06`) — **CRITICAL tier**, real, tested, manually reviewed for exhaustiveness (fresh-context only, no cross-model reviewer available — see `DECISIONS_LOG` DEC-056). The other 3 registry validators (`TemporalFactCheck`, `BudgetCheck`, `CoverageCheck`) are specified but not yet built here. |
-| `backend/gate/prompts.py`, `orchestration.py`, `router.py`, `agents/*`, `negotiation/*`, `auth/*`, `security/*`, `features/*` | Not yet built in this repository. |
+| `backend/src/quorum_backend/gate/validators.py` | **All 9 real Stage A validators now exist and are tested — Stage A is complete.** `budget_check`, `temporal_fact_check` (predate the numbered session sequence per the batch guide's own convention; built alongside `IMPL_07` to close this gate, since their full bodies were never assigned their own session — `budget_check`'s body specifically is a real, reasoned construction, not a copy of a given spec, since none existed). `availability_check` (`IMPL_01`). `deadline_conflict_check` (`IMPL_02`). `recipient_check` (`IMPL_03`). `commitment_check` (`IMPL_04`). `pii_leak_check` (`IMPL_05`) — full integration still needs `MOBILE_03`'s real flagged-span output, not yet built here. `provenance_check` (`IMPL_06`) — CRITICAL tier, manually reviewed (see DEC-056). `coverage_check` (`IMPL_07`) — has one honestly-documented limitation (see `DECISIONS_LOG` DEC-057): a single shared stopword satisfies the real default `min_shared_terms=1` threshold; this is the same trade-off the original spec already named and accepted, not a new open question. |
+| `backend/gate/prompts.py` | Real, but only `COVERAGE_EXTRACTION_PROMPT`/`build_coverage_extraction_prompt` (`IMPL_07`) — no literal spec text existed for this prompt anywhere in the corpus, so its wording is a real, reasoned construction, flagged as such. `CRITIC_SYSTEM_PROMPT`/`JUDGE_SYSTEM_PROMPT` deliberately not yet built — nothing needs them until `IMPL_08`. |
+| `orchestration.py`, `router.py`, `agents/*`, `negotiation/*`, `auth/*`, `security/*`, `features/*` | Not yet built in this repository. |
 | Mobile (`mobile/lib/**`) | Not yet built — zero `.dart` files exist. Flutter SDK and Android SDK are not yet installed on this machine. |
 | Infrastructure | Nothing provisioned — no Supabase project, Cloud Run service, or Upstash Redis instance exists yet. |
 | CI pipeline | Not yet built. |
-| **Backend total, this repository** | **39/39 real, passing tests** (`ruff check backend` clean). `pytest backend/tests -q` — verified live this session. |
+| **Backend total, this repository** | **53/53 real, passing tests** (`ruff check backend` clean). `pytest backend/tests -q` — verified live this session. |
 | **Mobile total, this repository** | **0** — not started. |
 
 ## Environment, confirmed real (see `quorum-environment-constraints` for full detail if reading this outside Claude Code)
@@ -32,11 +33,12 @@
 
 1. On-device primary model (Gemma 4 E4B vs. Llama 3.2 3B) — unresolved, needs Sprint 0 (`IMPL_00`), which itself needs Flutter SDK + a real or emulated Android device (≥4GB RAM) not yet set up.
 2. Flutter llama.cpp plugin selection — same, resolved by the same session.
-3. Remaining backend validators (`TemporalFactCheck`, `BudgetCheck`, `CoverageCheck`) — specified, not yet built in this repository.
-9. `backend/gate/orchestration.py` (`gate.review()`) — specified, not yet built; needs all Stage A validators first.
-10. Real demo dataset (simulated-and-real hybrid, all 5 domains) — wanted, tracked, not yet built; needs real backend/schema to load against (Phase 3 per `QUORUM_IMPLEMENTATION_STRATEGY.md`).
-11. No cloud infrastructure provisioned anywhere (Supabase/Upstash/Cloud Run/Gemini/Groq) — free-tier accounts to be created when a session first needs one.
-12. Everything else in the 46-session `IMPL_XX`/`MOBILE_XX` plan not listed above — none of it is real in this repository yet.
+3. `backend/gate/orchestration.py` (`gate.review()`) — specified, not yet built. **All 9 Stage A validators are now real** — this is genuinely unblocked, the next real session.
+4. `coverage_check`'s single-shared-stopword limitation — honestly documented (`DECISIONS_LOG` DEC-057), a real, deliberately-accepted trade-off from the original spec, not a bug — noted here only so it isn't lost, not as an action item.
+5. `budget_check`'s body was constructed from an interface signature only, no full spec ever existed for it — worth a real cross-check against the eventual live Finance domain agent (`IMPL_16`) once that exists, to confirm the reasoning still holds.
+6. Real demo dataset (simulated-and-real hybrid, all 5 domains) — wanted, tracked, not yet built; needs real backend/schema to load against (Phase 3 per `QUORUM_IMPLEMENTATION_STRATEGY.md`).
+7. No cloud infrastructure provisioned anywhere (Supabase/Upstash/Cloud Run/Gemini/Groq) — free-tier accounts to be created when a session first needs one.
+8. Everything else in the 46-session `IMPL_XX`/`MOBILE_XX` plan not listed above — none of it is real in this repository yet.
 
 ## Update protocol
 
