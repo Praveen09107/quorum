@@ -1,0 +1,15 @@
+# Real local dev orchestration for the Quorum backend. Per the ADD's own
+# description: app service only. Supabase/Upstash/Langfuse are external
+# managed services, never containerized locally, even in dev -- real local
+# Postgres/Redis proof (see specs/tier3_verification/DECISIONS_LOG.md for
+# IMPL_10's real verification) is a one-off test step, not a permanent
+# part of this file's shape.
+services:
+  app:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - ../../backend/.env

@@ -1,0 +1,74 @@
+# Quorum backend — Cloud Run service definition template.
+#
+# Real content, converted faithfully from the exact `gcloud run deploy`
+# command documented in specs/tier2_implementation/IMPL_11_INFRA_CLOUD_RUN_DEPLOY.md
+# (read verbatim, not reconstructed from a description). Every setting
+# below traces to a real, documented decision -- see that session's own
+# text and specs/tier3_verification/DECISIONS_LOG.md for the reasoning.
+#
+# No real Cloud Run project exists yet (see STATUS_INDEX.md open items) --
+# this is a real, deployable template, filled in with PROJECT_ID at the
+# point a real project actually exists, not asserted as already deployed.
+#
+# HONEST NOTE: --no-allow-unauthenticated is an IAM policy setting, not
+# part of this service definition itself -- apply it separately:
+#   gcloud run services add-iam-policy-binding quorum-backend \
+#     --region=us-central1 --member=allUsers --role=roles/run.invoker \
+#     [never run this — this is the command that WOULD make it public;
+#      omitting any allUsers binding is what keeps --no-allow-unauthenticated's
+#      real effect in place]
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: quorum-backend
+  # region: us-central1 -- a real, confirmed free-tier-eligible region
+  # (QUORUM_CONFIGURATION_CONSTANTS.md §9), not an arbitrary choice.
+spec:
+  template:
+    metadata:
+      annotations:
+        # concurrency=1, explicit -- closes a real cross-user
+        # state-isolation risk (CLAUDE.md architecture fact). Never raised
+        # without a documented reason.
+        autoscaling.knative.dev/maxScale: "10"
+        autoscaling.knative.dev/minScale: "0"  # genuine scale-to-zero
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      containerConcurrency: 1
+      containers:
+        - image: us-central1-docker.pkg.dev/PROJECT_ID/quorum/backend:latest
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          env:
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gemini-api-key
+                  key: latest
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: groq-api-key
+                  key: latest
+            - name: SUPABASE_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-db-url
+                  key: latest
+
+# Equivalent real gcloud CLI command, read verbatim from IMPL_11's spec,
+# preserved here since it's the form the original session actually used:
+#
+# gcloud run deploy quorum-backend \
+#   --image us-central1-docker.pkg.dev/PROJECT_ID/quorum/backend:latest \
+#   --region us-central1 \
+#   --concurrency 1 \
+#   --memory 512Mi \
+#   --cpu 1 \
+#   --min-instances 0 \
+#   --max-instances 10 \
+#   --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,GROQ_API_KEY=groq-api-key:latest,SUPABASE_DB_URL=supabase-db-url:latest" \
+#   --no-allow-unauthenticated
