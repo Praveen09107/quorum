@@ -1,0 +1,1 @@
+"""Package marker — see specs/tier1_foundation/QUORUM_PROJECT_STRUCTURE.md."""

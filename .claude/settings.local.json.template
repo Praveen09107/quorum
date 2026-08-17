@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"D:\\Program Files\\QUORUM\\quorum\" && *)",
+      "Read(D:\\Program Files\\QUORUM\\quorum\\**)",
+      "Bash(ruff check *)",
+      "Bash(pytest *)",
+      "Bash(git status)",
+      "Bash(git branch *)",
+      "Bash(git log *)",
+      "Bash(git diff *)"
+    ]
+  }
+}
