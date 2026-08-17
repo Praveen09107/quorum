@@ -4,7 +4,47 @@ their own tests to this same file in their own session, per the batch's
 own documented pattern (QUORUM_GATE_SPECIFICATION.md §4)."""
 from datetime import datetime
 
-from quorum_backend.gate.validators import availability_check
+from quorum_backend.gate.validators import availability_check, deadline_conflict_check
+
+
+class FakeTasks:
+    def __init__(self, committed: float):
+        self._committed = committed
+
+    def get_committed_hours_before(self, deadline: datetime) -> float:
+        return self._committed
+
+
+def test_deadline_conflict_check_verified_false_when_overcommitted():
+    tasks = FakeTasks(committed=6.0)
+    finding = deadline_conflict_check(3.0, datetime(2026, 8, 22), 8.0, tasks)
+    assert finding.evidence_state == "verified_false"  # 6+3=9 > 8 available
+
+
+def test_deadline_conflict_check_verified_true_when_within_capacity():
+    tasks = FakeTasks(committed=2.0)
+    finding = deadline_conflict_check(3.0, datetime(2026, 8, 22), 8.0, tasks)
+    assert finding.evidence_state == "verified_true"  # 2+3=5 <= 8 available
+
+
+def test_deadline_conflict_check_verified_true_when_no_commitment_claimed():
+    tasks = FakeTasks(committed=999.0)  # irrelevant — never queried meaningfully
+    finding = deadline_conflict_check(None, datetime(2026, 8, 22), 8.0, tasks)
+    assert finding.evidence_state == "verified_true"
+
+
+def test_deadline_conflict_check_verified_true_when_no_deadline():
+    tasks = FakeTasks(committed=0.0)
+    finding = deadline_conflict_check(3.0, None, 8.0, tasks)
+    assert finding.evidence_state == "verified_true"
+
+
+def test_deadline_conflict_check_exact_boundary_is_verified_true_not_false():
+    # total_needed == available exactly — the real comparison is <=, so this
+    # must be verified_true, not a false rejection at the exact limit.
+    tasks = FakeTasks(committed=5.0)
+    finding = deadline_conflict_check(3.0, datetime(2026, 8, 22), 8.0, tasks)
+    assert finding.evidence_state == "verified_true"
 
 
 class FakeCalendar:

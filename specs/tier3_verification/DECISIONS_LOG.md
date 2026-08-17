@@ -1046,10 +1046,24 @@ A real design question surfaced while building, worth recording precisely: `avai
 
 ---
 
+### DEC-052 — `IMPL_02`: Deadline Conflict Validator, and a Second Kickoff-Prompt Discrepancy Caught Before Building
+
+**Status:** CONFIRMED
+
+**Decision:** `deadline_conflict_check` and its `TasksAdapter` Protocol are real and tested. Before building, the pasted kickoff prompt's stated signature (3 parameters, no adapter) was checked directly against the real spec (`IMPL_02_VALIDATOR_DEADLINE_CONFLICT.md`) and found to omit a required fourth parameter, `tasks: TasksAdapter` — without it, the function could only compare the newly-claimed commitment against total availability in isolation, never accounting for what's already committed before the same deadline, which is the actual point of a *conflict* check. Built to the real, 4-parameter spec. This is the same category of gap as `IMPL_01`'s kickoff prompt omitting `buffer_minutes` — worth naming as a real, recurring pattern in this batch-guide source, not a one-off.
+
+`claimed_commitment_hours is None` (or `deadline is None`) returns `verified_true`, not `no_data_found` — no claim was made, so there's nothing to be uncertain about; `no_data_found` is reserved for a claim that exists but can't be confirmed or denied. Same reasoning already established for `availability_check`'s no-proposed-slot case (`DEC-051`).
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **18 passed** (13 prior + 5 new: the two named in the kickoff prompt, plus a no-claim case, a no-deadline case, and the exact `<=` boundary case).
+
+**Affects:** `backend/src/quorum_backend/gate/validators.py` (extended), `backend/tests/test_gate_validators_batch2.py` (extended), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-052*
+*Next entry: DEC-053*

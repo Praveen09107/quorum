@@ -28,6 +28,52 @@ class CalendarAdapter(Protocol):
     def list_events_in_range(self, start: datetime, end: datetime) -> list[dict]: ...
 
 
+class TasksAdapter(Protocol):
+    def get_committed_hours_before(self, deadline: datetime) -> float: ...
+
+
+def deadline_conflict_check(
+    claimed_commitment_hours: float | None,
+    deadline: datetime | None,
+    available_hours_before_deadline: float,
+    tasks: TasksAdapter,
+) -> Finding:
+    """Real remaining-hours math against task-deadline ground truth.
+
+    No claimed commitment (or no deadline) is verified_true — nothing was
+    claimed, nothing to falsify, same reasoning as availability_check's
+    "no proposed slot" case. Otherwise, the real already-committed hours
+    before this deadline (from TasksAdapter, not just the newly-claimed
+    amount alone) are added to what's newly claimed and compared against
+    real available capacity — this is what makes it a genuine *conflict*
+    check rather than a check of the new commitment in isolation.
+    """
+    if claimed_commitment_hours is None or deadline is None:
+        return Finding(
+            validator="DeadlineConflictCheck",
+            claim="No deadline-relevant time commitment in proposal",
+            evidence_state="verified_true",
+            confidence=1.0,
+        )
+
+    already_committed = tasks.get_committed_hours_before(deadline)
+    total_needed = already_committed + claimed_commitment_hours
+
+    if total_needed <= available_hours_before_deadline:
+        return Finding(
+            validator="DeadlineConflictCheck",
+            claim=f"{total_needed}h needed vs {available_hours_before_deadline}h available before {deadline}",
+            evidence_state="verified_true",
+            confidence=1.0,
+        )
+    return Finding(
+        validator="DeadlineConflictCheck",
+        claim=f"{total_needed}h needed exceeds {available_hours_before_deadline}h available before {deadline}",
+        evidence_state="verified_false",
+        confidence=1.0,
+    )
+
+
 def availability_check(
     proposed_start: datetime | None,
     proposed_end: datetime | None,
