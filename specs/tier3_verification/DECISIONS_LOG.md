@@ -1090,10 +1090,24 @@ The term-overlap arithmetic for both new tests was hand-verified before trusting
 
 ---
 
+### DEC-055 — `IMPL_05`: PII Leak Validator, and the Real Cross-Track Dependency Named Honestly
+
+**Status:** CONFIRMED
+
+**Decision:** `pii_leak_check` is real and tested. Kickoff prompt signature checked against the real spec (`IMPL_05_VALIDATOR_PII_LEAK.md`) and found accurate — second clean check in a row.
+
+`privacy_flagged_spans` is a real input, never computed inside this validator — PII detection is the Privacy Gate's job (`MOBILE_03`, on-device, Dart, not yet built in this repository), tested here against synthetic flagged spans in the meantime, matching the honest cross-track-dependency pattern the original spec named for this exact session. Detection and verification stay two separate real components deliberately: detection is genuinely complex, evolving work (regex plus SLM classification); verification here is a trivial, cheap, exact-match check. Merging them would risk this validator quietly re-implementing detection logic that drifts out of sync with the Privacy Gate's own single source of truth (`QUORUM_CONFIGURATION_CONSTANTS.md` §10.1) — the same shared-pattern-table lesson `IMPL_22`'s trace-scrubbing design already learned once.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **32 passed** (28 prior + 4 new: the two named plus a nothing-flagged case and a specific-leaked-span-identified-among-several case).
+
+**Affects:** `backend/src/quorum_backend/gate/validators.py` (extended), `backend/tests/test_gate_validators_batch2.py` (extended), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-055*
+*Next entry: DEC-056*

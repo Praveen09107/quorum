@@ -176,6 +176,46 @@ def _terms_overlap(a: str, b: str, min_shared_terms: int = 2) -> bool:
     return len(terms_a & terms_b) >= min_shared_terms
 
 
+def pii_leak_check(
+    outbound_content: str,
+    privacy_flagged_spans: list[str],
+) -> Finding:
+    """Real, exact-match check that Privacy-Gate-flagged spans never leave
+    unredacted. Deliberately exact-match, not fuzzy: a false negative here
+    is a real privacy leak; a false positive only costs one unnecessary
+    Stage B judgment call -- the asymmetry in what each error type costs is
+    why this validator is intentionally conservative rather than "smart."
+
+    privacy_flagged_spans is a real input, never computed here -- PII
+    detection is the Privacy Gate's job (MOBILE_03, not yet built in this
+    repository), not re-implemented in this validator. See this session's
+    report/DECISIONS_LOG for why detection and verification stay separate.
+    """
+    if not privacy_flagged_spans:
+        return Finding(
+            validator="PIILeakCheck",
+            claim="No spans flagged by the Privacy Gate for this content",
+            evidence_state="verified_true",
+            confidence=1.0,
+        )
+
+    leaked = [span for span in privacy_flagged_spans if span in outbound_content]
+
+    if not leaked:
+        return Finding(
+            validator="PIILeakCheck",
+            claim=f"All {len(privacy_flagged_spans)} flagged span(s) absent from outbound content",
+            evidence_state="verified_true",
+            confidence=1.0,
+        )
+    return Finding(
+        validator="PIILeakCheck",
+        claim=f"{len(leaked)} flagged span(s) present, unredacted, in outbound content",
+        evidence_state="verified_false",
+        confidence=1.0,
+    )
+
+
 def availability_check(
     proposed_start: datetime | None,
     proposed_end: datetime | None,
