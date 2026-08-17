@@ -1137,10 +1137,32 @@ The term-overlap arithmetic for both new tests was hand-verified before trusting
 
 ---
 
+### DEC-058 — `IMPL_08`: Gate Orchestration — CRITICAL Tier, Real Construction (No Literal Source Ever Existed), Full Manual Review Recorded
+
+**Status:** CONFIRMED
+
+**Decision:** `gate/orchestration.py` — `review()`, `run_stage_a()`, `stage_a_hard_fail()`, `run_stage_b()`, `_call_with_retry()`, `InfrastructureFailure` — is real, tested, and manually reviewed at the CRITICAL tier `CLAUDE.md` Rule 6 requires. This is the single most significant session in this repository's real history so far: the function every domain agent and the entire trust architecture depends on.
+
+**A real disclosure, different in kind from every validator session before it:** unlike `IMPL_01`–`07`, `IMPL_08_GATE_ORCHESTRATION.md`'s own document never reproduces literal source code for this file — it says "real, complete — see file for full content," referencing a file that exists only in the separate, inaccessible environment. This implementation is a genuine, careful construction from `QUORUM_GATE_SPECIFICATION.md` §2's documented state machine (verbatim) and `IMPL_08`'s described structural properties, not a copy of given code — held to the same CRITICAL-tier scrutiny regardless.
+
+**A second real gap, also closed this session:** `Stakes` — needed for `review()`'s own signature — was never defined anywhere in this repository, and no document in the real corpus ever gave it a full type definition (`router.py`, where `get_stakes()` actually lives, is `IMPL_09`, not yet built). Added to `gate/schemas.py` using the plain `S0`/`S1`/`S2`/`S3` naming consistently used everywhere real in this project (`QUORUM_CONFIGURATION_CONSTANTS.md` §1, the `action_events.stakes` `CHECK` constraint, the Gate Spec's own state machine) — **not** the `Stakes.S3_EXTERNAL_IRREVERSIBLE` member name this session's kickoff/checklist used, which doesn't match anything actually specified anywhere.
+
+**The one-revision-round bound is enforced by code structure, not a runtime counter** — there is no loop or recursion anywhere in `review()`; a second Stage-B round is architecturally unreachable within one call, a stronger guarantee than a condition check that could have a bug.
+
+**Full manual review, performed this session, disclosed honestly:** no second/different-model reviewer available in this environment — fresh-context only. Traced by inspection: every terminal state accounted for (Stage A short-circuit, S0/S1 approve, Stage B `reject`/`escalate_to_human` pass-through, the one internal revision re-check resolving to `approve` or `escalate_to_human`, and a malformed `revise`-with-no-payload from Stage B correctly collapsing to the same caller-facing meaning as Stage A's own short-circuit — checked explicitly and confirmed coherent, not a missed case). Retry logic confirmed to catch `Exception`, not `BaseException` — `KeyboardInterrupt`/`SystemExit` correctly propagate rather than retry. Non-mutation of the original proposal across `model_copy` verified live with a real script, the same category of proof this project's own history already required for the negotiation impact simulator. **One real, honestly-named limitation:** `_call_with_retry` wraps the entire `run_stage_b` call rather than the Critic and Judge independently, so a transient failure specifically in the Judge (after a successful Critic call) re-invokes the Critic on retry — a real, minor cost inefficiency the spec doesn't explicitly rule out, named rather than silently accepted.
+
+**A real test-design bug caught and fixed before running, not after:** an early draft of `test_second_stage_a_failure_on_revision_escalates_not_loops_again` used a check that failed on the *original* proposal too, meaning it would never actually reach Stage B and wouldn't test what its name claimed. Caught by tracing the test by hand before running it, fixed to use a payload-aware check that passes on the original and fails specifically on the revision — the same "verify before trusting" discipline this project holds its own implementation code to, applied here to a test.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **62 passed** (53 prior + 9 new: all 8 named scenarios plus one exhaustiveness test for `stage_a_hard_fail`).
+
+**Affects:** `backend/src/quorum_backend/gate/schemas.py` (`Stakes` added), `backend/src/quorum_backend/gate/orchestration.py` (new), `backend/tests/test_gate_orchestration.py` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-058*
+*Next entry: DEC-059*
