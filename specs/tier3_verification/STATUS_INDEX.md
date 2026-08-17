@@ -12,12 +12,12 @@
 | Layer | Status |
 |---|---|
 | `backend/src/quorum_backend/gate/schemas.py` | Real, tested. Full `QUORUM_DATA_CONTRACTS.md` §1 schema set (`ActionType`, `EvidenceRef`, `Finding`, `Objection`, `ContextSnapshot`, `ActionProposal`, `GateVerdict`, `ResourceClaim`, `Position`, `ImpactDelta`). `NegotiationOption` deliberately not yet added — no session has needed it yet. |
-| `backend/src/quorum_backend/gate/validators.py` | Real, tested. `CalendarAdapter` Protocol + `availability_check` (`IMPL_01`). The other 8 registry validators (`TemporalFactCheck`, `BudgetCheck`, `DeadlineConflictCheck`, `RecipientCheck`, `CommitmentCheck`, `PIILeakCheck`, `ProvenanceCheck`, `CoverageCheck`) are specified but not yet built here. |
+| `backend/src/quorum_backend/gate/validators.py` | Real, tested. `CalendarAdapter` Protocol + `availability_check` (`IMPL_01`). `TasksAdapter` Protocol + `deadline_conflict_check` (`IMPL_02`). The other 7 registry validators (`TemporalFactCheck`, `BudgetCheck`, `RecipientCheck`, `CommitmentCheck`, `PIILeakCheck`, `ProvenanceCheck`, `CoverageCheck`) are specified but not yet built here. |
 | `backend/gate/prompts.py`, `orchestration.py`, `router.py`, `agents/*`, `negotiation/*`, `auth/*`, `security/*`, `features/*` | Not yet built in this repository. |
 | Mobile (`mobile/lib/**`) | Not yet built — zero `.dart` files exist. Flutter SDK and Android SDK are not yet installed on this machine. |
 | Infrastructure | Nothing provisioned — no Supabase project, Cloud Run service, or Upstash Redis instance exists yet. |
 | CI pipeline | Not yet built. |
-| **Backend total, this repository** | **13/13 real, passing tests** (`ruff check backend` clean). `pytest backend/tests -q` — verified live this session. |
+| **Backend total, this repository** | **18/18 real, passing tests** (`ruff check backend` clean). `pytest backend/tests -q` — verified live this session. |
 | **Mobile total, this repository** | **0** — not started. |
 
 ## Environment, confirmed real (see `quorum-environment-constraints` for full detail if reading this outside Claude Code)
@@ -32,7 +32,7 @@
 
 1. On-device primary model (Gemma 4 E4B vs. Llama 3.2 3B) — unresolved, needs Sprint 0 (`IMPL_00`), which itself needs Flutter SDK + a real or emulated Android device (≥4GB RAM) not yet set up.
 2. Flutter llama.cpp plugin selection — same, resolved by the same session.
-3–8 backend validators (`TemporalFactCheck`, `BudgetCheck`, `DeadlineConflictCheck`, `RecipientCheck`, `CommitmentCheck`, `PIILeakCheck`, `ProvenanceCheck`, `CoverageCheck`) — specified, not yet built in this repository.
+3. Remaining backend validators (`TemporalFactCheck`, `BudgetCheck`, `RecipientCheck`, `CommitmentCheck`, `PIILeakCheck`, `ProvenanceCheck`, `CoverageCheck`) — specified, not yet built in this repository.
 9. `backend/gate/orchestration.py` (`gate.review()`) — specified, not yet built; needs all Stage A validators first.
 10. Real demo dataset (simulated-and-real hybrid, all 5 domains) — wanted, tracked, not yet built; needs real backend/schema to load against (Phase 3 per `QUORUM_IMPLEMENTATION_STRATEGY.md`).
 11. No cloud infrastructure provisioned anywhere (Supabase/Upstash/Cloud Run/Gemini/Groq) — free-tier accounts to be created when a session first needs one.
