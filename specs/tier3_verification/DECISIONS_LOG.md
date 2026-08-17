@@ -1159,10 +1159,24 @@ The term-overlap arithmetic for both new tests was hand-verified before trusting
 
 ---
 
+### DEC-059 — `IMPL_09`: Router — Stakes Lookup + Complexity Classification
+
+**Status:** CONFIRMED
+
+**Decision:** `router.py` is real and tested — `STAKES_TABLE` (all 11 real `ActionType`s, no default), `get_stakes()` (raises `ValueError` loudly on an unmapped type), `Complexity`/`ComplexitySignals`/`compute_complexity()`. Same honest disclosure as `IMPL_08`: `IMPL_09_ROUTER.md` describes this file's properties in prose but never reproduces literal source — a real, careful construction from that description and `QUORUM_CONFIGURATION_CONSTANTS.md` §1's exact, verbatim stakes table (which was copied faithfully, not reconstructed).
+
+The real, corrected `requires_cross_reference` signal is implemented exactly as documented — a real check confirmed `ComplexitySignals` has zero `confidence` field via direct model introspection (`ComplexitySignals.model_fields`), not just a text grep, since the checklist's own `grep -n "confidence"` flags harmless docstring prose explaining the field's deliberate absence as if it were a violation.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **71 passed** (62 prior + 9 new).
+
+**Affects:** `backend/src/quorum_backend/router.py` (new), `backend/tests/test_router.py` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-059*
+*Next entry: DEC-060*
