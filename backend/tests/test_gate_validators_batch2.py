@@ -8,8 +8,34 @@ from quorum_backend.gate.validators import (
     availability_check,
     commitment_check,
     deadline_conflict_check,
+    pii_leak_check,
     recipient_check,
 )
+
+
+def test_pii_leak_check_verified_true_when_properly_redacted():
+    finding = pii_leak_check("sure, my card is <CARD_NUMBER>", ["4111-1111-1111-1111"])
+    assert finding.evidence_state == "verified_true"
+
+
+def test_pii_leak_check_verified_false_when_span_present():
+    finding = pii_leak_check("sure, my card is 4111-1111-1111-1111", ["4111-1111-1111-1111"])
+    assert finding.evidence_state == "verified_false"
+
+
+def test_pii_leak_check_verified_true_when_nothing_flagged():
+    finding = pii_leak_check("this is genuinely ordinary content", [])
+    assert finding.evidence_state == "verified_true"
+
+
+def test_pii_leak_check_detects_the_specific_leaked_span_among_several():
+    # Two spans flagged, only one actually leaked -- the count in the
+    # finding should reflect exactly the one that leaked, not both.
+    finding = pii_leak_check(
+        "sure, my card is 4111-1111-1111-1111", ["4111-1111-1111-1111", "482913"]
+    )
+    assert finding.evidence_state == "verified_false"
+    assert "1 flagged span(s)" in finding.claim
 
 
 def test_commitment_check_verified_true_when_backed_by_intent():
