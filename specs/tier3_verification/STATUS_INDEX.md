@@ -18,9 +18,11 @@
 | `backend/src/quorum_backend/router.py` | Real, tested (`IMPL_09`). `STAKES_TABLE` (all 11 real `ActionType`s), `get_stakes()` (raises loudly, no default), `Complexity`/`ComplexitySignals`/`compute_complexity()` — no literal source ever existed anywhere in this project's real corpus, a real construction from the documented properties + `QUORUM_CONFIGURATION_CONSTANTS.md` §1's exact stakes table. |
 | `agents/*`, `negotiation/*`, `auth/*`, `security/*`, `features/*` | Not yet built in this repository. |
 | Mobile (`mobile/lib/**`) | Not yet built — zero `.dart` files exist. Flutter SDK and Android SDK are not yet installed on this machine. |
-| Infrastructure | Nothing provisioned — no Supabase project, Cloud Run service, or Upstash Redis instance exists yet. |
+| `backend/migrations/0001_initial_schema/up.sql` + `down.sql` | Real, proven against a real, local Postgres 16 + pgvector (`docker run pgvector/pgvector:pg16`) — 7 tables, 3 explicit indexes created cleanly; the `tasks.status` `CHECK` constraint genuinely rejected bad data; a real 1024-dim vector's self-distance computed as exactly 0; the `interviews`→`applications` FK genuinely rejected a nonexistent reference; the `retry_queue` partial index confirmed used by the query planner (`EXPLAIN`); `down.sql` (genuinely new, no literal spec existed) proven by a real drop→recreate cycle. Redis key/TTL patterns (`ratelimit:*` 60s, `cache:coverage_check:*` 86400s) proven against a real `redis:7-alpine` container. **No live Supabase project or Upstash Redis instance exists yet** — real account provisioning is a genuinely separate, still-open step (see open items) that this local proof cannot substitute for. |
+| Cloud Run / Docker | Real `Dockerfile` + `.dockerignore` + `infra/docker/docker-compose.local.yml` + `infra/cloud_run/service.yaml.template` (`IMPL_11`). **`docker build` succeeded completely in this environment** — new, real evidence: the original environment's sandbox hit an SSL failure specific to its own container networking; this machine has no such issue. The built image was run as a real container and its `/health` endpoint returned a genuine `200 {"status":"ok"}`. No live Cloud Run service exists yet. |
+| `backend/src/quorum_backend/auth/` | Real, tested (`IMPL_12`). `access_token.py` (STANDARD), `refresh_token.py`/`oauth_pkce.py` (CRITICAL, manually reviewed — see `DECISIONS_LOG` DEC-062). |
 | CI pipeline | Not yet built. |
-| **Backend total, this repository** | **71/71 real, passing tests** (`ruff check backend` clean). `pytest backend/tests -q` — verified live this session. |
+| **Backend total, this repository** | **87/87 real, passing tests** (`ruff check backend` clean). `pytest backend/tests -q` — verified live this session (Batch 2: `IMPL_09`–`12`, 16 new tests from `71`). |
 | **Mobile total, this repository** | **0** — not started. |
 
 ## Environment, confirmed real (see `quorum-environment-constraints` for full detail if reading this outside Claude Code)
@@ -40,7 +42,7 @@
 5. `budget_check`'s body was constructed from an interface signature only, no full spec ever existed for it — worth a real cross-check against the eventual live Finance domain agent (`IMPL_16`) once that exists, to confirm the reasoning still holds.
 6. `orchestration.py`'s `_call_with_retry` wraps the whole Stage B call, not Critic/Judge independently — a transient Judge-only failure re-invokes the Critic on retry, a real, minor cost inefficiency, disclosed in `DECISIONS_LOG` DEC-058, not required against by anything in the real spec but worth knowing.
 7. Real demo dataset (simulated-and-real hybrid, all 5 domains) — wanted, tracked, not yet built; needs real backend/schema to load against (Phase 3 per `QUORUM_IMPLEMENTATION_STRATEGY.md`).
-8. No cloud infrastructure provisioned anywhere (Supabase/Upstash/Cloud Run/Gemini/Groq) — free-tier accounts to be created when a session first needs one.
+8. No real cloud infrastructure provisioned anywhere (Supabase/Upstash/Cloud Run/Gemini/Groq) — free-tier accounts to be created when a session first needs one. The schema/key patterns are now proven against real *local* Postgres+pgvector and Redis (`IMPL_10`), and the real Docker image builds and runs cleanly in this environment (`IMPL_11`) — neither substitutes for the real cloud accounts themselves, still genuinely open.
 9. Everything else in the 46-session `IMPL_XX`/`MOBILE_XX` plan not listed above — none of it is real in this repository yet.
 
 ## Update protocol
