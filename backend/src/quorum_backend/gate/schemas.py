@@ -24,6 +24,27 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 
 
+class Stakes(str, Enum):
+    """S0-S3, per QUORUM_CONFIGURATION_CONSTANTS.md Sec 1's hardcoded stakes
+    table -- a lookup, never a learned classifier. Built here, in this
+    bootstrap, because IMPL_08's real orchestration signature needs it and
+    no document in this project's real corpus ever gave Stakes a full,
+    exact type definition (router.py, where get_stakes() actually lives,
+    is IMPL_09 -- not yet built here). Uses the plain S0/S1/S2/S3 naming
+    consistently used everywhere real in this corpus (this table,
+    QUORUM_DATA_CONTRACTS.md's action_events.stakes CHECK constraint,
+    QUORUM_GATE_SPECIFICATION.md Sec 2's state machine) -- not the
+    differently-named member (S3_EXTERNAL_IRREVERSIBLE) a batch-guide
+    document used for this session, which doesn't match anything in the
+    real spec corpus.
+    """
+
+    S0 = "S0"
+    S1 = "S1"
+    S2 = "S2"
+    S3 = "S3"
+
+
 class ActionType(str, Enum):
     """Closed enum — every real action the system can propose. Adding a new
     member requires a corresponding row in QUORUM_CONFIGURATION_CONSTANTS.md
