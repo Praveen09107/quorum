@@ -1173,10 +1173,32 @@ The real, corrected `requires_cross_reference` signal is implemented exactly as 
 
 ---
 
+### DEC-060 — `IMPL_10`: Infrastructure Part 1 — Real Local Postgres+pgvector and Redis Proof, in This Repository, for the First Time
+
+**Status:** CONFIRMED
+
+**Decision:** `backend/migrations/0001_initial_schema/up.sql` is real — copied verbatim from `QUORUM_DATA_CONTRACTS.md` §3, one of the few files in this batch where a full, literal spec existed to copy faithfully rather than construct. `down.sql` is genuinely new (no literal spec existed anywhere for a rollback), a real, careful construction dropping tables in reverse dependency order.
+
+**Real, live proof, this session, in this repository** (Docker was confirmed running for the first time in this repository's real history — it auto-started several long-running AEGIS containers on start, confirming AEGIS itself is real on this machine, consistent with `CLAUDE.md`'s prior real experience claim):
+- `docker run pgvector/pgvector:pg16` — real Postgres 16 + pgvector, migration ran cleanly: `CREATE TABLE` ×7, `CREATE INDEX` ×3.
+- `tasks_status_check` CHECK constraint genuinely rejected an invalid status value (real error shown).
+- A real, randomly-generated 1024-dim vector's self-distance computed as exactly `0`.
+- `interviews_application_id_fkey` genuinely rejected a nonexistent `application_id`.
+- `EXPLAIN` confirmed the query planner genuinely uses `idx_retry_queue_next_attempt` (Bitmap Index Scan), not just that the index exists.
+- `down.sql` proven by a real drop→recreate cycle: all 7 tables dropped, `up.sql` re-ran cleanly afterward.
+- `redis:7-alpine` — both real key patterns (`ratelimit:*` TTL 60, `cache:coverage_check:*` TTL 86400) confirmed exactly matching `QUORUM_DATA_CONTRACTS.md` §4.
+- All test containers stopped and removed after verification — nothing left running.
+
+**Honestly, not implied otherwise:** no live Supabase project or Upstash Redis instance exists yet. This local proof is real and valuable but does not substitute for real cloud provisioning — that remains a genuinely open item, requiring Praveen's own action (account creation), tracked honestly in `STATUS_INDEX.md`, not silently treated as done.
+
+**Affects:** `backend/migrations/0001_initial_schema/up.sql` (new), `backend/migrations/0001_initial_schema/down.sql` (new), this log. `STATUS_INDEX.md`'s consolidated update for this whole batch lands with `IMPL_12`'s entry (DEC-062), not split artificially across each infra sub-session — noted here so the sequence isn't mistaken for a skipped update.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-060*
+*Next entry: DEC-061*
