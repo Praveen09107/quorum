@@ -1011,10 +1011,45 @@ Two real, previously-undocumented facts about already-shipped code surfaced duri
 
 ---
 
+### DEC-050 — A Real Environment-Continuity Gap Found: DEC-001 Through DEC-049 Describe Real Work in a Codebase This Repository Does Not Contain
+
+**Status:** CONFIRMED
+
+**Decision:** Before starting real `IMPL_01` work, the specific prerequisite files it depends on (`backend/gate/schemas.py`, `backend/gate/prompts.py`) were checked directly per this document's own Rule 3 ("checking the real source beats recalling it from memory, every time") — and found not to exist anywhere in this repository. This is not an isolated gap: exhaustive, repeated verification (file counts under `backend/` and `mobile/`, `git log`, a full search of this entire machine — D:\, C:\Users, both WSL distros, OneDrive) found **zero real application code anywhere accessible**, despite `DEC-001` through `DEC-049` above describing 23 real backend sessions, 23 real mobile sessions, and 156 passing tests in specific, evidence-backed, session-by-session detail.
+
+The most likely real explanation, stated as a real finding rather than left implicit: `specs/tier1_foundation/QUORUM_CLAUDE_CODE_SPEC_USAGE_GUIDE.md` itself states the backend and mobile sequence was built "across one long, continuous Claude.ai conversation" — a different, now-inaccessible environment. `DEC-005`'s own verification command (`find /home/claude/quorum ...`) shows a Linux path, consistent with a different machine entirely. This repository (`D:\Program Files\QUORUM`, Windows, this Claude Code session) only ever received the specification layer from that other environment — never the real code DEC-001–049 document.
+
+**This entry does not mark DEC-001–049 `SUPERSEDED`.** Per this document's own Rule 1, that status is for a decision later found *wrong* — these decisions were, by all available evidence, real and correct in the environment they were made in. They simply don't describe this repository's actual file state, and treating them as if they did would have meant building `IMPL_01` on top of imagined prerequisites.
+
+**What this means going forward:** this repository's own real, verified implementation history starts here, at DEC-050 — not at DEC-001. `STATUS_INDEX.md` has been rewritten (not patched) to describe only what's real in this repository, per this same session. Every session from this point forward in this repository gets its own real DEC-0XX entry, verified the same way DEC-001–049 claim to have been, just actually checked against this repository's real files rather than assumed.
+
+**Verified live:** `find` for `schemas.py`/`prompts.py`/`validators.py`/`orchestration.py`/`test_gate*.py`/`sprint0/` anywhere in this repository → zero matches (prior to this session's own real work below). `git log --stat` on the one real commit in this repository (`7bd20b5`) → specs and scaffold only, no application code. Full-machine search (D:\, C:\Users\prave including Downloads/Desktop/Documents/OneDrive, WSL Ubuntu-22.04 home and `~/projects`) → no other `quorum` codebase found anywhere.
+
+**Affects:** `STATUS_INDEX.md` (rewritten), this log, and the interpretation of every `IMPL_XX`/`MOBILE_XX` session document going forward — as design specifications to build real code against for the first time in this repository, never as descriptions of code already present here.
+
+---
+
+### DEC-051 — Bootstrap: `gate/schemas.py` and the First Real Stage A Validator (`IMPL_01`, `AvailabilityCheck`)
+
+**Status:** CONFIRMED
+
+**Decision:** Two real, necessary things were built this session, in this order:
+
+1. **`backend/src/quorum_backend/gate/schemas.py`** — a genuine bootstrap gap, not assigned to any numbered session in the 46-session plan (every session from `IMPL_01` onward assumes it already exists). Built directly and only from `QUORUM_DATA_CONTRACTS.md` §1's documented contract: `ActionType`, `EvidenceRef`, `Finding`, `Objection`, `ContextSnapshot`, `ActionProposal`, `GateVerdict`, `ResourceClaim`, `Position`, `ImpactDelta`. `NegotiationOption` deliberately excluded — per `QUORUM_DATA_CONTRACTS.md`'s own account, that schema wasn't added until real negotiation work (`IMPL_19`) needed it; adding it now would be inventing ahead of scope.
+2. **`backend/src/quorum_backend/gate/validators.py`** — `IMPL_01`'s real deliverable, `availability_check`, plus the `CalendarAdapter` Protocol its real, documented interface requires (`find_event` and `list_events_in_range`). A related bootstrap gap was found and deliberately *not* filled: `QUORUM_GATE_SPECIFICATION.md` §4.1's `temporal_fact_check` worked example is treated as pre-existing throughout the specs, same status as `schemas.py` — but `availability_check` doesn't call it, so building a `temporal_fact_check` function now would be unscoped work with no consumer in this session. Only the Protocol shape was built faithfully; the function itself is left for whichever session actually needs it.
+
+A real design question surfaced while building, worth recording precisely: `availability_check` is **deliberately two-valued in practice** (`verified_true`/`verified_false`), not three, despite the Gate's general three-valued `Finding` principle. Reasoning: unlike a single-event lookup (where an absent calendar entry is genuinely ambiguous — the meeting could be real but never entered), a calendar range query reliably returns every event that actually exists in that window. An empty result is a positive, confirmed fact ("nothing is booked here"), not an unresolved "couldn't determine" state — there is no real `no_data_found` case for this specific validator under the `CalendarAdapter` contract as specified. This differs from what a since-corrected batch-guide document assumed about this function before it was checked directly.
+
+**Verified live:** `ruff check backend` → `All checks passed!`. `pytest backend/tests -q` → **13 passed** (8 schema tests + 5 validator tests). Python venv created at repo root, `pydantic==2.10.4`/`pytest==8.3.4`/`pytest-asyncio==0.25.0`/`ruff==0.8.4` installed via `pip install -e "./backend[dev]"`, all pinned exact versions per `QUORUM_SPEC_METHODOLOGY.md`'s own stated discipline. A `pytest-asyncio` deprecation warning (`asyncio_default_fixture_loop_scope` unset) was found and fixed in the same session, before it could recur on every future test run.
+
+**Affects:** `backend/pyproject.toml` (dependencies added), `backend/src/quorum_backend/gate/schemas.py` (new), `backend/src/quorum_backend/gate/validators.py` (new), `backend/tests/test_gate_schemas.py` (new, 8 tests), `backend/tests/test_gate_validators_batch2.py` (new, 5 tests), `.venv/` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-002*
+*Next entry: DEC-052*
