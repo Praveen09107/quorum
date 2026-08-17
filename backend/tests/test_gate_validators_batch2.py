@@ -7,11 +7,58 @@ from datetime import datetime
 from quorum_backend.gate.validators import (
     availability_check,
     commitment_check,
+    coverage_check,
     deadline_conflict_check,
     pii_leak_check,
     provenance_check,
     recipient_check,
 )
+
+
+def test_coverage_check_verified_true_when_all_questions_addressed():
+    finding = coverage_check(
+        extracted_questions=["what time works for you"],
+        draft_text="5pm works great for me, see you then.",
+    )
+    assert finding.evidence_state == "verified_true"
+
+
+def test_coverage_check_verified_false_when_a_question_is_dropped():
+    finding = coverage_check(
+        extracted_questions=["what time works for you", "can you send the invoice"],
+        draft_text="5pm works for me.",  # invoice question never addressed
+    )
+    assert finding.evidence_state == "verified_false"
+
+
+def test_coverage_check_verified_true_when_no_questions_extracted():
+    finding = coverage_check(extracted_questions=[], draft_text="anything")
+    assert finding.evidence_state == "verified_true"
+
+
+def test_coverage_check_verified_false_with_genuinely_zero_term_overlap():
+    # Constructed with deliberately zero real-word overlap, so this tests
+    # what it actually claims to test -- an earlier draft of this test used
+    # everyday phrasing that accidentally shared the stopword "the," which
+    # alone satisfies the real min_shared_terms=1 default (see the next
+    # test) and would have passed for the wrong reason.
+    finding = coverage_check(["xyzzy plugh quux corge"], "foo bar baz qux")
+    assert finding.evidence_state == "verified_false"
+
+
+def test_coverage_check_a_single_shared_stopword_satisfies_the_real_default_threshold():
+    # HONEST, DOCUMENTED LIMITATION, verified live and kept as a permanent
+    # regression test, not a one-off script: at min_shared_terms=1, sharing
+    # only the word "the" between question and draft is enough to mark the
+    # question "covered," even though the draft doesn't address it at all.
+    # This is the real, deliberately-accepted trade-off named in this
+    # validator's own docstring and the original IMPL_07 spec -- asserted
+    # here explicitly so a future change to this behavior is a conscious
+    # decision, not an unnoticed regression.
+    finding = coverage_check(
+        ["Can you also send the quarterly budget report?"], "The meeting works at 3pm."
+    )
+    assert finding.evidence_state == "verified_true"
 
 
 # --- ProvenanceCheck (IMPL_06) — CRITICAL TIER —

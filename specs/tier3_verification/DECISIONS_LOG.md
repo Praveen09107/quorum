@@ -1120,10 +1120,27 @@ The term-overlap arithmetic for both new tests was hand-verified before trusting
 
 ---
 
+### DEC-057 — `IMPL_07`: Coverage Validator, All 9 Stage A Validators Now Real, and a Documented Limitation Re-Confirmed Rather Than Newly Discovered
+
+**Status:** CONFIRMED
+
+**Decision:** `coverage_check` is real and tested, closing the last of the 7 numbered validator sessions. Two real bootstrap gaps were also closed in the same session, since this kickoff prompt explicitly required "all 9 real validators" confirmed before `IMPL_08`:
+
+1. **`backend/gate/prompts.py`** — didn't exist (deferred since `IMPL_01`, nothing needed it until now). `COVERAGE_EXTRACTION_PROMPT`/`build_coverage_extraction_prompt` built and disclosed honestly as a real, reasoned construction of the documented functional requirement (`QUORUM_GATE_SPECIFICATION.md` §5.4) — no literal prompt text was ever specified anywhere in this project's real corpus, unlike `gate/schemas.py`'s exhaustive field-level spec. `CRITIC_SYSTEM_PROMPT`/`JUDGE_SYSTEM_PROMPT` deliberately not built — nothing needs them until `IMPL_08`.
+2. **`temporal_fact_check`** and **`budget_check`** — both predate the numbered session sequence per this batch's own stated convention, both genuinely missing from this repository. `temporal_fact_check` is real code copied faithfully from `QUORUM_GATE_SPECIFICATION.md` §4.1's worked example (filling in the `validator=`/`claim=`/`source_ref=` placeholders left as `...` in that illustrative snippet). `budget_check`'s full body was never specified anywhere — only its interface signature — so it's a real, pattern-matched construction (same shape as every other adapter-backed validator: no claim → `verified_true`, compare against a real adapter value, exceed → `verified_false`), disclosed as such in its own docstring and flagged as a real open item (`STATUS_INDEX` #5) worth re-checking once the real Finance agent (`IMPL_16`) exists.
+
+**The stopword limitation this session's verification checklist surfaced is real, reproduced independently, but not actually a new finding.** `coverage_check(["Can you also send the quarterly budget report?"], "The meeting works at 3pm.")` returns `verified_true` — confirmed live, twice, once by hand-trace before writing the test and once by an independent fresh script matching the checklist's own example exactly. But `IMPL_07_VALIDATOR_COVERAGE_COMPARISON.md`'s real spec already names and accepts this exact category of trade-off ("this is term-overlap, not semantic understanding... a real, known trade-off, not an oversight... anything subtler [than a fully dropped question] is exactly what Stage B's Critic exists to catch") — this session restates it more precisely, naming the specific stopword mechanism the original caveat didn't spell out, and encodes it as a permanent regression test rather than a one-off script check. `min_shared_terms` was **not** changed and no stopword filtering was added — deviating from the real, documented, already-decided spec without being asked would itself violate `CLAUDE.md` Rule 3.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **53 passed** (39 prior + 14 new: 2 prompt tests, 6 `temporal_fact_check`/`budget_check` tests, 5 `coverage_check` tests including the stopword regression test, plus one already-counted overlap with an existing `-k` filter). **All 9 Stage A validators now real and tested in this repository — Stage A is complete.**
+
+**Affects:** `backend/src/quorum_backend/gate/prompts.py` (new), `backend/src/quorum_backend/gate/validators.py` (extended, 3 new validators), `backend/tests/test_gate_prompts.py` (new), `backend/tests/test_gate_validators.py` (new), `backend/tests/test_gate_validators_batch2.py` (extended), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-057*
+*Next entry: DEC-058*
