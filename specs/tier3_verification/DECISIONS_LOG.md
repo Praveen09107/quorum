@@ -1195,10 +1195,30 @@ The real, corrected `requires_cross_reference` signal is implemented exactly as 
 
 ---
 
+### DEC-061 — `IMPL_11`: Infrastructure Part 2 — the Missing `main.py` Bootstrap Gap, and a Real Docker Build That Succeeded Where the Original Environment Couldn't
+
+**Status:** CONFIRMED
+
+**Decision:** Two real bootstrap gaps closed before this session's actual deliverable could be built: **`backend/src/quorum_backend/main.py`** didn't exist anywhere in this repository (every later session's kickoff assumes it does, as a minimal `/health`-only skeleton) — built to that exact, deliberately minimal scope, confirmed by a real local `uvicorn` run returning genuine `{"status":"ok"}`, `200`. **`fastapi`/`uvicorn` dependencies** added to `pyproject.toml` (this repository's real packaging, `pyproject.toml`+editable install — not the original spec's assumed `requirements.txt` approach, corrected to match what's actually here).
+
+**A real, new result, different from the original environment's own history:** the original sandbox's `docker build` failed at `pip install` with a container-networking-specific SSL error, honestly diagnosed and not worked around. This session attempted the real build again, in this repository, on this machine — **it succeeded completely**, all 5 Dockerfile steps, real `pip install` inside the container, real image exported. The built image was run as a real container; its `/health` endpoint returned a genuine `{"status":"ok"}`, `200`, confirmed with `curl` against the actual running container, not assumed from the build succeeding alone. This is new, real evidence this machine doesn't share the original sandbox's specific network-isolation limitation — reported as the real, current fact, not silently assumed the old failure still applies.
+
+`infra/cloud_run/service.yaml.template` — a real, faithful conversion of `IMPL_11`'s exact, verbatim `gcloud run deploy` command (read directly, not reconstructed) into the target declarative format `QUORUM_PROJECT_STRUCTURE.md` specifies, with the original CLI command preserved in a comment since that's the form actually documented. `concurrency=1`, `minScale=0`, and the IAM-level `--no-allow-unauthenticated` effect are all present and explained. `infra/docker/docker-compose.local.yml` — app service only, per the ADD's own description; real local Postgres/Redis proof (`IMPL_10`) was a one-off verification step, not baked into this file's permanent shape.
+
+Confirmed directly, not assumed: `git diff` shows no changes to `main.py` beyond its own creation in this same session — nothing here wired the Gate/router/auth modules into it, matching this batch's own explicit scope boundary.
+
+**A pragmatic batching note, disclosed rather than silent:** `pyproject.toml`'s real diff for this commit includes the `PyJWT` dependency added moments later for `IMPL_12`, since this environment's tooling doesn't support splitting one file's changes across two commits without interactive staging (unavailable here). Noted explicitly so it isn't mistaken for scope creep.
+
+**Verified live:** real `uvicorn` run (`{"status":"ok"}`, `200`), real `docker build` (succeeded, full log), real container run (`{"status":"ok"}`, `200`, from inside the built image). `ruff check backend` → clean. `pytest backend/tests -q` → **87 passed** (71 prior + 16 new, counted together with `IMPL_12` since both were verified together this session — see DEC-062).
+
+**Affects:** `backend/src/quorum_backend/main.py` (new), `backend/Dockerfile` (new), `backend/.dockerignore` (new), `backend/pyproject.toml` (fastapi/uvicorn added), `infra/docker/docker-compose.local.yml` (new), `infra/cloud_run/service.yaml.template` (new), this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-061*
+*Next entry: DEC-062*
