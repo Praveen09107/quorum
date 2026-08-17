@@ -1215,10 +1215,28 @@ Confirmed directly, not assumed: `git diff` shows no changes to `main.py` beyond
 
 ---
 
+### DEC-062 — `IMPL_12`: Auth & Session Management — CRITICAL Tier, Real Token-Theft Scenario Proven End to End, Batch 2 Complete
+
+**Status:** CONFIRMED
+
+**Decision:** All three real `backend/auth/` modules are built and tested. `access_token.py` (STANDARD tier) — 15-minute stateless JWT, two distinct exceptions (`AccessTokenExpired`/`AccessTokenInvalid`) so a caller can tell "prompt a silent refresh" from "a real security event." `refresh_token.py`/`oauth_pkce.py` (CRITICAL tier) — same honest disclosure as every construction-not-copy file this batch: no literal source ever existed anywhere in this project's real corpus for any of the three, a real, careful construction from `IMPL_12`'s described properties, held to full CRITICAL-tier scrutiny regardless. `REFRESH_TOKEN_TTL_DAYS = 7` is a real, disclosed, reasoned choice — no explicit value is specified anywhere in the real corpus (only the 15-minute access-token TTL is given).
+
+**The real, most important check in this batch, proven as a permanent test, not a one-off script:** `test_reuse_detection_revokes_the_whole_family_not_just_one_token` constructs a genuine token-theft scenario end to end — issue, legitimate rotation, attacker replays the stale stolen token (`TokenReuseDetected` raised, whole family revoked), then confirms the *legitimate client's own current token* also now fails (`TokenRevoked`) — proof the entire family was revoked, not just the reused token. `test_sign_out_everywhere_revokes_every_family_for_the_user_only` proves the inverse security property: revoking one user's sessions never touches a different user's.
+
+**Full CRITICAL-tier manual review, performed this session, disclosed honestly:** no cross-model reviewer available, fresh-context only. `rotate_refresh_token`'s four branches checked in an order that cannot be raced — `revoked` checked before `used`, so a token swept into a sibling's family revocation correctly raises `TokenRevoked` rather than re-triggering reuse logic; the family is revoked *before* the `TokenReuseDetected` exception is raised, so there's no window where catching the exception could leave the family unrevoked. Confirmed by reading every construction site that only a SHA-256 hash is ever stored, never the raw token. `oauth_pkce.py` confirmed to use `secrets.compare_digest` in both of its two real comparisons, zero plain `==` on secret values anywhere. One real, honestly-named limitation: the fake `RevocationStore`'s `get_family_ids_for_user` scans the full store — a real production adapter would need a real index, not exercised by this injected-dependency test.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **87 passed** (71 prior + 16 new: 4 access-token + 7 refresh-token + 5 oauth-pkce).
+
+**Batch 2 complete.** All four sessions (`IMPL_09`–`12`) real, tested, each with its own real verification and — for the two CRITICAL-tier files in this session — a full recorded manual review. `STATUS_INDEX.md`'s consolidated update for the whole batch lands with this entry, per `DEC-060`/`DEC-061`'s disclosed pragmatic batching.
+
+**Affects:** `backend/src/quorum_backend/auth/access_token.py` (new), `backend/src/quorum_backend/auth/refresh_token.py` (new), `backend/src/quorum_backend/auth/oauth_pkce.py` (new), `backend/tests/test_auth_access_token.py` (new), `backend/tests/test_auth_refresh_token.py` (new), `backend/tests/test_auth_oauth_pkce.py` (new), `backend/pyproject.toml` (`PyJWT` added), `STATUS_INDEX.md` (full batch update), this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-062*
+*Next entry: DEC-063*
