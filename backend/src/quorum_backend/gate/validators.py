@@ -216,6 +216,67 @@ def pii_leak_check(
     )
 
 
+def provenance_check(justification_sources: list[str]) -> Finding:
+    """CRITICAL TIER — the primary structural defense against prompt
+    injection in this system.
+
+    The defense is structural, not content-based: this function never
+    inspects what any source actually says. justification_sources is a
+    closed-vocabulary list of provenance labels ("user_request" /
+    "ingested_content") recorded by trusted agent code before this
+    validator ever runs -- untrusted content the system merely read has no
+    path to change what label gets recorded for it. This is deliberately
+    the opposite of keyword/content filtering, which is a losing arms race
+    against adversarial phrasing; matching on WHERE a justification
+    structurally originated is not defeated by HOW persuasively injected
+    content is worded.
+
+    Exhaustive over exactly four real cases, no fifth silent path:
+      1. Empty list -> no_data_found (nothing recorded to judge at all).
+      2. Contains "user_request" (regardless of anything else present)
+         -> verified_true. A genuine user basis is sufficient on its own.
+      3. Non-empty, no "user_request", every entry is exactly
+         "ingested_content" -> verified_false. This IS the injection
+         signature: an action justified only by things the system read,
+         never by anything the user actually asked for.
+      4. Non-empty, no "user_request", not all "ingested_content" (an
+         unrecognized source string, alone or mixed in) -> no_data_found.
+         Genuinely ambiguous provenance is not silently resolved either
+         direction.
+    """
+    if not justification_sources:
+        return Finding(
+            validator="ProvenanceCheck",
+            claim="No justification sources recorded for this action",
+            evidence_state="no_data_found",
+            confidence=0.3,
+        )
+
+    has_user_basis = "user_request" in justification_sources
+    all_ingested = all(s == "ingested_content" for s in justification_sources)
+
+    if has_user_basis:
+        return Finding(
+            validator="ProvenanceCheck",
+            claim="Action justification includes genuine user-originated basis",
+            evidence_state="verified_true",
+            confidence=1.0,
+        )
+    if all_ingested:
+        return Finding(
+            validator="ProvenanceCheck",
+            claim="Action justification traces ONLY to ingested content — no user-originated basis found",
+            evidence_state="verified_false",
+            confidence=0.95,
+        )
+    return Finding(
+        validator="ProvenanceCheck",
+        claim="Ambiguous provenance — neither clearly user-originated nor purely ingested",
+        evidence_state="no_data_found",
+        confidence=0.4,
+    )
+
+
 def availability_check(
     proposed_start: datetime | None,
     proposed_end: datetime | None,
