@@ -24,7 +24,7 @@ class FakeRevocationStore:
 
     async def claim_and_rotate(self, old_token_hash, new_record):
         record = self.records.get(old_token_hash)
-        if record is None or record.used:
+        if record is None or record.used or record.revoked:
             return False
         record.used = True
         self.records[new_record.token_hash] = new_record

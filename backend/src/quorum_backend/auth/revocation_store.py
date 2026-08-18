@@ -30,6 +30,19 @@ happen inside one transaction, holding a real row lock
 (`SELECT ... FOR UPDATE`) on the old token for the transaction's full
 duration -- a concurrently racing call is genuinely blocked at the
 database level until that whole transaction, insert included, commits.
+
+A SECOND real, disclosed correction, found by the same review's own
+second pass verifying the fix above: the row check inside
+`claim_and_rotate()`'s transaction only inspected `used`, never
+`revoked` -- meaning a token whose family was already revoked (e.g. by
+an explicit `/auth/revoke`, or account deletion) could still be
+successfully claimed and rotated if it happened to still have
+`used = False`, minting a fresh, live, unrevoked child inside a family
+the system had already declared dead. Narrower and harder to trigger
+than the first bug (needs an independent revoke racing a specific
+in-flight refresh, not one attacker controlling both sides), but real
+and confirmed by the reviewer's own probe -- not theoretical. Closed by
+also checking `revoked` inside the same atomic row check.
 """
 from __future__ import annotations
 
@@ -102,10 +115,14 @@ class SupabaseRevocationStore:
         # catch it.
         async with self._pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(
-                "SELECT used FROM refresh_tokens WHERE token_hash = $1 FOR UPDATE",
+                "SELECT used, revoked FROM refresh_tokens WHERE token_hash = $1 FOR UPDATE",
                 old_token_hash,
             )
-            if row is None or row["used"]:
+            # `revoked` is checked here too, atomically, alongside `used`
+            # -- a token whose family was revoked concurrently (by a
+            # real, separate /auth/revoke or account deletion) must never
+            # be claimable just because it hadn't been used yet.
+            if row is None or row["used"] or row["revoked"]:
                 return False
             await conn.execute("UPDATE refresh_tokens SET used = true WHERE token_hash = $1", old_token_hash)
             await conn.execute(

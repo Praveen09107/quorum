@@ -117,6 +117,26 @@ async def test_claim_and_rotate_fails_on_the_real_second_attempt_and_never_inser
         )
 
 
+async def test_claim_and_rotate_refuses_an_unused_but_already_revoked_token(pool, store):
+    # A second real, disclosed correction, found by the same review's
+    # own second pass: a token can be `used=False` but `revoked=True`
+    # (its family was killed by a real, separate /auth/revoke or account
+    # deletion) -- claim_and_rotate() must never mint a fresh child for
+    # it just because the used flag alone said "not yet used."
+    family_id = str(uuid.uuid4())
+    old_hash = f"test-old-{uuid.uuid4()}"
+    new_hash = f"test-new-{uuid.uuid4()}"
+    try:
+        await store.save(_record(old_hash, family_id=family_id, revoked=True))
+
+        claimed = await store.claim_and_rotate(old_hash, _record(new_hash, family_id=family_id))
+
+        assert claimed is False
+        assert (await store.get(new_hash)) is None, "a claim against an already-revoked token must never insert a new child"
+    finally:
+        await pool.execute("DELETE FROM refresh_tokens WHERE token_hash = ANY($1::text[])", [old_hash, new_hash])
+
+
 async def test_claim_and_rotate_is_atomic_under_real_concurrent_requests_against_the_live_database(pool, store):
     family_id = str(uuid.uuid4())
     old_hash = f"test-old-{uuid.uuid4()}"
