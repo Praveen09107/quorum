@@ -1545,10 +1545,32 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-079 — `MOBILE_07`: Today — In Motion — The Today Screen Is Now Complete
+
+**Status:** CONFIRMED
+
+**Confirmed already fixed, not re-done:** the second real `/today` contract gap `MOBILE_07`'s own spec describes finding and fixing (the `in_motion` array — `negotiation_id`, `conflicted_domains`, `started_at` — for negotiation discovery) is already present in this repository's real copy of `QUORUM_DATA_CONTRACTS.md` §5.4, including the F4 source-labeling requirement staying intact around it. No edit was needed here.
+
+**The real domain-string cross-check, run directly before writing this session's tests:** `"calendar"`, `"finance"`, `"tasks"` — grepped live out of `backend/tests/test_negotiation_trigger.py` — confirmed as the exact literals this screen's conflict-description language is built against, not a plausible-looking guess.
+
+**What was actually built:** `in_motion_logic.dart` (zero Flutter dependencies) — `ActiveNegotiationSummary`, `describeConflict()`, `sortByStaleness()`. `describeConflict()` handles the empty-list and single-domain cases defensively even though the real backend threshold (`negotiation/trigger.py`'s `len(conflicted) >= 2`, confirmed live) guarantees this zone can only ever actually receive 2- or 3-domain conflicts — matching this project's established discipline of degrading gracefully outside a stated contract, not assuming upstream always behaves. `in_motion_zone.dart` — deliberately minimal, a summary card per negotiation linking into `MOBILE_09`'s full screen, not duplicating it.
+
+**Embedded question, answered before building:** why can this zone only ever show 2- or 3-domain conflicts, never 1? Because the real backend's `scan_for_conflicts()` only sets `triggers_negotiation = true` at `len(conflicted_domains) >= 2` — a single-domain conflict is an ordinary Stage A concern, resolved before ever reaching negotiation. This zone's entire existence structurally depends on that upstream threshold holding; `describeConflict()`'s single-domain handling is defensive insurance, not evidence the zone expects to need it in real operation.
+
+**7 real tests written**, matching the spec's own stated count exactly — the real two- and three-domain descriptions (using the backend's exact cross-checked literals), the single-domain edge case (no "vs." separator), the empty-list fallback, oldest-first staleness ranking, non-mutation, and a full three-negotiation ordering proof.
+
+**The Today screen (`MOBILE_05`–`07`) is now complete** — all three zones (Needs You Now, Holding Steady, In Motion) are real. Two real `/today` contract gaps were found and fixed across this three-session arc, both by the identical discipline: check the contract directly before building, never assume it's complete because a related endpoint already exists.
+
+**Verified live, this sandbox (structural/hand-verified only):** `CHECK 1`, `CHECK 3`, `CHECK 4` all pass exactly as pasted, including the live cross-reference confirming no local override of the real `>=2` backend threshold. `CHECK 5` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/features/today/in_motion_logic.dart` (new), `mobile/lib/features/today/in_motion_zone.dart` (new), `mobile/test/in_motion_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-079*
+*Next entry: DEC-080*
