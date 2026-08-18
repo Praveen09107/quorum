@@ -11,8 +11,9 @@ def _clear_real_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     not whatever happens to be in this process's real environment."""
     for name in [
         "SUPABASE_URL", "SUPABASE_SERVICE_KEY", "UPSTASH_REDIS_URL",
-        "GEMINI_API_KEY", "GROQ_API_KEY", "TAVILY_API_KEY",
-        "JWT_SIGNING_KEY", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY",
+        "UPSTASH_REDIS_REST_TOKEN", "GEMINI_API_KEY", "GROQ_API_KEY",
+        "TAVILY_API_KEY", "JWT_SIGNING_KEY", "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY",
     ]:
         monkeypatch.delenv(name, raising=False)
 
@@ -24,6 +25,7 @@ def test_infrastructure_fields_default_to_none_not_a_guessed_placeholder(monkeyp
     assert settings.supabase_url is None
     assert settings.supabase_service_key is None
     assert settings.upstash_redis_url is None
+    assert settings.upstash_redis_rest_token is None
     assert settings.gemini_api_key is None
     assert settings.groq_api_key is None
     assert settings.tavily_api_key is None
@@ -59,6 +61,17 @@ def test_real_env_vars_are_read_via_their_exact_env_example_names(monkeypatch):
 
     assert settings.supabase_url == "postgresql://real-real-real"
     assert settings.gemini_api_key == "real-gemini-key"
+
+
+def test_upstash_rest_token_is_read_via_its_own_real_env_var_name(monkeypatch):
+    # A real, disclosed fix: UPSTASH_REDIS_REST_TOKEN was missing from
+    # this project's real .env.example until directly noticed reviewing
+    # a real, filled-in .env -- Upstash's REST API needs a URL AND a
+    # bearer token; a URL alone cannot authenticate.
+    _clear_real_env_vars(monkeypatch)
+    monkeypatch.setenv("UPSTASH_REDIS_REST_TOKEN", "a-real-upstash-rest-token")
+    settings = Settings(_env_file=None)
+    assert settings.upstash_redis_rest_token == "a-real-upstash-rest-token"
 
 
 def test_an_unrelated_real_environment_variable_never_causes_a_validation_error(monkeypatch):

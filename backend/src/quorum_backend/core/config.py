@@ -53,8 +53,13 @@ class Settings(BaseSettings):
     supabase_url: str | None = Field(default=None, alias="SUPABASE_URL")
     supabase_service_key: str | None = Field(default=None, alias="SUPABASE_SERVICE_KEY")
 
-    # Upstash Redis.
+    # Upstash Redis. A real, disclosed fix: `UPSTASH_REDIS_REST_TOKEN` was
+    # missing from this project's real `.env.example` until directly
+    # noticed while reviewing a real, filled-in `.env` — Upstash's REST
+    # API genuinely needs a URL AND a bearer token to authenticate; a URL
+    # alone cannot. Added here and to `.env.example` in the same real fix.
     upstash_redis_url: str | None = Field(default=None, alias="UPSTASH_REDIS_URL")
+    upstash_redis_rest_token: str | None = Field(default=None, alias="UPSTASH_REDIS_REST_TOKEN")
 
     # LLM providers (Capacity Manager routing, per
     # QUORUM_CONFIGURATION_CONSTANTS.md §8).
