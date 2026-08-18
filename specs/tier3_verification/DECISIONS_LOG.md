@@ -1501,10 +1501,34 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-077 — `MOBILE_05`: Today — Needs You Now — The First Real Screen
+
+**Status:** CONFIRMED
+
+**A citation discrepancy resolved before this session started:** the batch guide's own preparation notes cite `DEC-053` for the `task_hours_committed` polarity fix this batch's negotiation screen (`MOBILE_09`) will later depend on. In this repository's real, current log, `DEC-053` is `IMPL_03` (the recipient validator) — an entirely different session. The polarity fix genuinely exists here, but its real entry is `DEC-070` (`IMPL_20`), not `DEC-053`. A second `DEC-053` does exist earlier in this file, describing the same polarity concept — but that entry belongs to the pre-`DEC-050` historical narrative (a different, inaccessible environment, with a different real test-count history: 156→157 there vs. this repository's real 133→140 at the equivalent point). Flagged here so `MOBILE_09`'s later citation points to the right, real entry.
+
+**Confirmed already fixed, not re-done:** `QUORUM_DATA_CONTRACTS.md` §5.4's `/today` gap (the `needs_you_now` array shape) — checked directly before writing any code — is already present in this repository's real copy of the document, including the `source: "live_backend" | "local_mirror"` labeling requirement. No edit was needed here.
+
+**What was actually built:** `needs_you_now_logic.dart` (zero Flutter dependencies — the strongest testability tier in this project's mobile code) — `PendingActionSummary`, `sortByUrgency()`, `summarizeForNeedsYouNow()`. `needs_you_now_zone.dart` — the real widget, stakes-proportional icon *shape* (not color alone) matching the accessibility rule already established in `quorum_theme.dart`. A new shared helper, `mobile/lib/gate/action_types.dart` (`readableActionType()`), factored out because more than one screen this batch needs to turn a raw `action_type` string into something readable — every one of the 11 real `ActionType` values was cross-checked directly against `backend/src/quorum_backend/gate/schemas.py` before being written into the switch, not assumed from memory.
+
+**The real ranking rule, hand-verified in Python before being trusted in Dart:** higher stakes first, then oldest-first within the same stakes level. Against the real mixed case A(S2,day1), B(S3,day5), C(S3,day2), D(S1,day3): `['C', 'B', 'A', 'D']` — confirmed live.
+
+**Embedded question, answered before building:** why oldest-first as the tiebreaker, not newest-first? An item that's been waiting longest at the *same* stakes level is the one most likely to have already caused real friction — a missed reply window, a deadline creeping closer. Surfacing it first is what "needs you now" actually means; newest-first would instead reward whatever just arrived, the opposite of the zone's real purpose.
+
+**A minor, disclosed placement difference from the pasted checklist's `CHECK 3`:** the checklist's grep target (a `default:` case de-snaking an unrecognized `action_type`) expects that logic inside `needs_you_now_logic.dart` itself. It was factored into the new shared `action_types.dart` helper instead, since `readableActionType()` is real, reusable logic more than one screen needs — the underlying property (no raw `action_type` string ever reaches the user) is still real and tested, just located differently than the checklist assumed.
+
+**10 real tests written**, matching the spec's own stated count exactly — the hand-verified mixed case, non-mutation, empty/single-item edge cases, a same-stakes tiebreak, recognized/unrecognized action-type summarization, a missing-payload non-crash proof, all four stakes labels, and full coverage of all 11 real `ActionType` values via `readableActionType()`.
+
+**Verified live, this sandbox (structural/hand-verified only):** `CHECK 1` (file exists), `CHECK 2` (comparator matches the hand-verified rule exactly), `CHECK 4` (`List.from` confirms a genuine copy) all pass as pasted. `CHECK 3` passes technically (matches `_stakesRank`'s own `default:` case) but not for the exact reason the checklist assumed — see placement note above. `CHECK 5` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/features/today/needs_you_now_logic.dart` (new), `mobile/lib/features/today/needs_you_now_zone.dart` (new), `mobile/lib/gate/action_types.dart` (new), `mobile/test/needs_you_now_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-077*
+*Next entry: DEC-078*
