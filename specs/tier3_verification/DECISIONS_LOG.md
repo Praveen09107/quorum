@@ -1749,10 +1749,32 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-088 — `MOBILE_16`: Trust — A Fabrication Declined: No Backend Fix Was Made, Because There Was Nothing Real to Fix
+
+**Status:** CONFIRMED
+
+**A significant discrepancy, flagged before building rather than silently matched, per Rule 4:** this session's own kickoff prompt describes a real, necessary backend fix as already in scope — correcting a stale docstring claim in `backend/features/self_test_harness.py` (allegedly asserting the real Gate "doesn't exist yet as code," false since `IMPL_08`) and adding a real `target: "stub" | "real_gate"` field to `run_self_test()`, plus two new backend tests. **`backend/features/self_test_harness.py` does not exist anywhere in this repository** — confirmed live by direct search, consistent with `STATUS_INDEX.md`'s standing disclosure that the entire ADD §9.7 "newly built features" table, Self-Test Harness included, has never been built here. There is no stale docstring to correct in a file this repository never wrote. **No backend change was made this session** — fabricating a fix against a nonexistent file, or inventing the file itself just to have something to "fix," would be exactly the kind of invented work this project's discipline exists to prevent. This is a deliberate act of restraint, not an omission.
+
+**Confirmed already correct, not needing the fix described:** `QUORUM_DATA_CONTRACTS.md` §5.14's `/trust` contract already specifies the real `target` field and its load-bearing honesty requirement. The mobile screen this session actually builds is fully buildable and meaningful against that real, already-correct contract regardless of the backend file's absence.
+
+**What was actually built:** `trust_logic.dart` (zero Flutter dependencies) — `SelfTestTarget`, `ScenarioResultData`, `TrustData`, `parseTarget()` (fails CLOSED to `stub` on any unrecognized value — the cautious, honest direction), `targetLabel()`, `formatCatchRate()`. `trust_screen.dart` — the real widget, with the load-bearing honesty label placed directly beneath the headline catch-rate number, the same visual pass a person's eye makes reading the number itself, not small print at the bottom.
+
+**Embedded question, answered before building:** why does `parseTarget` fail toward `stub` rather than `realGate` on an unrecognized value? Because the two failure directions are not symmetric in real harm. Failing toward `stub` on a value that was actually `real_gate` produces an unnecessarily cautious label — a real measurement gets described as "not the real one yet," an annoyance, not a lie. Failing the other way would tell a person a stub-gate result — a demo, not a real adversarial measurement — genuinely represents the actual Gate's performance, a real, substantive misrepresentation of what's actually been tested. The honest default is the one that never overstates what's actually been verified.
+
+**12 real Dart tests written** — this session's real spec describes 14 total across both languages (2 Python + 12 Dart); since there is no real Python file in this repository to add the 2 backend tests to, the 12 real Dart tests are this session's full, real, mobile-side coverage, disclosed rather than padded to hit an inapplicable number. Covers all three `parseTarget` cases including the fail-closed proof, both `targetLabel` values plus their direct distinctness assertion, the real hand-verified `§5.14` example (`11/12 → 92%`), the zero-total vs. zero-caught distinction, and two `TrustData`/`ScenarioResultData` shape proofs including that `results` carries every scenario unfiltered.
+
+**A genuine, standing open item, not implied to be resolved:** wiring the real Gate into a self-test harness remains real, substantial, un-started work in this repository — tracked generically under `STATUS_INDEX.md`'s existing `backend/features/*` open item, not a new distinct item, since the harness itself doesn't exist yet to have a wiring gap in the first place.
+
+**Verified live, this sandbox (structural/hand-verified only):** all 4 checkable checks pass exactly as pasted, including a live confirmation that `self_test_harness.py` genuinely doesn't exist in this repository. `CHECK 6` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/features/trust/trust_logic.dart` (new), `mobile/lib/features/trust/trust_screen.dart` (new), `mobile/test/trust_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-088*
+*Next entry: DEC-089*
