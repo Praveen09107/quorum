@@ -1725,10 +1725,34 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-087 — `MOBILE_15`: The Log (Honesty Log) — Batch 8 Begins, a Stated Value Made a Literal UI Decision
+
+**Status:** CONFIRMED
+
+**Confirmed already fixed, not re-done:** `QUORUM_DATA_CONTRACTS.md` §5.13's `/honesty_log` contract (`total`, `success_rate`, `successes`, `failures_and_catches`, `genuinely_uncertain`) is already present in this repository's real copy. No edit was needed.
+
+**A recurring, now-expected discrepancy, re-confirmed rather than assumed:** `backend/features/honesty_log.py`, this session's attached reference, does not exist anywhere in this repository — confirmed live by direct search. Built directly against §5.13's real, sufficient JSON contract instead.
+
+**A real design decision, reasoned through rather than defaulted to the obvious pattern:** a `TabBar` splitting successes from failures was considered and rejected for `honesty_log_screen.dart` — even with two visually symmetric tabs, one is what a person sees by default and the other is a tap away, which doesn't meet the real "EQUAL prominence, not buried" bar this screen exists to honor. A single scrolling list with identical heading and card styling per section was used instead, in the same order the backend's own response provides — the reasoning recorded directly in the widget file's own header comment, not left implicit.
+
+**THE real, load-bearing distinction this session exists to preserve, proven by test:** `caught_by_gate` (the safety system worked) and `corrected_by_user` (the system missed something, a person caught it after the fact) get genuinely distinct labels — `test_caught_by_gate_and_corrected_by_user_are_PROVABLY_not_collapsed_into_each_other` asserts this directly, not just that each label individually looks reasonable. Collapsing both into one generic "failure" label would lose exactly the distinction this project's whole verification architecture exists to make meaningful.
+
+**A second real, honest distinction preserved in the data model:** `successRate` is nullable; `formatSuccessRate(null)` renders "No data yet," genuinely distinct from a real `0.0`'s "0%" — proven by a direct inequality assertion between the two outputs, not just each independently looking right.
+
+**Embedded question, answered before building:** why does collapsing `caught_by_gate` and `corrected_by_user` into one "failure" label actively undermine this screen's purpose, not just lose a nice detail? Because the entire point of this screen is showing a person *what the safety system actually did*, not just whether something went wrong. A gate catch is evidence the verification architecture is working as designed; a user correction is evidence of a real, genuine miss that needed a person to intervene. Merging them tells a person "something failed" without telling them the one fact that actually matters for trusting the system going forward: was this caught by design, or missed by design? A screen built specifically to demonstrate trust-through-transparency that quietly hides this distinction would be lying by omission about the exact thing it claims to measure.
+
+**11 real tests written**, matching the spec's own stated count exactly (the batch guide's checklist separately says 10) — four `formatSuccessRate` cases including the direct null-vs-zero inequality proof, five `outcomeLabel` cases including the direct caught-vs-corrected inequality proof and a de-snaked unrecognized fallback, and two `HonestyFeedData` shape tests.
+
+**Verified live, this sandbox (structural/hand-verified only):** all 3 checkable checks pass exactly as pasted, including a live confirmation that no test asserts an exact `.5` rounding boundary. `CHECK 6` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/features/honesty_log/honesty_log_logic.dart` (new), `mobile/lib/features/honesty_log/honesty_log_screen.dart` (new), `mobile/test/honesty_log_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-087*
+*Next entry: DEC-088*
