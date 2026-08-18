@@ -13,7 +13,8 @@ def _clear_real_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
         "SUPABASE_URL", "SUPABASE_SERVICE_KEY", "UPSTASH_REDIS_URL",
         "UPSTASH_REDIS_REST_TOKEN", "GEMINI_API_KEY", "GROQ_API_KEY",
         "TAVILY_API_KEY", "JWT_SIGNING_KEY", "LANGFUSE_PUBLIC_KEY",
-        "LANGFUSE_SECRET_KEY",
+        "LANGFUSE_SECRET_KEY", "GOOGLE_OAUTH_CLIENT_ID",
+        "GOOGLE_OAUTH_CLIENT_SECRET",
     ]:
         monkeypatch.delenv(name, raising=False)
 
@@ -31,6 +32,8 @@ def test_infrastructure_fields_default_to_none_not_a_guessed_placeholder(monkeyp
     assert settings.tavily_api_key is None
     assert settings.langfuse_public_key is None
     assert settings.langfuse_secret_key is None
+    assert settings.google_oauth_client_id is None
+    assert settings.google_oauth_client_secret is None
 
 
 def test_jwt_signing_key_defaults_to_the_real_env_example_placeholder(monkeypatch):
@@ -72,6 +75,17 @@ def test_upstash_rest_token_is_read_via_its_own_real_env_var_name(monkeypatch):
     monkeypatch.setenv("UPSTASH_REDIS_REST_TOKEN", "a-real-upstash-rest-token")
     settings = Settings(_env_file=None)
     assert settings.upstash_redis_rest_token == "a-real-upstash-rest-token"
+
+
+def test_google_oauth_fields_are_read_via_their_own_real_env_var_names(monkeypatch):
+    _clear_real_env_vars(monkeypatch)
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "real-client-id.apps.googleusercontent.com")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "real-client-secret")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.google_oauth_client_id == "real-client-id.apps.googleusercontent.com"
+    assert settings.google_oauth_client_secret == "real-client-secret"
 
 
 def test_an_unrelated_real_environment_variable_never_causes_a_validation_error(monkeypatch):

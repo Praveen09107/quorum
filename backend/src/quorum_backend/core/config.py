@@ -74,6 +74,14 @@ class Settings(BaseSettings):
     # safety check this default exists to make possible.
     jwt_signing_key: str = Field(default=_INSECURE_DEFAULT_JWT_SIGNING_KEY, alias="JWT_SIGNING_KEY")
 
+    # Google OAuth (Gmail/Calendar ingestion + real send/booking actions
+    # — server-side token exchange, per
+    # QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md §14.2). Added when the real
+    # credentials were actually generated, not provisioned speculatively
+    # ahead of need.
+    google_oauth_client_id: str | None = Field(default=None, alias="GOOGLE_OAUTH_CLIENT_ID")
+    google_oauth_client_secret: str | None = Field(default=None, alias="GOOGLE_OAUTH_CLIENT_SECRET")
+
     # Observability.
     langfuse_public_key: str | None = Field(default=None, alias="LANGFUSE_PUBLIC_KEY")
     langfuse_secret_key: str | None = Field(default=None, alias="LANGFUSE_SECRET_KEY")
