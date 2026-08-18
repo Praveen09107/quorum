@@ -1331,10 +1331,28 @@ A note on this batch's own kickoff guide: it claims a "real bug fix" in `impact_
 
 ---
 
+### DEC-069 — `IMPL_19`: Negotiation Positions + Synthesis — "Merge, Not Invent" as a Mechanical Property
+
+**Status:** CONFIRMED
+
+**Decision:** `positions.py` (`generate_positions`) and `synthesis.py` (`build_synthesis_prompt`, `validate_synthesis_shape`, `synthesize_options`) are real and tested. `NegotiationOption` added to `gate/schemas.py` — same honest disclosure as `Stakes`: no full field spec was ever given anywhere in this project's real corpus; a real, minimal, reasoned construction (`option_id`, `description`, `source_domains` defaulting to empty so a genuine `do_nothing` option can exist without violating the schema).
+
+Real, timed proof of genuine parallelism, not an API-level assumption: `test_positions_actually_run_in_parallel_not_sequentially` — three artificially-delayed 0.1s calls complete in under 0.2s total; if `generate_positions` were secretly sequential, this test would fail at the 0.3s+ mark.
+
+**"Merge, not invent" is mechanically enforced, not just requested in a prompt:** `validate_synthesis_shape` checks every synthesized option's `source_domains` against which domains actually produced a real `Position` — proven by `test_ungrounded_invented_option_is_genuinely_caught`, which constructs exactly the failure mode this design exists to prevent (an option grounded in a domain that never proposed anything) and confirms `SynthesisShapeError` fires.
+
+This session's `STANDARD` (not `CRITICAL`) review tier is genuinely justified in `IMPL_19`'s own real spec document (confirmed present before building, not assumed): synthesized options never execute directly — every one re-enters the real Gate at its own stakes level before anything happens — and this mechanical validation independently catches the one failure mode an LLM call here could introduce.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **133 passed** (126 prior + 7 new).
+
+**Affects:** `backend/src/quorum_backend/negotiation/positions.py` (new), `backend/src/quorum_backend/negotiation/synthesis.py` (new), `backend/src/quorum_backend/gate/schemas.py` (`NegotiationOption` added), `backend/tests/test_negotiation_positions_synthesis.py` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-069*
+*Next entry: DEC-070*
