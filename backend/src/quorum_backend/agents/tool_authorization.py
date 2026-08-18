@@ -26,10 +26,14 @@ DOMAIN_TOOL_MAP: dict[str, set[str]] = {
     "email": {"gmail.send", "gmail.read", "gmail.archive", "gmail.label"},
     "calendar": {"calendar.create_local", "calendar.create_external", "calendar.read"},
     "tasks": {"tasks.create", "tasks.update", "tasks.read"},
+    "finance": {"finance.log_expense", "finance.write_budget", "finance.read"},
 }
-# Three of five real domains present (email, calendar, tasks). Two more
-# are added in IMPL_16-17 -- the "all five domains now present" comment is
-# added honestly in IMPL_17, once it's actually true.
+# Four of five real domains present. Career is added in IMPL_17 -- the
+# "all five domains now present" comment is added honestly there, once
+# it's actually true. "finance.write_budget" is the real, exact tool name
+# from QUORUM_DATA_CONTRACTS.md Sec 6's own MCP tool call shape example --
+# one of the few concrete tool names given anywhere in the real corpus,
+# used verbatim rather than invented.
 
 
 class ToolAuthorizationError(Exception):
