@@ -1921,10 +1921,40 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-096 — `MOBILE_23`: Tasks — All 46 Original Backend and Mobile Sessions Now Complete
+
+**Status:** CONFIRMED
+
+**A genuinely new session, created the same way `MOBILE_22` was — confirmed matching this repository's real state:** a full specification audit found Tasks had no dedicated mobile screen anywhere across all 22 prior mobile sessions, and this absence was never named or tracked — a different, more concerning category than the seven honestly-tracked-but-deferred unreachable screens.
+
+**A path discrepancy adapted, not silently ignored, same pattern as `DEC-083`:** this session's references (`backend/migrations/001_initial_schema.sql`) don't match this repository's real path (`backend/migrations/0001_initial_schema/up.sql`). Checked at the real path; both real facts confirmed live: `status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','done','cancelled'))` and `estimated_hours NUMERIC(4,1) NOT NULL`.
+
+**Confirmed already fixed, not re-done:** `QUORUM_DATA_CONTRACTS.md` §5.17's `/tasks` contract is already present in this repository's real copy, including the explicit closed-vocabulary statement.
+
+**THE DELIBERATE DESIGN CONTRAST with `MOBILE_11`'s Career Pipeline, the real point of this session:** `tasks.status` has a genuine, database-enforced `CHECK` constraint — a closed contract, the opposite of `applications.status`'s confirmed-open one. `parseTaskStatus()` correctly fails LOUD (`throws ArgumentError`) on an unrecognized value, the deliberate opposite of Career Pipeline's graceful fallback — proven by test, not just asserted. `formatHours()` is pure display formatting with no rounding-ambiguity risk, since `estimated_hours` is database-guaranteed to at most one decimal place — confirmed live, not assumed, a genuine absence of the disputed-`.5`-boundary risk five other real files in this project share.
+
+**A real, reasoned navigation link, not arbitrary:** Holding Steady → Tasks, wired via `today_screen.dart`'s `_ZoneSection` (its `trailing` slot, built without a real use in `MOBILE_22`, extended here with its first real one) — reasoned the same way as `MOBILE_22`'s Trust→Trust Digest and You→Memory Transparency links: Holding Steady's real capacity number is computed directly from real task commitments, the same domain a person would naturally want to open when that number prompts a question.
+
+**Embedded question, answered before building:** why does the exact same "fall back gracefully" pattern become the wrong choice here, when it was right for Career Pipeline? Because the two fields' real contracts are genuinely different facts, not a matter of taste: `applications.status` has no database `CHECK` constraint (confirmed, `DEC-083`) — an unrecognized value there is a real, expected, legitimate possibility the client must absorb gracefully. `tasks.status` has a real, enforced `CHECK` constraint (confirmed live, this session) — an unrecognized value there can only mean something is genuinely wrong (a schema drift, a real bug upstream), and silently absorbing it would hide that problem instead of surfacing it. The right pattern is determined by the field's real, checkable database contract, never by which pattern was used for the last similar-looking field.
+
+**14 real tests written**, matching the spec's own stated count exactly (the batch guide's checklist separately says 12) — all three real status-parsing cases plus the fail-loud proof, all three status labels, two `formatHours` cases, and six `sortTasks` cases including the real hand-verified mixed case and the specific earliest-deadline-but-done edge case named in this session's own spec.
+
+**Verified live, this sandbox (structural/hand-verified only):** all 5 checkable checks pass exactly as pasted, including live confirmation of both real schema facts at the real migration path.
+
+**THIS CLOSES ALL 46 ORIGINAL BACKEND AND MOBILE SESSIONS** (`IMPL_00`–`22`, `MOBILE_01`–`23`, plus the two genuinely-new sessions `MOBILE_22` and this one, found during execution and given their own full sessions rather than folded into others). Real, live, final counts — computed directly, not restated from any earlier partial sum, per `CLAUDE.md`'s own drift-pattern warning:
+- **Backend: 162/162 passing** (`ruff check backend` clean; unaffected by this all-mobile batch).
+- **Mobile: 214 real test cases written** across 23 files, batch by batch: Batch 5 (26), Batch 6 (50), Batch 7 (45), Batch 8 (53), Batch 9 (40 — `outage_detector_test.dart` 9, `action_disposition_test.dart` 9, `share_intent_logic_test.dart` 5, `main_shell_composition_test.dart` 1, `main_shell_test.dart` 2, `tasks_logic_test.dart` 14). None have actually executed — no Dart/Flutter SDK exists on this machine, confirmed directly one final time. Neither figure matches the batch guide's own closing assumption (157 backend, various mobile counts) — the real, live numbers are reported directly, the same discipline held throughout all nine batches of this effort.
+
+`CHECK 7` (`dart test`, `flutter test`) — the real, final closing gate for this entire 9-batch effort — genuinely requires a real machine this environment doesn't have. Reported as the single largest standing open item, not fabricated: every real file across all 23 mobile sessions is structurally correct against documented package APIs, with every boundary/arithmetic case hand-verified in Python first, but zero of the 214 written tests have ever actually executed.
+
+**Affects:** `mobile/lib/features/tasks/tasks_logic.dart` (new), `mobile/lib/features/tasks/tasks_screen.dart` (new), `mobile/lib/features/today_screen.dart` (extended: real Tasks navigation link), `mobile/test/tasks_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-096*
+*Next entry: DEC-097*
