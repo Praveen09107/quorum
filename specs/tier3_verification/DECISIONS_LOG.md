@@ -1433,10 +1433,28 @@ This session's `STANDARD` (not `CRITICAL`) review tier is genuinely justified in
 
 ---
 
+### DEC-074 — `MOBILE_02`: On-Device Model Integration — Correct Regardless of Which Model Wins
+
+**Status:** CONFIRMED
+
+**The real, checked-not-assumed dependency this session exists to handle honestly:** `QUORUM_CONFIGURATION_CONSTANTS.md` §7 was re-read directly before writing any code — it still reads "pending Sprint 0 (§19 of the ADD, not yet resolved)". `IMPL_00` needs a real Android device this environment doesn't have, so it hasn't run. This session could have picked a model (Gemma, say) and quietly treated it as decided — a real, dishonest shortcut this project's whole discipline exists to prevent. Built instead to be correct regardless of which model eventually wins: `resolvedFullTierModel` stays `OnDeviceModelId.unresolved`, verified live via direct `grep`, not assumed.
+
+**What was actually built:** `model_config.dart` — `OnDeviceModelId` enum (`unresolved` is a genuine member, not a null-hack), `resolvedFullTierModel` (honestly `unresolved`), `lightTierModelId` (`'SmolLM2-1.7B'`, cross-checked live against `QUORUM_MASTER_REFERENCE.md` §5's real "Locked" status — a real thing that WAS resolvable now, correctly separated from what wasn't). `device_tier.dart` — `classifyDeviceTier()`, real 8192MB/4096MB boundaries, hand-verified in Python before finalizing the Dart (both files' logic confirmed identical at every real boundary: 8192, 8191, 4096, 4095, 512). `on_device_model_loader.dart` — `resolveModelForTier()` returns a real model string for Light tier, returns `null` for Cloud-only (a deliberate, honest "no model by design" fact, never an error), and throws `OnDeviceModelNotResolvedException` — specifically and only for Full tier while unresolved — never a silent fallback to the Light-tier model.
+
+**9 real tests written**, one more than the spec's stated 8 (5 boundary tests + the load-bearing `resolvedFullTierModel` honesty check + 3 resolution-behavior tests, kept and disclosed rather than trimmed — the Cloud-only `null`-return test is a genuine, meaningful behavior this session's own design deliberately distinguishes from the Full tier's "not yet resolved" exception, not filler).
+
+**Embedded question, answered before building:** why does an unresolved Full tier throw loudly rather than silently fall back to the Light-tier model? Because a Full-tier device genuinely qualifies for real local inference — this project simply hasn't measured, via Sprint 0, which model wins yet. A silent fallback would misrepresent a real, still-open empirical question as an already-made architectural decision. `OnDeviceModelNotResolvedException` is designed to be caught by the real Capacity Manager (a later session) and routed to cloud, matching ADD §10.7's own stated principle — "silent per-request fallback to cloud, never a visible error" — so the *user* never sees a crash; only the *logs* honestly show why a Full-tier device is temporarily running cloud behavior.
+
+**Verified live, this sandbox (structural/hand-verified only — `dart test` remains a genuine, disclosed open item, no Dart SDK exists here either):** all 5 checkable checks pass — both real files' three-file existence, `resolvedFullTierModel`'s live literal value, the boundary thresholds matching the Python hand-verification exactly, the exception class's real presence, and `lightTierModelId`'s cross-check against `QUORUM_MASTER_REFERENCE.md` §5.
+
+**Affects:** `mobile/lib/config/model_config.dart` (new), `mobile/lib/model/device_tier.dart` (new), `mobile/lib/model/on_device_model_loader.dart` (new), `mobile/test/model_resolution_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-074*
+*Next entry: DEC-075*
