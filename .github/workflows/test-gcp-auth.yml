@@ -1,0 +1,29 @@
+name: Test GCP Authentication
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-auth:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: quorum-505909
+          workload_identity_provider: projects/649581407643/locations/global/workloadIdentityPools/quorum-github-pool/providers/quorum-github
+          service_account: quorum-ci-deployer@quorum-505909.iam.gserviceaccount.com
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Verify Google Cloud access
+        run: gcloud projects describe quorum-505909
