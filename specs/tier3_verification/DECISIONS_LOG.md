@@ -1589,10 +1589,34 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-081 — `MOBILE_09`: The Full Negotiation Screen — Batch 6 Complete, Two of This Project's Most Distinctive Screens Now Real
+
+**Status:** CONFIRMED
+
+**The real, most important check for this session, confirmed live before trusting anything this screen displays:** `higher_is_better` is genuinely present in `backend/src/quorum_backend/negotiation/impact_simulator.py` — `DEC-070`'s real fix (not `DEC-053`, which this batch's own source material cites; see `DEC-077`'s citation correction, restated here since it's directly load-bearing for this specific session). This screen has no way to independently detect a wrong `direction` string from the backend; it trusts what it's given, and that trust is genuinely warranted right now.
+
+**A schema-precision discrepancy, flagged and disclosed rather than silently matched:** this session's kickoff prompt describes `NegotiationOption`'s `option_id` as a "closed set." The real schema (`backend/src/quorum_backend/gate/schemas.py`, confirmed live) types it as a plain `str`, not a schema-enforced closed `Literal`. `NegotiationOptionData` was built to match the real schema exactly, not the kickoff's imprecise description.
+
+**A real, newly-tracked open item, genuinely new to this repository, not a continuation of prior tracking:** `formatMetricValue`'s percentage rounding hits the same Dart `.5`-boundary rounding-convention disagreement (Python's banker's rounding vs. Dart's round-half-away-from-zero) this batch's own source material describes as "already tracked in `STATUS_INDEX.md` open item #6, previously connected only to `finance_logic.dart`." **`finance_logic.dart` does not exist in this repository, and no prior open item about this Dart rounding behavior was ever recorded here** — confirmed by direct review of the real, current open-items list before this session began. The underlying concern is real and legitimate regardless: `0.505 * 100 = 50.5` genuinely produces different results under the two languages' conventions (Python: `50`; Dart: `51`, per direct hand-verification). Genuinely new to this repository's tracking as of this session — added to `STATUS_INDEX.md` for real, not restated from a prior entry that never existed. The test suite deliberately uses `0.999 → 100%` instead — hand-verified as unambiguous under either convention (`0.999 * 100 = 99.9`, rounds to `100` regardless).
+
+**What was actually built:** `negotiation_logic.dart` (zero Flutter dependencies) — `PositionData`, `ImpactDeltaData`, `NegotiationOptionData`, `metricLabel()`, `formatMetricValue()` (unit-correct: hours get an "h" suffix, the fraction metric renders as a percentage — confirmed against the real, closed three-metric set), `visualStateForDirection()`, `capitalizeDomain()`. `negotiation_screen.dart` — real agent-voice cards, one per `Position`, never merged into a single summary; every delta rendered with its real before → after values alongside the direction arrow, never the symbol alone; every option card uses **identical** styling — confirmed by direct code inspection, no badge, no highlight, no reordering.
+
+**Embedded question, answered before building:** why does this file contain zero "which option is better" logic, given the impact deltas make a recommendation technically computable? Because the real principle this screen protects is user agency over the negotiation's actual outcome — Quorum's own architecture already runs every synthesized option back through the real Gate at its own stakes level before anything executes; this screen's job is honest disclosure of real numbers, not pre-selecting an answer on the user's behalf. A recommendation, even a technically well-reasoned one, would quietly narrow a decision this project's whole design commits to leaving genuinely open.
+
+**14 real tests written**, one more than the spec's stated 13 (a genuine end-to-end test exercising all three real metrics together, kept and disclosed rather than trimmed) — covering all three metric labels, unit-correct formatting for both hour-based metrics and the percentage metric, the hand-verified unambiguous rounding boundary, all three real directions plus a defensive unrecognized-value fallback, domain capitalization including an empty-string edge case, and the combined end-to-end case.
+
+**Verified live, this sandbox (structural/hand-verified only):** all 6 checkable checks pass — including the single most important one (`CHECK 2`, the backend polarity-fix dependency) and the zero-recommendation-logic check (`CHECK 3` technically matches this file's own explanatory comment about the absence, the same real false-positive pattern this project has hit before — confirmed by direct reading that no actual recommendation logic exists). `CHECK 7` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Batch 6 (Today screen, Gate Reveal, Negotiation Screen — `MOBILE_05`–`09`) is now complete.** Both of this project's most architecturally distinctive UI moments (the Gate Reveal and this session's negotiation screen) now exist as real, structurally verified code.
+
+**Affects:** `mobile/lib/features/negotiation/negotiation_logic.dart` (new), `mobile/lib/features/negotiation/negotiation_screen.dart` (new), `mobile/test/negotiation_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-081*
+*Next entry: DEC-082*
