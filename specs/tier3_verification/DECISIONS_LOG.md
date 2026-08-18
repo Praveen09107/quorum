@@ -1349,10 +1349,28 @@ This session's `STANDARD` (not `CRITICAL`) review tier is genuinely justified in
 
 ---
 
+### DEC-070 — `IMPL_20`: Negotiation Impact Simulation — Built Correct From The Start, Not "Fixed"
+
+**Status:** CONFIRMED
+
+**Discrepancy flagged before building, per Rule 4:** the batch guide's own kickoff prompt for this session claimed a "real, live bug" in `_direction()` — `task_hours_committed`'s inverted polarity supposedly discovered and fixed while the guide was being prepared, with the batch's expected final backend test count adjusted upward to 157 to account for one new regression test. **This repository's real `IMPL_20` spec document (`specs/tier2_implementation/IMPL_20_NEGOTIATION_IMPACT_SIMULATION.md`) says none of this** — it describes 6 real tests, makes no mention of `higher_is_better`, polarity, or any bug, and its own verification steps expect **133 passed (127 prior + 6 new)**, a baseline that itself doesn't match this repository's real, live prior count of 133 (after `IMPL_19`, confirmed by direct pytest run, not the spec's assumed 127). Same recurring pattern as every batch before this one: a document describing work against a codebase this repository never actually had. Building fresh, not "fixing" anything that was never broken here.
+
+**What was actually built:** `task_hours_committed` genuinely does need inverted polarity — this is real domain semantics documented independently in this module's own docstring and in `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md` §8.4/`QUORUM_DATA_CONTRACTS.md` §1.8 (more committed hours means less real free capacity, which is worse, not better) — so `_direction(before, after, higher_is_better=True)` was built with the parameter from the first line of code, and `compute_deltas()` passes `higher_is_better=False` only at `task_hours_committed`'s call site. There was never a simpler, buggy version in this repo's real history to regress from.
+
+`DomainSnapshot` and `OptionEffect` (both `frozen=True`) are disclosed as real, minimal constructions — same pattern as `NegotiationOption` at `IMPL_19` — since `QUORUM_DATA_CONTRACTS.md` §1.8 documents only the boundary-crossing `ImpactDelta` exhaustively, explicitly leaving this module's internal working types unspecified. `apply_effect()` uses `dataclasses.replace()`, a real copy, never a mutation — proven by `test_apply_effect_never_mutates_the_original_baseline`. `simulate_all_options()` treats a caller-supplied `do_nothing` entry (an all-zero `OptionEffect`) through the exact same `compute_deltas()` code path as every other option — never a special-cased branch — matching the real spec's own stated intent.
+
+**7 real tests written** (one more than the real spec's stated 6, kept and disclosed rather than trimmed to match — the polarity test is a genuine correctness property this module must have regardless of the batch guide's inaccurate "regression" framing), including a genuine 50-run determinism proof and a real cross-option independence check (`test_simulate_all_options_computes_each_option_independently_from_the_same_baseline`) confirming one option's computation never leaks into another's result against the same baseline.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **140 passed** (133 prior + 7 new) — the real, current count; not 157, per the recurring drift pattern this log keeps finding in pasted batch-guide figures. `STATUS_INDEX.md` is the live pointer for the current true count going forward, per `CLAUDE.md`'s own drift-pattern warning against restating a number outside it.
+
+**Affects:** `backend/src/quorum_backend/negotiation/impact_simulator.py` (new), `backend/tests/test_negotiation_impact_simulator.py` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-070*
+*Next entry: DEC-071*
