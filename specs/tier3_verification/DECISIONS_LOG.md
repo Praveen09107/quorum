@@ -1613,10 +1613,32 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-082 — `MOBILE_10`: Waiting On — The First Session in a New Batch, `backend/features/*.py` Confirmed Still Absent
+
+**Status:** CONFIRMED
+
+**Confirmed already fixed, not re-done:** `QUORUM_DATA_CONTRACTS.md` §5.9's `/waiting_on` contract gap (`recipient`, `subject`, `sent_at`) is already present in this repository's real copy of the document. No edit was needed.
+
+**A recurring, now-expected discrepancy, re-confirmed rather than assumed:** this session's attached reference, `backend/features/waiting_on.py`, does not exist anywhere in this repository — consistent with `STATUS_INDEX.md`'s standing disclosure that `backend/features/*` has never been built here. Built directly against §5.9's real, sufficient JSON contract instead, the same resolution already applied throughout this project whenever a referenced file turns out not to exist in this repository's real history.
+
+**The real, hand-verified arithmetic, confirmed before trusting Dart's `Duration.inDays`:** August 10 09:00 to August 15 14:00 is exactly 5 real days — confirmed live in Python before this file existed.
+
+**What was actually built:** `waiting_on_logic.dart` (zero Flutter dependencies) — `WaitingOnItem`, `daysSince()`, `formatStaleness()`, and `sortByStaleness()` (a natural, disclosed extension beyond the kickoff's named four, consistent with `MOBILE_05`/`MOBILE_07`'s oldest-first pattern). `formatStaleness()` treats every non-positive value identically ("Today") — zero days and a genuinely impossible negative value collapse to the same safe, honest output, since this screen has no honest way to distinguish "sent today" from "a skewed clock reporting a future send time." `waiting_on_screen.dart` — the real widget, sorted oldest-first.
+
+**Embedded question, answered before building:** why treat any non-positive value the same way rather than distinguishing 0 from a negative? Because there's no meaningful, honest distinction this screen could actually display — a negative value is definitionally a data or clock problem, not a real state a person needs to see differently from "sent today." Manufacturing a distinct label for an impossible value would imply more precision than the data actually supports.
+
+**9 real tests written**, matching the spec's own stated count exactly (the batch guide's checklist separately says 8) — the hand-verified 5-day case, all five `formatStaleness` cases including the defensive negative one, and three `sortByStaleness` cases (ordering, non-mutation, empty list).
+
+**Verified live, this sandbox (structural/hand-verified only):** `CHECK 1` and `CHECK 3` pass exactly as pasted. `CHECK 4` (`grep` for `find_stale`/`threshold`, expecting zero results) finds real matches — but only inside this file's own explanatory comment naming `find_stale_waiting_on()` to explain the delegation boundary, the same real false-positive pattern this project has hit repeatedly (`MOBILE_06`, `MOBILE_09`, `IMPL_09`, `IMPL_15`) — confirmed by direct reading that no actual threshold-comparison or staleness-deciding logic exists anywhere in the file; `formatStaleness()`'s branches are formatting decisions, not filtering ones. `CHECK 5` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/features/waiting_on/waiting_on_logic.dart` (new), `mobile/lib/features/waiting_on/waiting_on_screen.dart` (new), `mobile/test/waiting_on_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-082*
+*Next entry: DEC-083*
