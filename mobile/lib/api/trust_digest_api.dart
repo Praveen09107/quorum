@@ -12,6 +12,18 @@
 /// (no browser automation exists in this environment to build and
 /// verify that end to end); this file's real job stops at "given a
 /// valid token, make the real call and parse the real response."
+///
+/// A real, disclosed correction from fresh-context review before this
+/// merged: an earlier version created its own default `http.Client()`
+/// when none was injected, silently owning a resource this module had
+/// no way to ever close -- harmless while dormant (nothing called it
+/// yet), but a real leak once actually wired up. `client` is now
+/// required, never defaulted -- whoever wires this up for real (once a
+/// login screen exists) owns that client's lifecycle explicitly, the
+/// same "no hidden singleton, every dependency injected" discipline
+/// this project's backend already holds itself to (`core/db.py`'s pool
+/// is owned by `main.py`'s lifespan, never created by a feature module
+/// for itself).
 library;
 
 import 'dart:convert';
@@ -30,15 +42,13 @@ import 'package:quorum_mobile/features/trust_digest/trust_digest_logic.dart';
 /// `flutter analyze` flags as `library_private_types_in_public_api`.
 Future<TrustDigestData> Function() createTrustDigestFetcher({
   required String accessToken,
-  http.Client? client,
+  required http.Client client,
   String baseUrl = ApiConfig.baseUrl,
 }) {
-  final httpClient = client ?? http.Client();
-
   return () async {
     final http.Response response;
     try {
-      response = await httpClient.get(
+      response = await client.get(
         Uri.parse('$baseUrl/trust_digest'),
         headers: {'Authorization': 'Bearer $accessToken'},
       );
