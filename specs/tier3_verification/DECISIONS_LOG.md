@@ -1999,10 +1999,30 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-099 — Batch 10, PHASE 3 PART A: Self-Test Harness Wired Directly to the Real Gate
+
+**Status:** CONFIRMED
+
+**A deliberate departure from the ADD's own original narrative, disclosed rather than silently followed:** `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md` §9.6 describes this harness as first built against an explicit stub (`_stub_gate_for_demo`), with real Gate wiring as later, separate work — the exact gap `MOBILE_16` correctly found and deferred (`DEC-088`: "a fabrication declined... no backend 'staleness fix' was invented"). That narrative describes a repository state that predates this one: `backend/features/self_test_harness.py` never existed here before this session (confirmed by direct search first), and the real Gate (`gate.review()`, `IMPL_08`) has been complete and live since long before this phase began. Building a stub layer here would only be work this repository would later delete — so `run_self_test()` calls `gate.review()` directly from its first line of code. `target: "real_gate"` is kept as a real, honest, exported field anyway (mirroring the Trust screen's own `target: stub | real_gate` label, `MOBILE_16`) — it is simply always `"real_gate"` in this repository, since no stub alternative was ever built here to be the other value. Any other value fails loud (`ValueError`), never silently ignored.
+
+**Built:** `AdversarialScenario` (a real, complete Gate input — full `ActionProposal`, `Stakes`, and injected `stage_a_checks`/`critic_call`/`judge_call`, not a toy dict), `ScenarioResult`, and `SelfTestSummary`/`summarize()` matching `QUORUM_DATA_CONTRACTS.md` §5.14's real `/trust` JSON shape (`total`, `caught`, `missed`, `results`, `target`) exactly — built now so whichever session wires the live `/trust` endpoint has a real, tested function to call, not a shape to re-derive. `summarize()` never filters `results`; `missed` is a real, honest subset for quick display only.
+
+**The one real property this module exists to guarantee, proven by test, not just asserted (ADD §9.6's own stated bar):** a scenario whose real Gate outcome disagrees with what was expected must be reported as a genuine miss (`passed=False`), never silently hidden as a pass. `test_a_deliberately_mis_specified_scenario_is_reported_as_a_genuine_miss_not_hidden` constructs a real scenario the Gate will genuinely approve, deliberately expects `"reject"`, and confirms the mismatch surfaces exactly as `passed=False` — not caught, not swallowed, not silently coerced.
+
+**Three real default scenarios, each exercising a genuinely different Gate exit path**, run end-to-end against the live `review()`: `S0_clean_approval` (Stage-A-only approval, zero Stage B cost), `S2_stage_a_hard_fail` (a real `verified_false` Stage A finding forces `revise`), `S3_real_critic_objection_escalates` (a real S3 action with a genuine Critic objection reaches Judge `escalate_to_human`). All three confirmed by direct test to produce their real expected decisions through the actual orchestration code, not asserted from reading `orchestration.py` alone.
+
+**A real, previously-undocumented gap in this log found and disclosed while reconciling the test count, not silently folded in:** the real credential-verification work earlier in this phase (commits `4807116` "add missing UPSTASH_REDIS_REST_TOKEN..." and `21f7131` "add real Google OAuth config fields...") extended `core/config.py` and `test_core_config.py` with 2 real new tests (`upstash_rest_token`, `google_oauth_client_id`/`secret`) — real, already merged to `main` with their own commits, but never given their own `DECISIONS_LOG` entry. Recorded here rather than left permanently unaccounted for.
+
+**Verified live:** `ruff check` on both new files → clean. `PYTHONPATH=backend/src pytest backend/tests -q` → **181 passed** — reconciled directly, not asserted: 172 (`DEC-097`) + 2 (the undocumented config extension above) + 7 (this session's `test_self_test_harness.py`) = 181, matching the real, live run exactly.
+
+**Affects:** `backend/src/quorum_backend/features/self_test_harness.py` (new), `backend/tests/test_self_test_harness.py` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-099*
+*Next entry: DEC-100*
