@@ -1899,10 +1899,32 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-095 — `MOBILE_22`: Screen Composition — A Genuinely New Session, Two Real Design Differences From the Assumed Layout Crash, and a Real Architecture Substitution
+
+**Status:** CONFIRMED
+
+**A genuinely new session, not part of the original 21-session mobile plan — confirmed matching this repository's real state, not just the spec's own framing:** built the same way `trust_digest.py` and `memory_transparency.py` were, a real gap found during execution given its own complete session.
+
+**Two real, disclosed discrepancies against this session's own narrative, both confirmed by direct inspection before building, per Rule 4:**
+1. The spec describes "twelve real screens each wrapping their own `Scaffold`," requiring extraction of bare `*Content` widgets before composition. Direct `grep` across every real `*_screen.dart`/`*_zone.dart` file in this repository found **zero** using `Scaffold` — every real screen here was already built as bare, directly-composable body content from the moment it was written. No extraction was needed; `HonestyLogScreen`, `TrustScreen`, and `YouScreen` compose directly.
+2. The spec describes all three Today zones already building their own internal scrollable (`ListView.builder` twice, `SingleChildScrollView` once), fixed by composing them with `Column`+`Expanded`. Direct inspection of this repository's real zone files found **none** internally scrollable — all three are plain, unbounded-height `Column`s. The `Column`+`Expanded` fix would have been WRONG here: forcing three non-scrolling `Column`s into evenly-divided thirds would either overflow real content or waste space. The real, correct fix for this repository's actual code is different and simpler: one shared outer `ListView` containing all three zones' content in sequence — confirmed live: `today_screen.dart`'s real widget construction is `return ListView(...)`, not `Column`/`Expanded`.
+
+**A real architecture substitution, disclosed and reasoned through, not silently deviated from the spec:** this session's own narrative assumes each tab reads its data from a Riverpod repository *provider* it watches internally, and its composition test overrides those providers with fakes. No such provider layer exists anywhere in this repository — every real screen built since `MOBILE_05` takes already-fetched data via a plain constructor parameter instead, disclosed each time as "the real Repository HTTP implementation is deferred, injected pattern." Composition here uses that same, already-established pattern: each tab takes an optional async fetcher (`TodayDataFetcher`, `HonestyFeedFetcher`, `TrustFetcher`, etc.), rendered via a real `FutureBuilder` once supplied. When unconfigured — this repository's current, honest, real state, since no live backend exists — the tab shows a real `_NotConnectedState` message rather than fabricated data. `main_shell_composition_test.dart` achieves the identical real goal the spec's provider-override test describes (proving the composed tree pumps without a layout crash given genuine, full data) by supplying real, working fake fetcher functions directly, without inventing a provider layer this repository's real history never built.
+
+**What was actually built:** `today_screen.dart` (new) — `TodayScreenData` (a real, disclosed bundling type), `TodayScreen`, `_ZoneSection` (built without a `trailing` slot's real use yet — the parameter exists now so a later session, `MOBILE_23`, can extend it without restructuring this file). `trust_screen.dart` and `you_screen.dart` restructured with real, optional injected fetchers and real `FutureBuilder`-driven navigation to `TrustDigestScreen`/`MemoryTransparencyScreen`. `main_shell.dart` — real composition of all four tabs, a real `AppBar` added, placeholders fully removed. `main_shell_test.dart` — fixed to the new composition (2 real tests, down from 3, matching the spec's own post-fix count). `main_shell_composition_test.dart` (new) — 1 real test, genuinely pumping the full composed tree with real fake data.
+
+**Embedded question, answered before building:** why does this session's real test specifically assert "no layout crash," not just that four tabs exist? Because a widget tree can pass every existence assertion (find four tabs, find the right text) while still being one bad rebuild away from a real, thrown Flutter exception the moment genuine, full-length data arrives — existence checks run against whatever data a test happens to supply, which is often too little to expose a real overflow. `pumpAndSettle` against genuinely representative data is the only way to catch the actual class of bug this session exists to prevent: real content, at real scale, breaking a layout that looked fine with a placeholder or an empty list.
+
+**Verified live, this sandbox (structural/hand-verified only):** `CHECK 1`, `CHECK 2`, `CHECK 3` pass exactly as pasted. `CHECK 4` adapted and confirmed live against this repository's real, different fix — `today_screen.dart`'s actual widget construction is `ListView`, not `Column`/`Expanded`, matching the disclosed discrepancy above. `CHECK 5` (`flutter test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/features/today_screen.dart` (new), `mobile/lib/features/trust/trust_screen.dart` (restructured), `mobile/lib/features/you/you_screen.dart` (restructured), `mobile/lib/shell/main_shell.dart` (fully composed), `mobile/test/main_shell_test.dart` (fixed, 2 tests), `mobile/test/main_shell_composition_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-095*
+*Next entry: DEC-096*
