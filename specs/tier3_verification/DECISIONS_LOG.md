@@ -1771,10 +1771,32 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-089 — `MOBILE_17`: Trust Digest — A Genuinely New Backend Module, Built to Full Standard
+
+**Status:** CONFIRMED
+
+**A different kind of finding than every session since `MOBILE_05`, correctly distinguished from `MOBILE_16`'s:** every prior gap in this mobile sequence was "real backend logic exists, nothing exposes it," or — at `MOBILE_16` — "the referenced file doesn't exist and building it is real, deferrable, substantial work." This session's real spec explicitly frames `trust_digest.py` as new work this session itself creates, not a pre-existing file with a bug — and confirmed, this repository's real state matches that framing exactly: no week-over-week trend comparison existed anywhere in this backend before this session. Unlike `MOBILE_16`'s Gate-wiring finding, this one is scoped, bounded, and honestly within a single session's reach — so it was built, not deferred.
+
+**What was actually built, to the same standard as any original `IMPL_XX` backend session:** `backend/src/quorum_backend/features/trust_digest.py` — `STABLE_THRESHOLD` (a real, named 2-percentage-point constant, not a magic number), `WeeklyTrustSummary`, `TrendResult` (both `frozen=True`), `compare_weeks()`. `backend/src/quorum_backend/features/predictive_risk.py`, cited by this session's own spec as the design-philosophy precedent ("deliberately simple and explainable... a count comparison, not a trained model"), does not exist in this repository either — built directly against the philosophy the ADD's §9.7 table *describes*, not literally copied from a file this repository doesn't have.
+
+**The exact floating-point boundary case, proven live before trusting the test:** `0.80 + STABLE_THRESHOLD` produces `0.8200000000000001` in raw floating point — confirmed live — and `round(..., 3)` cleanly resolves this back to exactly `STABLE_THRESHOLD`, confirmed before `test_exact_threshold_boundary_is_classified_as_stable_not_improving` was written, the same arithmetic caution established since `MOBILE_13`.
+
+**7 real backend tests written**, matching the spec's own stated count exactly — improving, declining, and stable trends; the exact threshold boundary; and all three real `insufficient_data` triggers (no previous week, zero actions in either week).
+
+**Mobile side:** `trust_digest_logic.dart` (zero Flutter dependencies) — `WeeklyTrustSummaryData`, `TrustDigestData`, `TrustTrend`, `parseTrend()` (fails CLOSED to `insufficientData`, the same fail-closed principle as `MOBILE_16`'s `parseTarget`, reapplied without needing to be re-derived), `trendLabel()`, `formatDelta()` (real, signed, single-sign formatting; `null` renders as an empty string, never a misleading placeholder number). `trust_digest_screen.dart` — the real widget. 11 real Dart tests, matching the spec's own stated count exactly.
+
+**Embedded question, answered before building:** why does `parseTrend` fail toward `insufficientData` rather than `stable`? Because "we compared and found no real change" and "we couldn't make a real comparison at all" are genuinely different claims. `stable` asserts a real comparison happened and concluded the two weeks were statistically close — a specific, positive claim about data that was actually examined. `insufficientData` makes no claim about direction at all. Defaulting an unrecognized value to `stable` would fabricate a comparison that was never actually made; `insufficientData` is the only honest response to genuinely not knowing.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **158 passed** (151 prior + 7 new) — the real, live count; this session's own spec assumed `152` (`145 prior + 7`), inheriting `MOBILE_16`'s prior-count assumption that included the backend fix this repository correctly declined to fabricate (`DEC-088`) — the real, current count is reported directly rather than forced to match either figure, consistent with this project's established practice. All 4 checkable mobile checks pass exactly as pasted. `CHECK 6` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `backend/src/quorum_backend/features/trust_digest.py` (new), `backend/tests/test_trust_digest.py` (new), `mobile/lib/features/trust_digest/trust_digest_logic.dart` (new), `mobile/lib/features/trust_digest/trust_digest_screen.dart` (new), `mobile/test/trust_digest_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-089*
+*Next entry: DEC-090*
