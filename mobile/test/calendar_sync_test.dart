@@ -18,7 +18,6 @@
 // both ends), and the event just before `start_q` is genuinely excluded
 // too.
 
-import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:test/test.dart';
 

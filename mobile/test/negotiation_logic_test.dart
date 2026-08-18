@@ -47,6 +47,17 @@ void main() {
     test('the real, hand-verified, unambiguous rounding boundary: 0.999 rounds to 100%, not truncated to 99%', () {
       expect(formatMetricValue('budget_remaining_fraction', 0.999), '100%');
     });
+
+    // The real, exact `.5` tie case (STATUS_INDEX.md open item #11),
+    // resolved live against a real Dart compiler this session: Dart's
+    // num.round() is round-half-AWAY-FROM-ZERO, confirmed directly
+    // (0.505 * 100 == 50.5, .round() == 51) -- genuinely different from
+    // Python's banker's rounding, which would give 50. This was
+    // deliberately left unasserted until a real compiler could confirm
+    // it, per this file's own established discipline.
+    test('the real, now-confirmed .5 tie: 0.505 rounds to 51%, round-half-away-from-zero', () {
+      expect(formatMetricValue('budget_remaining_fraction', 0.505), '51%');
+    });
   });
 
   group('visualStateForDirection -- trusts the backend, the direct DEC-070-connected dependency', () {

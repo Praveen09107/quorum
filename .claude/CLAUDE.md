@@ -33,7 +33,7 @@ Solo developer, portfolio-motivated, prior real experience with this exact spec-
 - `tasks.status` is a real, closed set (`open`/`done`/`cancelled`), enforced by a database `CHECK` constraint — parse it fail-loud on an unrecognized value. `applications.status` has no such constraint and is genuinely open — parse it defensively instead. These are opposite handling on purpose; don't make them consistent with each other, they're describing two genuinely different real contracts (`MOBILE_11` vs. `MOBILE_23`).
 
 ## What changed mid-project — don't assume the old state
-- **The backend's real, current layout is flat** — `backend/main.py`, `backend/router.py`, and package directories (`gate/`, `agents/`, etc.) all sit directly under `backend/`, imported via `PYTHONPATH=backend`. A restructure to a proper `backend/src/quorum_backend/` src-layout is *specified* (`specs/tier1_foundation/QUORUM_PROJECT_STRUCTURE.md`) but **not yet applied** — don't write new code assuming `from quorum_backend.gate import X` import paths work today. Check which state is actually on disk before assuming either.
+- **RESOLVED, real stale fact corrected here (`DEC-097`, Batch 10 Phase 0):** this line previously claimed the backend's layout was still flat (`backend/main.py`, `backend/router.py` etc. directly under `backend/`, `PYTHONPATH=backend`). Confirmed directly, since long before Batch 10: `backend/src/quorum_backend/` has used the target src-layout, with real `from quorum_backend.gate import X`-style namespaced imports throughout, since `IMPL_01` — this project's real history never went through a flat phase at all despite this file having claimed one. The one genuine gap the restructure spec named (`core/config.py`) was the only real thing missing, and that's been closed since `DEC-097` too. Use `PYTHONPATH=backend/src`, not `PYTHONPATH=backend` — see Common Commands below.
 - **This project has real git history only as of one deliberate, disclosed late bulk commit**, not a clean per-session log — a written commitment to per-session branches existed for 45+ sessions before anyone actually followed it. Don't infer anything about *when* a piece of code was written from commit timestamps; the real record of that is `DECISIONS_LOG.md`, not `git log`.
 - **`self_test_harness.py` still runs against `_stub_gate_for_demo`, not the real Gate**, even though the real Gate (`gate.review()`) has been complete since `IMPL_08`. A `target: "stub" | "real_gate"` field exists specifically so downstream consumers (like the Trust screen) can tell the truth about which one produced a given result — check that field, never assume "the Gate is real" means "this specific test ran against it."
 - **Every mobile screen's repository is an honest `UnimplementedError` placeholder**, not a bug — real backend deployment doesn't exist yet, so nothing in `mobile/lib/features/**/*_screen.dart` has ever been run against a live API. This is deliberate and disclosed, the same "injected dependency" pattern used for every other real/external boundary in this project — don't "fix" it by mocking data in.
@@ -47,7 +47,7 @@ Solo developer, portfolio-motivated, prior real experience with this exact spec-
 6. **Restating a real number (test count, document count, session count) instead of pointing to `STATUS_INDEX.md`.** This exact pattern caused real, disclosed drift at least three separate times across this project's history — a number copied once and never updated again as the count kept changing. If you're about to type a specific count into a file that isn't `STATUS_INDEX.md` itself, stop and use a pointer instead.
 
 ## Environment
-Real project root, as of this writing: `D:\Program Files\QUORUM` on Windows (no nested `quorum\` subfolder — a stale fact corrected here, found while filling in this section), opened via the Claude Code VS Code extension running as a chat interface — not WSL, not a Linux dev environment. Real, confirmed machine: Intel i5-12500H, 16GB RAM, RTX 3050 4GB (laptop) — factor this into any local resource recommendation (e.g., how many Docker services can realistically run concurrently). **Real, live cloud infrastructure now exists, as of Batch 10 Phase 2 (`DEC-098`):** Supabase project ref `dxfeutkeofnbismljhsb` (region `ap-south-1`/Mumbai, real migration applied — all 7 real tables + `pgvector` live), and a real, deployed Cloud Run service `quorum-backend` (region `asia-south1`/Mumbai, matching Supabase's region per this file's own co-location rule) at `https://quorum-backend-649581407643.asia-south1.run.app`, deployed with `--concurrency=1 --min-instances=0 --max-instances=2 --no-allow-unauthenticated` exactly as this project's architecture requires — confirmed live via an authenticated `/health` request returning `200 {"status":"ok"}`. Real Upstash Redis and Langfuse Cloud projects also exist and are verified working. GCP auth for CI uses Workload Identity Federation (`quorum-github-pool`/`quorum-github`), not a downloaded service account key — Google's current stronger recommendation, adopted over this file's own earlier guidance. **All real cloud accounts (Supabase, Upstash, Google Cloud) are free-tier only, by explicit, confirmed constraint** — every infrastructure recommendation must fit within real free-tier limits, never assume a paid tier is available.
+Real project root, as of this writing: `D:\Program Files\QUORUM` on Windows (no nested `quorum\` subfolder — a stale fact corrected here, found while filling in this section), opened via the Claude Code VS Code extension running as a chat interface — not WSL, not a Linux dev environment. Real, confirmed machine: Intel i5-12500H, 16GB RAM, RTX 3050 4GB (laptop) — factor this into any local resource recommendation (e.g., how many Docker services can realistically run concurrently). **Real, live cloud infrastructure now exists, as of Batch 10 Phase 2 (`DEC-098`):** Supabase project ref `dxfeutkeofnbismljhsb` (region `ap-south-1`/Mumbai, real migration applied — all 7 real tables + `pgvector` live), and a real, deployed Cloud Run service `quorum-backend` (region `asia-south1`/Mumbai, matching Supabase's region per this file's own co-location rule) at `https://quorum-backend-649581407643.asia-south1.run.app`, deployed with `--concurrency=1 --min-instances=0 --max-instances=2` exactly as this project's architecture requires — confirmed live via an authenticated `/health` request returning `200 {"status":"ok"}`. **`--allow-unauthenticated` as of Batch 10 Phase 3 (`DEC-102`)** — the real, live login system (`DEC-101`, real `POST /auth/token`/`/auth/refresh`/`/auth/revoke`, a real Bearer-token gate on every endpoint that needs one) is now the actual security boundary, not Cloud Run's network layer; the original `--no-allow-unauthenticated` was correct only for the window before that login system existed. Real Upstash Redis and Langfuse Cloud projects also exist and are verified working. GCP auth for CI uses Workload Identity Federation (`quorum-github-pool`/`quorum-github`), not a downloaded service account key — Google's current stronger recommendation, adopted over this file's own earlier guidance. **All real cloud accounts (Supabase, Upstash, Google Cloud) are free-tier only, by explicit, confirmed constraint** — every infrastructure recommendation must fit within real free-tier limits, never assume a paid tier is available.
 
 ## Where the real detail lives
 - Why any decision was made → `specs/tier3_verification/DECISIONS_LOG.md`
@@ -66,17 +66,33 @@ Real project root, as of this writing: `D:\Program Files\QUORUM` on Windows (no 
 ruff check backend
 
 # Backend test suite — the real, live-verified count lives in STATUS_INDEX.md
-PYTHONPATH=backend pytest backend/tests -q
+# Run FROM backend/ specifically -- a real, disclosed gotcha found this batch:
+# running from the repo root silently fails Postgres auth by falling back to
+# the OS username, since backend/.env only resolves relative to backend/.
+cd backend && PYTHONPATH=src pytest tests -q
 
-# Mobile pure-logic tests (zero-Flutter-dependency files only) — needs a real
-# Dart SDK, unavailable in the original development sandbox; run on a real
-# machine before merging any mobile session
+# Mobile pure-logic tests (zero-Flutter-dependency files only) — a real
+# Flutter SDK now exists on this machine as of Batch 10 (`D:\dev_tools\flutter`,
+# not on PATH by default: `$env:PATH += ";D:\dev_tools\flutter\bin"` in
+# PowerShell, or `export PATH="$PATH:/d/dev_tools/flutter/bin"` in Bash).
+# Real, confirmed live as of `DEC-103` — the first genuine run in this
+# project's history.
 dart test
 
-# Mobile static analysis — same real-machine caveat as above
+# Full mobile suite including widget tests (flutter test runs both plain
+# dart-only tests and widget tests together) — real, confirmed live, DEC-103.
+flutter test
+
+# Mobile static analysis — real, confirmed live, DEC-103.
 flutter analyze
+
+# REQUIRED before either mobile command above will show a clean result:
+# generates the Drift-backed db/database.g.dart, which is gitignored
+# (**/*.g.dart) and NOT committed -- every fresh checkout needs this run
+# once, or flutter analyze reports ~19 real errors that aren't actually bugs.
+cd mobile && dart run build_runner build --delete-conflicting-outputs
 ```
-(Note the `PYTHONPATH=backend` convention above reflects the *current, real, flat* backend layout — see "What changed mid-project." If the `src/quorum_backend/` restructure has been applied by the time you're reading this, these commands need updating to match; check which is actually true before running either version blindly.)
+(The backend's real, current layout is `backend/src/quorum_backend/` — see "What changed mid-project" below; `PYTHONPATH=backend/src`, not `PYTHONPATH=backend`, is correct as of this writing.)
 
 ## Spec-reading discipline
 Before writing any code: environment check (correct branch, correct working directory, required services actually reachable — stop and report if anything's wrong, don't proceed on an unconfirmed environment), then a full read of the session's spec — every file section and the verification section — before touching anything, then a cross-reference check (does each file this session touches already exist from an earlier session?), then a dependency check (do this session's imports actually exist yet?). See `QUORUM_SPEC_METHODOLOGY.md` for the full ritual, and `specs/tier1_foundation/QUORUM_CLAUDE_CODE_SPEC_USAGE_GUIDE.md` for how that ritual maps to real Claude Code mechanics (what's auto-loaded, what needs an explicit read, and the slash commands that package the ritual as something executable rather than just described).

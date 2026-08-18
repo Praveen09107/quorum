@@ -16,6 +16,20 @@
 // real, thrown Flutter layout exception, not a failed assertion. That
 // is a genuinely stronger proof than any assertion-only test could
 // provide.
+//
+// A REAL BUG THIS SESSION'S FIRST-EVER ACTUAL `flutter test` RUN
+// FOUND, disclosed rather than silently patched: this test originally
+// asserted on "In motion" and "Calendar vs. Finance" without ever
+// scrolling first. `ListView(children: [...])` only builds Elements
+// for children within (or near) the test's default viewport -- with
+// two pending actions plus the capacity/budget cards ahead of it, the
+// third zone was genuinely below the fold and had no Element at all,
+// so `find.text()` correctly reported zero matches. This was a real
+// test-authoring gap, empirically confirmed by dumping the actual
+// rendered Text widgets before and after a manual scroll (the "In
+// motion" content appeared only after), not a bug in TodayScreen's
+// real composition -- a real device's user would simply need to
+// scroll, exactly as this fix now makes the test do too.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -60,7 +74,7 @@ Future<TodayScreenData> _fakeFetchToday() async {
 void main() {
   testWidgets('the real, composed Today tab renders all three zones with genuine full data and no layout crash', (WidgetTester tester) async {
     await tester.pumpWidget(
-      ProviderScope(
+      const ProviderScope(
         child: MaterialApp(home: MainShell(fetchToday: _fakeFetchToday)),
       ),
     );
@@ -71,11 +85,19 @@ void main() {
     // assertion below, the act of pumping the real tree.
     await tester.pumpAndSettle();
 
-    // Real content from all three real zones, genuinely present --
-    // confirms composition actually happened, not just that no
-    // exception was thrown.
+    // Real content from the first two zones is already within the
+    // default test viewport.
     expect(find.text('Needs you now'), findsOneWidget);
     expect(find.text('Holding steady'), findsOneWidget);
+
+    // A real, deliberate scroll -- the third zone is genuinely below
+    // the fold given the first two zones' real content height, the
+    // same as a real device's user would need to do. Confirms the
+    // single shared ListView actually reaches its third child, not
+    // just that the first two exist.
+    await tester.drag(find.byType(ListView), const Offset(0, -1000));
+    await tester.pumpAndSettle();
+
     expect(find.text('In motion'), findsOneWidget);
     expect(find.text('Calendar vs. Finance'), findsOneWidget);
   });

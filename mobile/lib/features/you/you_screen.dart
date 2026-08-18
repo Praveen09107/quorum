@@ -74,7 +74,7 @@ class _YouScreenState extends State<YouScreen> {
           ],
           const Text('This permanently deletes your account and all associated data. This cannot be undone.'),
           const SizedBox(height: 16),
-          Text('Type $requiredDeletionConfirmationText to confirm.'),
+          const Text('Type $requiredDeletionConfirmationText to confirm.'),
           const SizedBox(height: 8),
           TextField(
             controller: _controller,

@@ -127,7 +127,7 @@ class QuorumDatabase extends _$QuorumDatabase {
   /// specifically so `calendar_sync_test.dart` can run real inserts and
   /// upserts against a genuine in-memory SQLite database
   /// (`NativeDatabase.memory()`), not a mock.
-  QuorumDatabase.forTesting(QueryExecutor executor) : super(executor);
+  QuorumDatabase.forTesting(super.executor);
 
   @override
   int get schemaVersion => 1;

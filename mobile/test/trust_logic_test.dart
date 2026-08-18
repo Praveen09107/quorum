@@ -55,6 +55,15 @@ void main() {
       expect(formatCatchRate(0, 10), '0%');
       expect(formatCatchRate(0, 10), isNot(formatCatchRate(0, 0)));
     });
+
+    // The real, exact `.5` tie case (STATUS_INDEX.md open item #11),
+    // resolved live against a real Dart compiler this session:
+    // round-half-away-from-zero, confirmed directly (101/200*100 ==
+    // 50.5, .round() == 51). Deliberately left unasserted until now,
+    // per this file's own established discipline.
+    test('the real, now-confirmed .5 tie: 101 of 200 caught (50.5%) rounds to 51%, round-half-away-from-zero', () {
+      expect(formatCatchRate(101, 200), '51%');
+    });
   });
 
   group('TrustData / ScenarioResultData shape', () {

@@ -49,6 +49,14 @@ void main() {
     test('a real zero delta shows no sign at all', () {
       expect(formatDelta(0.0), '0 pts');
     });
+
+    // The real, exact `.5` tie case (STATUS_INDEX.md open item #11),
+    // resolved live against a real Dart compiler this session:
+    // round-half-away-from-zero, confirmed directly. Deliberately left
+    // unasserted until now, per this file's own established discipline.
+    test('the real, now-confirmed .5 tie: 0.505 rounds to +51 pts, round-half-away-from-zero', () {
+      expect(formatDelta(0.505), '+51 pts');
+    });
   });
 
   group('TrustDigestData shape', () {
