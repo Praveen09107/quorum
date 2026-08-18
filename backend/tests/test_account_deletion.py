@@ -22,11 +22,12 @@ class FakeRevocationStore:
     async def save(self, record):
         self.records[record.token_hash] = record
 
-    async def try_claim(self, token_hash):
-        record = self.records.get(token_hash)
+    async def claim_and_rotate(self, old_token_hash, new_record):
+        record = self.records.get(old_token_hash)
         if record is None or record.used:
             return False
         record.used = True
+        self.records[new_record.token_hash] = new_record
         return True
 
     async def revoke_family(self, family_id):

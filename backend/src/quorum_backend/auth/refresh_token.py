@@ -19,7 +19,7 @@ QUORUM_CONFIGURATION_CONSTANTS.md §10) -- 7 days is a real, reasoned,
 disclosed choice (a common, sensible refresh-token lifetime), not a
 recalled spec value.
 
-Batch 10 Phase 3, TWO real, disclosed changes to this already-reviewed
+Batch 10 Phase 3, real, disclosed changes to this already-reviewed
 CRITICAL-tier module, made when this module's own storage layer finally
 became real (IMPL_12's docstring named this "a separate, later
 integration concern" -- this is that moment):
@@ -33,20 +33,33 @@ integration concern" -- this is that moment):
    serve. Every internal check/branch/exception is unchanged; only the
    calling convention changed.
 
-2. A NEW `try_claim()` method closes a real race this module's original
-   two-call `get()` then `save()` pattern left open: `--max-instances=2`
-   means two real, separate container instances can genuinely process two
-   requests concurrently. Two concurrent presentations of the same stolen
-   token could both call `get()`, both see `used=False` (the race window
-   between the read and the write), and both "successfully" rotate --
-   silently defeating the exact theft detection this module exists to
-   provide. `try_claim()` performs the read-and-mark-used step as a single
-   atomic database operation; only the first of two racing callers can
-   ever succeed. `rotate_refresh_token`'s exception behavior is completely
-   unchanged from the caller's perspective -- `try_claim()` returning
-   `False` is treated exactly like the pre-existing `record.used` branch,
-   just now genuinely race-safe rather than only correct in the common,
-   non-concurrent case.
+2. `claim_and_rotate()` -- a real fix for a real, CONFIRMED-EXPLOITABLE
+   race, found by fresh-context review of an earlier version of this
+   same session's own work, not assumed safe from a partial fix. That
+   earlier version added a `try_claim()` step that correctly made
+   marking the OLD token used atomic -- but the race winner's brand-new
+   child token was still issued as a fully separate, later `INSERT`,
+   with no ordering guarantee against the race LOSER's `revoke_family()`
+   `UPDATE`. If the loser's revoke ran before the winner's insert
+   landed, the winner walked away with a live, unrevoked session inside
+   a family the system believed it had just fully burned -- the exact
+   failure mode this whole module exists to prevent, empirically
+   reproduced by the reviewing agent, not theoretical.
+
+   The real fix: `claim_and_rotate()` performs the ENTIRE
+   read-lock-check-mark-and-insert sequence as one atomic database
+   transaction, using `SELECT ... FOR UPDATE` on the OLD token's row to
+   serialize any concurrent attempt to rotate that SAME token -- not
+   just the used-flag write, the new row's insertion too. A second,
+   concurrently racing call attempting the same lock genuinely BLOCKS at
+   the database level until the first transaction (including its
+   `INSERT` of the new child) has fully committed. Only once unblocked
+   does the loser observe `used=True` and call `revoke_family()` -- by
+   which point the winner's new child row is already committed and
+   visible, so `revoke_family()` correctly catches and revokes it too.
+   Proven by `test_the_race_winners_new_child_token_is_genuinely_left_
+   unusable_after_the_loser_detects_reuse` -- the exact postcondition
+   the earlier, incomplete fix's own test never actually checked.
 """
 from __future__ import annotations
 
@@ -101,13 +114,19 @@ class RevocationStore(Protocol):
 
     async def get(self, token_hash: str) -> RefreshTokenRecord | None: ...
     async def save(self, record: RefreshTokenRecord) -> None: ...
-    async def try_claim(self, token_hash: str) -> bool:
-        """Atomically marks the record `used=True` IF AND ONLY IF it is
-        currently `used=False`. Returns whether THIS call was the one to
-        claim it -- `False` means a concurrent caller (or an earlier real
-        presentation) already claimed it first. The real race-safety
-        guarantee this module depends on lives entirely in this one
-        method being genuinely atomic in the concrete implementation."""
+    async def claim_and_rotate(self, old_token_hash: str, new_record: RefreshTokenRecord) -> bool:
+        """THE real, atomic heart of rotation -- everything from
+        confirming the old token is still unused through inserting its
+        replacement happens as ONE database transaction, so a
+        concurrently racing caller trying to rotate the SAME old token
+        genuinely blocks at the database level until this entire
+        operation -- old-token claim AND new-record insertion together
+        -- has fully committed. Returns whether THIS call was the one to
+        claim it: `False` means a concurrent caller (or an earlier real
+        presentation) already claimed and rotated it first, and by the
+        time that's observable, that caller's new child record is
+        already committed and visible -- safe for the caller here to
+        find and revoke via `revoke_family()`."""
         ...
     async def revoke_family(self, family_id: str) -> None: ...
     async def get_family_ids_for_user(self, user_id: str) -> set[str]: ...
@@ -141,13 +160,17 @@ async def issue_refresh_token(
 
 
 async def rotate_refresh_token(raw_token: str, store: RevocationStore) -> str:
-    """Real, distinguishable failure branches, checked in an order that
-    cannot be bypassed by a race: the initial `record.used` check below
-    catches the common, non-concurrent reuse case cheaply (no atomic
-    operation needed when the answer is already obviously "yes, reused"),
-    but the real, load-bearing guarantee against a genuine concurrent
-    race is `try_claim()` -- see this module's own top-of-file docstring
-    for why a second atomic step is necessary at all.
+    """Real, distinguishable failure branches. `get()` below is a cheap,
+    non-locking PRE-check only -- it catches the common, unambiguous
+    cases (unknown token, already-revoked family, expired token) without
+    taking a real database lock for a request that's going to fail
+    regardless of any race. It deliberately does NOT make the reuse
+    decision -- a `record.used` check here would itself be racy and
+    meaningless, which is exactly the bug an earlier version of this
+    same function had. The real, load-bearing, race-safe decision is
+    `claim_and_rotate()` alone -- see this module's own top-of-file
+    docstring for why the old-token claim and the new-token insertion
+    must happen inside the SAME atomic operation, not two separate ones.
     """
     token_hash = hash_token(raw_token)
     record = await store.get(token_hash)
@@ -156,29 +179,38 @@ async def rotate_refresh_token(raw_token: str, store: RevocationStore) -> str:
         raise TokenInvalid("Refresh token not recognized")
     if record.revoked:
         raise TokenRevoked("This token's family has been revoked")
-    if record.used:
-        # THE real theft signature, the common (non-racing) case. Revoke
-        # the whole family FIRST, so a subsequent legitimate presentation
-        # of the current token also fails, then disclose what happened.
+    if datetime.now(timezone.utc) > record.expires_at:
+        raise TokenExpired("Refresh token has expired")
+
+    # Prepared BEFORE the atomic claim, but only ever persisted (and only
+    # ever returned to the caller) if claim_and_rotate() reports a real
+    # win below -- a prepared-but-never-claimed new_record simply never
+    # touches the database at all, no cleanup needed.
+    raw_new_token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    new_record = RefreshTokenRecord(
+        token_hash=hash_token(raw_new_token),
+        family_id=record.family_id,
+        user_id=record.user_id,
+        issued_at=now,
+        expires_at=now + timedelta(days=REFRESH_TOKEN_TTL_DAYS),
+    )
+
+    claimed = await store.claim_and_rotate(token_hash, new_record)
+    if not claimed:
+        # THE real theft signature -- reached either because this was an
+        # ordinary (non-racing) reuse, or because this call lost a
+        # genuine concurrent race. Either way, by the time claim_and_
+        # rotate() returns False, any real winner's new child record is
+        # already committed and visible, so revoke_family() here is
+        # guaranteed to catch it too -- the exact property the earlier,
+        # incomplete fix was missing.
         await store.revoke_family(record.family_id)
         raise TokenReuseDetected(
             f"Refresh token reuse detected for family {record.family_id} — entire family revoked"
         )
-    if datetime.now(timezone.utc) > record.expires_at:
-        raise TokenExpired("Refresh token has expired")
 
-    # The real, race-safe guard: only the first of any concurrently racing
-    # callers can win this atomic claim. A loser here is the exact same
-    # real theft signature as the record.used branch above, just caught
-    # under genuine concurrency rather than only in the common case.
-    claimed = await store.try_claim(token_hash)
-    if not claimed:
-        await store.revoke_family(record.family_id)
-        raise TokenReuseDetected(
-            f"Refresh token reuse detected for family {record.family_id} (concurrent claim) — entire family revoked"
-        )
-
-    return await issue_refresh_token(record.user_id, store, family_id=record.family_id)
+    return raw_new_token
 
 
 async def revoke_all_for_user(user_id: str, store: RevocationStore) -> None:

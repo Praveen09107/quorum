@@ -15,6 +15,21 @@ schemas, and that Postgres's default `search_path` resolves every
 unqualified query in this file to `public.refresh_tokens`, never
 Supabase's internal one. No functional collision; disclosed here purely
 so a future reader isn't confused by the coincidence.
+
+REAL, DISCLOSED CORRECTION, found by fresh-context review before this
+module ever merged to `main`: an earlier version of `claim_and_rotate()`
+was a separate `try_claim()` method (an atomic `UPDATE ... WHERE
+used = false`) plus a fully independent, later `INSERT` performed by
+`refresh_token.py`'s own `issue_refresh_token()` call. That left a real
+gap between the two statements with no ordering guarantee against a
+concurrent loser's `revoke_family()` -- a race winner's brand-new child
+token could end up committed AFTER the loser's revoke_family() already
+ran, escaping revocation entirely. `claim_and_rotate()` below closes
+this for real: the OLD token's claim and the NEW record's insertion now
+happen inside one transaction, holding a real row lock
+(`SELECT ... FOR UPDATE`) on the old token for the transaction's full
+duration -- a concurrently racing call is genuinely blocked at the
+database level until that whole transaction, insert included, commits.
 """
 from __future__ import annotations
 
@@ -25,8 +40,8 @@ from quorum_backend.auth.refresh_token import RefreshTokenRecord
 
 class SupabaseRevocationStore:
     """Real, live -- every method is a genuine round-trip to the real
-    Supabase database, never an in-memory fake. See `try_claim()` for
-    the one method whose real atomicity this whole module's security
+    Supabase database, never an in-memory fake. See `claim_and_rotate()`
+    for the one method whose real atomicity this whole module's security
     property depends on."""
 
     def __init__(self, pool: asyncpg.Pool) -> None:
@@ -72,23 +87,41 @@ class SupabaseRevocationStore:
             record.revoked,
         )
 
-    async def try_claim(self, token_hash: str) -> bool:
+    async def claim_and_rotate(self, old_token_hash: str, new_record: RefreshTokenRecord) -> bool:
         # THE real atomic guarantee refresh_token.py's own docstring
-        # depends on: a single `UPDATE ... WHERE used = false` is atomic
-        # at the database level -- Postgres guarantees only one of two
-        # concurrent UPDATEs touching the same row can ever see
-        # `used = false` and successfully apply, even across two
-        # entirely separate Cloud Run container instances sharing no
-        # Python-level state at all.
-        #
-        # asyncpg's `execute()` returns a real command-tag string like
-        # "UPDATE 1" or "UPDATE 0" -- confirmed live, this session,
-        # before trusting this parse, not assumed from documentation.
-        result = await self._pool.execute(
-            "UPDATE refresh_tokens SET used = true WHERE token_hash = $1 AND used = false",
-            token_hash,
-        )
-        return result == "UPDATE 1"
+        # depends on. One connection, one transaction, for the whole
+        # operation -- `SELECT ... FOR UPDATE` takes a real row lock on
+        # the OLD token that's held until COMMIT, so a second, genuinely
+        # concurrent call attempting to lock the SAME row (even from an
+        # entirely separate Cloud Run container instance) blocks at the
+        # database level until this transaction -- claim AND insert
+        # together -- has fully committed. Only once unblocked does that
+        # second call see `used = True` and correctly report a loss; by
+        # then this call's `new_record` is already committed and visible,
+        # so the loser's subsequent `revoke_family()` is guaranteed to
+        # catch it.
+        async with self._pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT used FROM refresh_tokens WHERE token_hash = $1 FOR UPDATE",
+                old_token_hash,
+            )
+            if row is None or row["used"]:
+                return False
+            await conn.execute("UPDATE refresh_tokens SET used = true WHERE token_hash = $1", old_token_hash)
+            await conn.execute(
+                """
+                INSERT INTO refresh_tokens (token_hash, family_id, user_id, issued_at, expires_at, used, revoked)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                """,
+                new_record.token_hash,
+                new_record.family_id,
+                new_record.user_id,
+                new_record.issued_at,
+                new_record.expires_at,
+                new_record.used,
+                new_record.revoked,
+            )
+            return True
 
     async def revoke_family(self, family_id: str) -> None:
         await self._pool.execute("UPDATE refresh_tokens SET revoked = true WHERE family_id = $1", family_id)
