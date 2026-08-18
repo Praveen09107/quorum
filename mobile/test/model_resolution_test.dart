@@ -1,7 +1,10 @@
 // UNVERIFIED IN SANDBOX: no Dart or Flutter SDK exists anywhere this
-// file was written. Structurally correct against `flutter_test`'s/
-// `test` package's documented API; `flutter test` on a real machine is
-// the actual verification.
+// file was written. Structurally correct against plain `package:test`'s
+// documented API — deliberately not `flutter_test`, since this file has
+// zero Flutter framework dependency (pure config/logic), so it runs via
+// plain `dart test` rather than needing the full `flutter test` harness,
+// per this project's own documented distinction (CLAUDE.md). `dart test`
+// on a real machine is the actual verification.
 //
 // Boundary values below were hand-verified in Python before this file
 // was finalized (this sandbox can run Python, not Dart) — see
@@ -9,7 +12,7 @@
 // every boundary (8192, 8191, 4096, 4095, 512) matches
 // classifyDeviceTier's real logic line for line.
 
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart';
 
 import 'package:quorum_mobile/config/model_config.dart';
 import 'package:quorum_mobile/model/device_tier.dart';

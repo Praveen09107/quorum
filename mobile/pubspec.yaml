@@ -52,6 +52,13 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # Plain package:test, deliberately separate from flutter_test above --
+  # zero-Flutter-dependency logic files (model resolution, privacy gate,
+  # calendar sync) run via plain `dart test`, per this project's own
+  # documented distinction (CLAUDE.md) between that and `flutter test`
+  # for widget files like main_shell_test.dart. Keeping these separate is
+  # what lets the pure-logic suite run without a full Flutter toolchain.
+  test: ^1.25.2
   flutter_lints: ^4.0.0
   drift_dev: ^2.20.0
   build_runner: ^2.4.11

@@ -1451,10 +1451,30 @@ This session's `STANDARD` (not `CRITICAL`) review tier is genuinely justified in
 
 ---
 
+### DEC-075 — `MOBILE_03`: Privacy Gate — Rule-Layer Parity With the Backend, a Real Precision Correction, and a Test-Infra Fix
+
+**Status:** CONFIRMED
+
+**A small, real correction applied retroactively to `MOBILE_02`'s already-merged work, disclosed here rather than silently folded in:** `model_resolution_test.dart` (`MOBILE_02`) imported `package:flutter_test`, but that file has zero Flutter framework dependency — pure config/logic only. Per this project's own documented distinction (`CLAUDE.md`: `dart test` for zero-Flutter-dependency files, `flutter analyze`/`flutter test` otherwise), it should import plain `package:test` so it can run via `dart test` without needing the full Flutter toolchain. Fixed in this session's branch, and `test: ^1.25.2` added to `pubspec.yaml`'s `dev_dependencies` alongside the existing `flutter_test`. This session's own new pure-logic test file (`privacy_gate_test.dart`) was built correctly against `package:test` from the start.
+
+**The real overlap finding, independently re-verified in Python before writing any Dart, exactly like every prior session's hand-verification discipline:** a 16-digit credit-card number's digits also satisfy the Aadhaar-style pattern's shape, but confirmed directly to require **space-separated** formatting specifically (`"4111 1111 1111 1111"`) — a plain, unspaced run or a dash-separated one never triggers it, since `aadhaar_style_id`'s pattern needs a real `\b` boundary at both ends of its match, and consecutive un-separated digits are all `\w` characters with no internal `\b` for that boundary to land on. **Discrepancy flagged and resolved:** the batch guide's kickoff prompt claimed this precision correction had "already" been made to both `rule_layer.dart`'s comment and `MOBILE_03_PRIVACY_GATE.md`'s prose. Neither was true in this repository — `rule_layer.dart` didn't exist yet, and the real, current spec document's prose still said only "a 16-digit credit card number's first 12 digits" with no space-separated qualifier, confirmed by direct `grep` returning zero matches before this session touched it. The underlying technical finding is real and independently re-verified here regardless of the narrative mismatch, so both the code comment and the spec document's own prose were written/corrected for real, in this session, disclosed as new work rather than an inherited fix.
+
+**What was actually built:** `rule_layer.dart` — `sensitivePatterns`, three real compiled `RegExp` patterns confirmed character-for-character identical to `backend/security/trace_scrubbing.py`'s `SENSITIVE_PATTERNS` (only quote-style syntax differs: `RegExp(r'...')` vs. `re.compile(r"...")`). `scan()` and `redact()` both real; `redact()` uses genuine sequential replacement, confirmed by direct Python trace to consume the entire space-separated overlap run in the `credit_card` pass, leaving nothing for the `aadhaar_style_id` pass to find — exactly one redaction despite `scan()` reporting both categories. `privacy_gate.dart` — `SensitivityClassification`, `PrivacyPolicyAction`, `PrivacyGateDecision`, `PrivacyGate.evaluate()`. **The real security property, structurally true, not just documented as true:** the `ruleResult.triggered` branch returns directly, with `slmClassification` explicitly `null`, strictly before any call to the injected `slmClassifier` — confirmed by direct source inspection, and by a real test tracking the classifier's actual invocation count (asserts exactly 0 on a rule-layer match).
+
+**10 real tests written** in `privacy_gate_test.dart` — one more than the spec's stated 9 (personal-content and public-content are both genuinely distinct no-rule-match cases worth testing separately, not filler; coincidentally, not deliberately, this also matches the batch guide's separately-stated count of 10). Every test string was independently checked against the same regex patterns in Python before being written, confirming none accidentally exercises a different code path than intended.
+
+**Embedded question, answered before building:** why must the SLM classifier never be consulted when the rule layer already matched? A structural pattern match is a fact, not a judgment call — consulting the SLM "just to be safe" would waste a real cloud/on-device call on an already-decided outcome, and worse, would open a real path where a probabilistic classifier could override a deterministic, already-correct redaction decision. The rule layer's authority here is deliberately absolute, not advisory.
+
+**Verified live, this sandbox (structural/hand-verified only):** all 6 checkable checks pass — both files exist, the three regex patterns are confirmed character-for-character identical to the backend's, the space-separated correction is present in both the code comment and the now-corrected spec document, the `triggered`-branch structural proof, and `redact()`'s real sequential-replacement implementation. `CHECK 7` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/privacy/rule_layer.dart` (new), `mobile/lib/privacy/privacy_gate.dart` (new), `mobile/test/privacy_gate_test.dart` (new), `mobile/test/model_resolution_test.dart` (fixed: `flutter_test` → `test`), `mobile/pubspec.yaml` (added `test` dev dependency), `specs/tier4_mobile/MOBILE_03_PRIVACY_GATE.md` (real precision correction applied), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-075*
+*Next entry: DEC-076*
