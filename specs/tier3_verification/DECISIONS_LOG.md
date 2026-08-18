@@ -1367,10 +1367,28 @@ This session's `STANDARD` (not `CRITICAL`) review tier is genuinely justified in
 
 ---
 
+### DEC-071 — `IMPL_21`: Negotiation Subgraph Wiring — Four Sessions Compose on the First Real Attempt
+
+**Status:** CONFIRMED
+
+**Decision:** `backend/src/quorum_backend/negotiation/subgraph.py` is real and tested — the capstone wiring `IMPL_18` (trigger), `IMPL_19` (positions + synthesis), and `IMPL_20` (impact simulation) into one continuous, compiled LangGraph pipeline: `scan` → (conditionally) `generate_positions` → `synthesize` → `simulate_impact`. No new arithmetic or business logic was introduced — confirmed by direct inspection, not just intention: this file defines no `compute_*`, `calculate_*`, or `validate_*` function anywhere; every real computation is imported from the three prior sessions' modules.
+
+`NegotiationState` (TypedDict) and `EffectExtractor` (the injected boundary turning a synthesized option's natural-language description into a real `OptionEffect` — genuine domain-specific interpretation, correctly kept out of this session's scope) are the only new constructs. `.ainvoke()` is used throughout — confirmed necessary, not assumed, by the standalone LangGraph proof-of-concept run before this session started (a graph with real async nodes raises `TypeError` on `.invoke()`).
+
+**The real, load-bearing evidence this session exists to produce:** `test_full_negotiation_pipeline_runs_end_to_end_on_a_real_conflict` ran the entire trigger→positions→synthesis→impact chain in one continuous sequence and **passed on the first real attempt** — genuine evidence the interfaces between four sessions, built at different points in this project's real timeline, were designed correctly from the start rather than needing after-the-fact reconciliation. `test_non_conflict_short_circuits_before_any_llm_call` proves the short-circuit by absence, not by a passing assertion on final state alone — it tracks whether `position_call` or `synthesis_call` were ever invoked, and both a bug that wastes real API calls on a non-conflict *and* a bug that fails to run the real pipeline on a genuine conflict would be caught by this pair of tests, not just one of them.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **142 passed** (140 prior + 2 new) — the real spec document's own arithmetic here (`133 prior + 2 = 135`) inherited `IMPL_20`'s incorrect prior-count assumption from the batch guide, but its *shape* (prior + 2 = new total) was otherwise right, unlike `IMPL_20`'s test-count mismatch; this repository's real, live count is reported directly rather than forced to match either figure.
+
+**Negotiation — the project's headline capability — is now real, tested, and end-to-end, from trigger through impact simulation.** Only `IMPL_22` (trace scrubbing + delete account) remains before all 23 original backend sessions are closed.
+
+**Affects:** `backend/src/quorum_backend/negotiation/subgraph.py` (new), `backend/tests/test_negotiation_subgraph.py` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-071*
+*Next entry: DEC-072*
