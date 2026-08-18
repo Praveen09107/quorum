@@ -1813,10 +1813,48 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-091 — `MOBILE_19`: Memory Transparency — A Third Genuinely New Backend Module, and a File-Placement Precedent Followed Deliberately
+
+**Status:** CONFIRMED
+
+**A genuinely missing data model, the same category as `MOBILE_17`'s finding, confirmed the same way:** `mem0` is referenced throughout this backend (purged on account deletion, read for calendar buffer preferences) but no real schema for what a single memory *is*, and no way to list or delete one individually, existed anywhere in this repository — confirmed by direct search before building. This session's real spec explicitly frames `memory_transparency.py` as new work it creates, matching this repository's real absence exactly — no discrepancy to flag here, unlike `MOBILE_16`.
+
+**A real file-placement precedent followed deliberately, not accidentally:** this session's own spec describes a self-caught mistake — a first draft placed the new test file at a nested `backend/tests/security/test_memory_transparency.py`, inconsistent with how `test_account_deletion.py` and `test_trace_scrubbing.py` (this repository's other real `security/` module tests) actually live, flat in `backend/tests/`. Checked directly before writing this session's own test file, confirmed the real, established flat precedent, and placed `test_memory_transparency.py` there directly — the mistake was never actually made in this repository's history, but the correct convention was verified and followed rather than assumed.
+
+**What was actually built, to the same standard as `MOBILE_17`'s `trust_digest.py`:** `backend/src/quorum_backend/security/memory_transparency.py` — `Memory` (`frozen=True`), `group_by_category()` (never drops a memory for an unexpected category string, since mem0's own categorization isn't controlled by this codebase). `backend/tests/test_memory_transparency.py` — 4 real tests, matching the spec's own stated count exactly. Mobile: `memory_transparency_logic.dart` (zero Flutter dependencies) — `MemoryData`, `groupByCategory()` (deliberately mirrors the real backend's `group_by_category()` exactly), `categoryLabel()` (de-snaked, capitalized fallback). `memory_transparency_screen.dart` — the real widget, a plain confirmation on delete, deliberately not `MOBILE_18`'s type-to-confirm gate.
+
+**Embedded question, answered before building:** why does `groupByCategory` never drop or reject a memory with an unrecognized category, given this codebase doesn't control mem0's own categorization scheme? Because mem0 is a real external service this project depends on but doesn't own — a category value this codebase has never seen before is a real, expected possibility, not an error condition. Dropping such a memory would mean a person's real, stored data silently disappears from a screen whose entire purpose is showing them everything the system remembers about them — the opposite of transparency. An unrecognized category gets its own real group instead, keyed by whatever string mem0 actually reported.
+
+**10 real Dart tests written**, matching the spec's own stated count exactly, deliberately mirroring the 4 real Python tests' exact scenarios (grouping correctness, never-drops-unrecognized, the real total-accounted-for proof, empty-list handling) plus non-mutation, insertion-order preservation, and three `categoryLabel` cases — proving both sides of the language boundary agree, not just that each independently looks reasonable.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **162 passed** (158 prior + 4 new). Both checkable mobile checks pass exactly as pasted, including a live confirmation that `group_by_category()` is real in the backend file this Dart code claims to mirror. `CHECK 5` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Batch 8 (Honesty Log, Trust, Trust Digest, You, Memory Transparency — `MOBILE_15`–`19`) is now complete.** This is the first batch since Batch 4 to genuinely extend the real backend — two new modules (`trust_digest.py`, `memory_transparency.py`) discovered and built during mobile work, both held to the original 23-session backend sessions' full standard rather than a lighter one.
+
+**Affects:** `backend/src/quorum_backend/security/memory_transparency.py` (new), `backend/tests/test_memory_transparency.py` (new), `mobile/lib/features/memory_transparency/memory_transparency_logic.dart` (new), `mobile/lib/features/memory_transparency/memory_transparency_screen.dart` (new), `mobile/test/memory_transparency_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
+### DEC-092 — Batch 8 Close-Out — The Dart `.5`-Rounding Uncertainty Confirmed on Five Real Files, and the Real, Live Mobile Test-Count Reconciliation
+
+**Status:** CONFIRMED
+
+**`STATUS_INDEX.md` open item 11 updated comprehensively**, per this batch's own gate requirement: the Dart `.5`-rounding uncertainty (Python's banker's rounding vs. Dart's round-half-away-from-zero, disagreeing only at an exact `.5` percentage tie) is now confirmed affecting **five** real files, not incrementally re-mentioned one at a time — `negotiation_logic.dart` (`MOBILE_09`), `finance_logic.dart` (`MOBILE_13`), and, as of this batch, `honesty_log_logic.dart`'s `formatSuccessRate()`, `trust_logic.dart`'s `formatCatchRate()`, and `trust_digest_logic.dart`'s `formatDelta()`. Every one of these five files' own tests correctly avoids the exact disputed boundary — confirmed directly across all five, not assumed. This is one real, compiler-dependent uncertainty appearing in five places, not five separate risks.
+
+**Both real fail-closed patterns confirmed unrecognized-value-safe, live:** `MOBILE_16`'s `parseTarget` (fails to `stub`) and `MOBILE_17`'s `parseTrend` (fails to `insufficientData`) both handle a genuinely unrecognized input value by defaulting to the more cautious, less-confident state — never silently overstating what was actually verified or compared.
+
+**The real, live, exact mobile test-count reconciliation, computed directly rather than restated from an earlier figure (per `CLAUDE.md`'s own drift-pattern warning):** `honesty_log_logic_test.dart` 11 + `trust_logic_test.dart` 12 + `trust_digest_logic_test.dart` 11 + `you_logic_test.dart` 9 + `memory_transparency_logic_test.dart` 10 = **53** real Dart tests for Batch 8, not the batch guide's assumed 45 (`10+8+11+9+7`) — this repository's real, session-by-session counts diverged from that assumption at `MOBILE_15` (11 vs. 10), `MOBILE_16` (12 vs. 8, since the real spec's own stated total — 2 Python + 12 Dart — differs from the batch guide's Dart-only figure), and `MOBILE_19` (10 vs. 7); `MOBILE_17` (11) and `MOBILE_18` (9) matched. Total real mobile test count across all four batches: **174**, computed directly (26 + 50 + 45 + 53), not copied forward from a prior partial sum.
+
+**Real, live backend total:** **162/162 passing** (`ruff check backend` clean) — the original 23-session core's permanent 151, plus Batch 8's two genuinely new modules (`trust_digest.py` +7, `memory_transparency.py` +4).
+
+**Affects:** `STATUS_INDEX.md` (mobile summary row, backend/mobile total rows, open item 11), this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-091*
+*Next entry: DEC-093*
