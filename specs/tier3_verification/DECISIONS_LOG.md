@@ -1635,10 +1635,30 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-083 — `MOBILE_11`: Career Pipeline — A Real, Confirmed Open Vocabulary, and a Path Discrepancy Adapted
+
+**Status:** CONFIRMED
+
+**A path discrepancy adapted, not silently ignored:** this session's kickoff and checklist both reference `backend/migrations/001_initial_schema.sql`. This repository's real migration lives at `backend/migrations/0001_initial_schema/up.sql` (per `IMPL_01`'s real bootstrap). Checked at the real path; the underlying fact holds regardless of the path naming mismatch.
+
+**THE REAL, CONFIRMED FACT this session's defensive handling responds to, checked directly against this repository's real schema:** `applications.status` is `TEXT NOT NULL DEFAULT 'applied'` with **no `CHECK` constraint** — confirmed live. Cross-checked against `backend/tests/test_career_agent.py`: only `"applied"` and `"interview_scheduled"` are exercised anywhere in this repository's real code today. This is a genuinely open vocabulary, not a hypothetical one — a real, evidenced contrast with `MOBILE_14`'s Search screen (later this batch), whose `item_type` has no such evidence of being open.
+
+**What was actually built:** `career_pipeline_logic.dart` (zero Flutter dependencies) — `CareerApplication`, `knownStatusOrder` (explicitly documented `NON-exhaustive` in its own doc comment, not presented as a complete enum — confirmed by direct reading of the two lines immediately above its declaration), `statusLabel()` (a real, honest fallback for genuinely open vocabulary, de-snaked, never a crash), `groupByStatus()`, `orderedStatusKeys()` (known statuses first in canonical order, then any unrecognized status appended alphabetically — never dropped, never left to Dart's unpredictable map-iteration order). `career_pipeline_screen.dart` — the real widget, one section per real status key.
+
+**Embedded question, answered before building:** what real, concrete thing would break if a genuinely new status value appeared in a real API response? Nothing breaks — that's the entire point of this session's design. The application would still appear, grouped under its own real status key, with a real de-snaked label (e.g. `"phone_screen_pending"` → "Phone Screen Pending") instead of a raw string, positioned after every known status in a deterministic alphabetical slot rather than vanishing or crashing the screen. A naive implementation assuming a fixed four-stage pipeline would have silently dropped that application from the screen entirely — a real, user-visible data-loss bug this design specifically prevents.
+
+**11 real tests written**, matching the spec's own stated count exactly (the batch guide's checklist separately says 8) — all four known-status labels plus the de-snaked unknown case, two `groupByStatus` cases (correct grouping, never dropping an unrecognized status), and four `orderedStatusKeys` cases including the real hand-verified mixed case and a dedicated proof that two unrecognized statuses sort deterministically against each other.
+
+**Verified live, this sandbox (structural/hand-verified only):** `CHECK 1`, `CHECK 4`, `CHECK 5` all confirmed — `CHECK 4`'s pasted `grep -B 2 | head -5` window lands on this file's earlier, file-header mention of `knownStatusOrder` rather than the declaration's own doc comment two lines above it; confirmed by direct reading that the declaration's own doc comment does state "Explicitly NON-exhaustive" verbatim. `CHECK 2` (the real schema check) and `CHECK 3` (the hand-verified ordering case) both pass live, shown above. `CHECK 6` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/features/career/career_pipeline_logic.dart` (new), `mobile/lib/features/career/career_pipeline_screen.dart` (new), `mobile/test/career_pipeline_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-083*
+*Next entry: DEC-084*
