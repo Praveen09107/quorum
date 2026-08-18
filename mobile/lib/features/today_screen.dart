@@ -28,10 +28,22 @@
 // all, which would overflow on any real device shorter than the
 // combined content height. This file's own composition test
 // (`main_shell_composition_test.dart`) is the real proof this holds.
+//
+// A real, reasoned navigation link, added at MOBILE_23, not arbitrary:
+// Holding Steady -> Tasks. The capacity number Holding Steady displays
+// is computed directly from real task commitments (`TaskCommitment`,
+// per `computed_state.dart`'s own real design) -- the same domain a
+// person would naturally want to open when that number prompts a
+// question. Deferred, injected fetch, same pattern as every other
+// real/external boundary, and the same reasoning discipline already
+// applied to MOBILE_22's Trust->Trust Digest and You->Memory
+// Transparency links.
 
 import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/features/computed_state.dart';
+import 'package:quorum_mobile/features/tasks/tasks_logic.dart';
+import 'package:quorum_mobile/features/tasks/tasks_screen.dart';
 import 'package:quorum_mobile/features/today/holding_steady_zone.dart';
 import 'package:quorum_mobile/features/today/in_motion_logic.dart';
 import 'package:quorum_mobile/features/today/in_motion_zone.dart';
@@ -64,12 +76,11 @@ class TodayScreen extends StatelessWidget {
   final void Function(PendingActionSummary action)? onTapAction;
   final void Function(String negotiationId)? onTapNegotiation;
 
-  /// Real, optional trailing content for the Holding Steady section --
-  /// left unused by this session, extended by a later session (Tasks)
-  /// once a real, reasoned navigation link exists for it. Not invented
-  /// ahead of need; the slot exists because `_ZoneSection` needed a
-  /// stable real shape before this file could compose anything.
-  final Widget? holdingSteadyTrailing;
+  /// Real, optional injected fetch for the Holding Steady -> Tasks
+  /// navigation link, added this session (MOBILE_23). The link itself
+  /// only appears when a real fetcher is actually supplied -- deferred,
+  /// same pattern as every other real/external boundary.
+  final Future<List<TaskData>> Function()? fetchTasks;
 
   const TodayScreen({
     super.key,
@@ -77,7 +88,7 @@ class TodayScreen extends StatelessWidget {
     required this.now,
     this.onTapAction,
     this.onTapNegotiation,
-    this.holdingSteadyTrailing,
+    this.fetchTasks,
   });
 
   @override
@@ -94,7 +105,14 @@ class TodayScreen extends StatelessWidget {
         ),
         _ZoneSection(
           title: 'Holding steady',
-          trailing: holdingSteadyTrailing,
+          trailing: fetchTasks == null
+              ? null
+              : TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => _TasksLoader(fetch: fetchTasks!)),
+                  ),
+                  child: const Text('View tasks'),
+                ),
           child: HoldingSteadyZone(capacity: data.capacity, budget: data.budget, now: now),
         ),
         _ZoneSection(
@@ -130,6 +148,31 @@ class _ZoneSection extends StatelessWidget {
           const SizedBox(height: 8),
           child,
         ],
+      ),
+    );
+  }
+}
+
+class _TasksLoader extends StatelessWidget {
+  final Future<List<TaskData>> Function() fetch;
+
+  const _TasksLoader({required this.fetch});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Tasks')),
+      body: FutureBuilder<List<TaskData>>(
+        future: fetch(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text("Couldn't load tasks: ${snapshot.error}"));
+          }
+          return TasksScreen(tasks: snapshot.data!);
+        },
       ),
     );
   }
