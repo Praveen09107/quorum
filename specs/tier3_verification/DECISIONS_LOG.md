@@ -1655,10 +1655,32 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-084 — `MOBILE_12`: Company Research Digest — Three Real States, Never Collapsed
+
+**Status:** CONFIRMED
+
+**Confirmed already fixed, not re-done:** `QUORUM_DATA_CONTRACTS.md` §5.11's `/career_pipeline/{application_id}/digest` contract (`company`, `summary_points`, `source_count`, plus the honest-404 requirement for a not-yet-compiled digest) is already present in this repository's real copy. No edit was needed.
+
+**A recurring, now-expected discrepancy, re-confirmed rather than assumed:** `backend/features/career_digest.py`, this session's attached reference, does not exist anywhere in this repository — confirmed live by direct search, consistent with `STATUS_INDEX.md`'s standing disclosure. Built directly against §5.11's real, sufficient JSON contract instead.
+
+**What was actually built:** `career_digest_logic.dart` (zero Flutter dependencies) — `CompanyDigestData`, `DigestNotYetAvailableException` (a real, distinctly-catchable exception type, thrown on a genuine 404 rather than ever returning an empty success), `formatSourceCount()` (real, correct pluralization — zero, one, many), `hasNoRealContent()` (a boolean, only ever reachable on a real, successfully-fetched digest). `career_digest_screen.dart` — three genuinely distinct real UI states matching three genuinely distinct real data states: content, "still researching" (the honest 404), and "researched, found nothing substantial" (the honest empty-success case) — no shared generic empty-state widget standing in for two different real meanings.
+
+**THE real, load-bearing distinction this session exists to preserve:** a digest that hasn't been compiled yet is not the same state as a digest that exists with zero summary points. Per this repository's real `career_agent.py` (`IMPL_17`, confirmed already built and cross-checked here): digest compilation only runs once a real interview is detected *and* real search findings have actually returned — two events that don't happen simultaneously, so a real client can genuinely request a digest before one exists. `DigestNotYetAvailableException` and `hasNoRealContent()` are structurally independent mechanisms — an exception thrown instead of a return, versus a boolean checked on an actual successful return value — not two branches of the same code path that happen to render similarly.
+
+**Embedded question, answered before building:** what would a person incorrectly conclude if this screen showed the same "nothing here" message for both states? Someone actually preparing for an interview would reasonably read "nothing here" as "there's nothing more coming — this company has no notable findings," when the real, true state might be "the research hasn't finished yet, and useful findings could still arrive." Collapsing the two could cause a real person to walk into an interview under-prepared, believing a search had already completed and come up empty when it had never actually run. This is exactly the kind of honest-uncertainty-vs-false-completeness distinction this project's Gate architecture already holds itself to (`no_data_found` vs. `verified_false`, `MOBILE_08`) — extended here to an ordinary feature screen, not just the Gate reveal.
+
+**7 real tests written**, matching the spec's own stated count exactly (the batch guide's checklist separately says 6) — three `formatSourceCount` cases, two `hasNoRealContent` cases (empty and non-empty, tested independently), and two `DigestNotYetAvailableException` cases (type-catchability and diagnosability via the carried `applicationId`).
+
+**Verified live, this sandbox (structural/hand-verified only):** all 4 checkable checks pass exactly as pasted, including a live confirmation that `career_digest.py` genuinely doesn't exist in this repository (not a missed file — an already-disclosed, standing fact). `CHECK 5` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/features/career_digest/career_digest_logic.dart` (new), `mobile/lib/features/career_digest/career_digest_screen.dart` (new), `mobile/test/career_digest_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-084*
+*Next entry: DEC-085*
