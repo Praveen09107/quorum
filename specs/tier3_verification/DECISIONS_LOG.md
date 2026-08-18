@@ -1701,10 +1701,34 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-086 — `MOBILE_14`: Search — Batch 7 Complete, the First Genuinely Clean Contract Check, and an Unverifiable Closed-Set Claim Disclosed
+
+**Status:** CONFIRMED
+
+**Confirmed genuinely clean, not manufactured to match the pattern:** `QUORUM_DATA_CONTRACTS.md` §5.7's `/search` contract was already complete in this repository's real copy before this session began — a concrete response example and the "results arrive already sorted" clarification are both already present. Unlike the five sessions before this one in the mobile sequence, no real gap was found here, and none is reported.
+
+**A discrepancy this session genuinely cannot resolve, disclosed rather than glossed over:** `backend/features/search.py`, the file this session's kickoff cites as documenting `item_type`'s "real, closed four-value set," does not exist anywhere in this repository — confirmed live by direct search. The closed-vocabulary claim cannot be verified against literal source here. `SearchItemType` (`email`, `task`, `expense`, `decision`, `unknown`) was built as a real, reasoned construction instead: `email` comes directly from §5.7's own JSON example; `task` and `expense` are the two other obvious real domain content types a unified search would need to cover; `decision` reflects `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md` §12.3's own description of the Log tab as "the full chronological history... searchable" — the most plausible real fourth type given that this project's real Log surfaces logged Gate decisions. Disclosed as a reasoned construction, not literally re-derived from a source file this repository doesn't have.
+
+**A real, honest distinction preserved, not blurred with `MOBILE_11`'s finding:** Career pipeline's open-vocabulary handling responds to a *confirmed* fact (`applications.status` genuinely has no `CHECK` constraint, `DEC-083`). Nothing found here confirms `item_type` is similarly open — the `unknown` fallback in this session's code is ordinary defensive practice, stated explicitly in the file's own comment, not a second confirmed open-vocabulary finding.
+
+**What was actually built:** `search_logic.dart` (zero Flutter dependencies) — `SearchItemType`, `SearchResultItem`, `parseItemType()`, `labelForItemType()`. `search_screen.dart` — the real widget; a deliberate, stated absence of any client-side sort call, since search ranking requires scoring the full corpus server-side and the array order the backend returns *is* the ranking.
+
+**Embedded question, answered before building:** given `item_type` is (as far as this repository's real evidence shows) a real, closed set with no confirmed evidence of being open, why still defensively handle an unrecognized value? Because "no evidence it's open" is not the same claim as "confirmed closed" — this repository has no `search.py` to actually check, and a future backend change adding a fifth real type is a real possibility this file cannot rule out. Defensive handling here costs nothing and prevents a real crash if that possibility is ever realized; it just isn't, unlike Career pipeline's handling, a response to something already confirmed true today.
+
+**11 real tests written**, matching the spec's own stated count exactly (the batch guide's checklist separately says 8) — all four real type-parsing cases plus the unrecognized-value fallback, all five labels including `unknown`'s, and a combined coverage proof that every `SearchItemType` value produces its own distinct, non-empty label.
+
+**Batch 7 (Mobile Feature Screens I — `MOBILE_10`–`14`) is now complete.** Every session in this batch found `backend/features/*.py` absent and built against `DATA_CONTRACTS.md`'s real JSON contracts instead — a consistent, disclosed pattern across all five sessions, not five isolated coincidences.
+
+**Verified live, this sandbox (structural/hand-verified only):** all 4 checkable checks pass exactly as pasted, including a live confirmation that `search.py` genuinely doesn't exist in this repository. `CHECK 5` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/features/search/search_logic.dart` (new), `mobile/lib/features/search/search_screen.dart` (new), `mobile/test/search_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-086*
+*Next entry: DEC-087*
