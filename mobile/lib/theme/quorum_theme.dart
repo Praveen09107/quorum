@@ -69,3 +69,40 @@ ThemeData buildQuorumLightTheme() {
     visualDensity: VisualDensity.standard,
   );
 }
+
+/// Real, functional status colors — added here, at `MOBILE_08`, when the
+/// Gate Reveal screen needed them for the first time. Confirmed absent
+/// before this addition: no status color of any kind existed in this
+/// file before this session, despite `MOBILE_08`'s own kickoff prompt
+/// treating three of these four as if they already existed (see
+/// DECISIONS_LOG.md for the disclosure) — all four are genuinely new.
+///
+/// Every real usage of these colors is required to pair color with a
+/// distinct icon SHAPE (per ADD §12.4's accessibility rule, already
+/// honored by `needs_you_now_zone.dart`'s stakes icons) — color alone
+/// never carries the meaning on its own anywhere in this project.
+class QuorumStatusColors {
+  QuorumStatusColors._();
+
+  /// A validator confirmed a real, positive claim — evidence_state
+  /// "verified_true".
+  static const Color verified = Color(0xFF2E7D32); // green 800
+
+  /// A real, genuine ambiguity — evidence_state "no_data_found". Never
+  /// collapsed into a pass or fail; its own distinct color, not a shade
+  /// of either `verified` or `critical`.
+  static const Color needsAttention = Color(0xFFF9A825); // amber 800
+
+  /// A softer, non-alarming signal for states that are real but not
+  /// urgent (e.g. Stage B genuinely signed off with no objections).
+  static const Color uncertain = Color(0xFF546E7A); // blue-grey 600
+
+  /// A real, necessary FOURTH status color, added specifically because
+  /// the other three didn't cover the Gate's single most severe signal:
+  /// a validator catching an actual false claim (evidence_state
+  /// "verified_false"). Reusing `needsAttention` here would have
+  /// understated the real severity of a confirmed false claim — this is
+  /// deliberately distinct from, and more alarming than, every other
+  /// status color in this file.
+  static const Color critical = Color(0xFFC62828); // red 800
+}
