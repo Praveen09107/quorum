@@ -1951,10 +1951,32 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-097 — Batch 10, PHASE 0: Structural Migration — Already Done, One Genuine Gap Closed
+
+**Status:** CONFIRMED
+
+**A significant discrepancy, flagged before building per Rule 4:** this phase's own real spec (`QUORUM_IMPLEMENTATION_STRATEGY.md`, confirmed accurate in its Phase 0–6 structure — my own first grep for it failed only on a case-sensitivity mismatch against "PHASE 0" vs. "Phase 0", not a real absence) opens with "you are here," describing the backend as still flat, imports still bare, and the real test count as 156 against 2 disclosed bulk commits. **None of that is true of this repository's real, current state.** Confirmed directly before touching anything: `backend/src/quorum_backend/` has used the target src-layout since `IMPL_01`; `grep` for every bare top-level import form (`^from gate\.`, `^from agents\.`, etc.) across `backend/src/` returns zero results — every import has been namespaced from the start; and this repository's real, live test count going into this phase was **162**, not 156, with real per-session commit history throughout, not two bulk commits. Three of Phase 0's four real deliverables were already complete before this session began.
+
+**The one genuine gap, closed:** `backend/src/quorum_backend/core/config.py` did not exist. Built as a real, `pydantic-settings`-backed `Settings` model (new dependency, `pydantic-settings==2.15.0`, added and installed), with every field matching `backend/.env.example`'s already-real variable names exactly — `supabase_url`, `supabase_service_key`, `upstash_redis_url`, `gemini_api_key`, `groq_api_key`, `tavily_api_key`, `jwt_signing_key`, `langfuse_public_key`, `langfuse_secret_key`. Infrastructure fields default to `None` — the honest value for "not yet provisioned," never a guessed placeholder URL. A second, smaller real discrepancy found and disclosed the same way: `QUORUM_PROJECT_STRUCTURE.md` cites its own "§6" for this file's real shape, but that document only goes up to §5 — a broken internal cross-reference, not a real spec section that exists to consult.
+
+**A real, deliberate scope boundary held:** module-local tuning constants that are security/behavior decisions, not deployment values (`REFRESH_TOKEN_TTL_DAYS`, `ACCESS_TOKEN_TTL_MINUTES`, `STABLE_THRESHOLD`, etc.) were **not** pulled into this file — moving them would blur a real distinction this project has held since its earliest sessions. `core/logging.py`, named as a second real gap in the same `QUORUM_PROJECT_STRUCTURE.md` line, was deliberately left untouched — out of this phase's explicit, approved scope; logged here rather than silently built alongside `config.py`.
+
+**A real, genuine consumer, not an unreferenced file:** `main.py` now reads `get_settings()` in a real FastAPI `lifespan` handler (the current, non-deprecated pattern for this pinned FastAPI version — `@app.on_event` was considered and rejected as deprecated) and logs a loud warning if a real deployment ever boots with the known, public, insecure `JWT_SIGNING_KEY` placeholder still active. This is real, working safety-net behavior, not a decorative usage just to satisfy a "genuinely used" check.
+
+**10 real tests written**, none of them existing before this session: 7 for `Settings`/`get_settings()` (defaults, real env-var reading via exact alias names, the insecure-default detection property, cache-singleton behavior, and defensive tolerance of unrelated real environment variables), 3 for `main.py` (the `/health` endpoint still works; the insecure-default warning genuinely fires; it genuinely does not fire once a real secret is set) — the latter using `TestClient`, a real pattern not previously used anywhere in this backend's test suite, introduced here specifically because proving a `lifespan` handler's real behavior needs a real app context, not a bare function call.
+
+**Confirmed before building, per the phase's own embedded question:** what specifically proves behavior is unchanged, not just that the code compiles? The real, live pre-existing test count (162) passing unmodified, confirmed by running the full suite before AND after — not inferred from the diff looking small. `git diff --stat` against `main` (after staging) touches exactly 5 files: the new `config.py`, the new two test files, `main.py`'s real, additive-only lifespan wiring, and one dependency line in `pyproject.toml` — no existing business logic anywhere else in the tree was touched.
+
+**Verified live:** `ruff check backend/src` → clean. `PYTHONPATH=backend/src pytest backend/tests -q` → **172 passed** (162 prior, confirmed unmodified + 10 new) — not this phase's own spec's assumed 156, the real, live, current number, reported directly per this project's established discipline against restating a stale count.
+
+**Affects:** `backend/src/quorum_backend/core/config.py` (new), `backend/src/quorum_backend/main.py` (real lifespan wiring added), `backend/pyproject.toml` (`pydantic-settings==2.15.0` added), `backend/tests/test_core_config.py` (new), `backend/tests/test_main.py` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-097*
+*Next entry: DEC-098*
