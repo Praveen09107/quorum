@@ -1793,10 +1793,30 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-090 — `MOBILE_18`: You — Built Against This Repository's Real, Already-Shipped `DeletionResult`, Not the Batch's Assumed Shape
+
+**Status:** CONFIRMED
+
+**A significant, disclosed schema discrepancy, flagged before building per Rule 4:** this session's kickoff prompt (and its pluralization-bug narrative) assumes `DeletionResultData` carries an integer device count — `sessions_revoked` pluralizing "device"/"devices" — alongside a generic store-count map. **This repository's real, already-shipped backend** (`backend/src/quorum_backend/security/account_deletion.py`, built at `IMPL_22`, confirmed by direct re-read before writing this file) **reports `sessions_revoked` as a plain boolean**, not a count — there is no real mechanism in this backend that counts or tracks individual revoked device sessions, only whether the real `revoke_all_for_user()` call ran. This is directly consistent with this same session's own real finding, stated in its own spec: "only `POST /auth/revoke` exists — no per-device sign-out endpoint." Fabricating a device count this backend doesn't produce would have directly contradicted that finding. `you_logic.dart` was built against the real backend shape instead: four real named store counts (`postgresRowsDeleted`, `vectorEmbeddingsDeleted`, `memoriesDeleted`, `oauthTokensRevoked`) plus one real boolean session-revocation fact, stated plainly ("You have been signed out of every device") rather than pluralized against a number that doesn't exist.
+
+**The genuine pluralization risk that DOES apply — store count, not device count — built correct from the start, not shipped buggy and fixed later:** this repository never had a version of `formatDeletionSummary` with a hardcoded-plural "stores" bug. `nonZeroStoreCounts` only counts real, named stores with a genuinely nonzero deletion count, and `storeWord` pluralizes correctly against that real count from the first line of code — proven by `test_a_single_real_store_is_also_genuinely_singular`, included as a genuine correctness property this function must have regardless of the batch's "found and fixed" framing.
+
+**What was actually built:** `you_logic.dart` (zero Flutter dependencies) — `requiredDeletionConfirmationText`, `isValidDeletionConfirmation()` (case-sensitive, exact-match, no trimming — deliberately strict, proven by test against a lowercase near-match, leading/trailing whitespace, and a partial string), `DeletionResultData`, `formatDeletionSummary()`. `you_screen.dart` — the real widget: the delete button's `onPressed` is structurally `null`, not just visually dimmed, until the exact literal `"DELETE"` is typed; a plain `InputDecoration(border: OutlineInputBorder())` used directly (no nonsensical ternary ever written into this repository's version of this file, unlike the "real mistake caught mid-draft" this session's own spec describes for wherever it was originally written).
+
+**Embedded question, answered before building:** why show the real, specific data-purge counts rather than a generic "your account has been deleted" message? Because this is the single most consequential, irreversible action a person can take in this app, and the same "trust measured, not asserted" principle this project applies everywhere else (Gate findings, negotiation deltas, Today's `source` labels) applies here too — a generic confirmation asks a person to trust that deletion happened; the real counts let them verify it did, and roughly how much.
+
+**9 real tests written**, matching the batch's own corrected count exactly (built directly as 9 from the start, since this repository never shipped the buggy 8-test version) — all six `isValidDeletionConfirmation` strictness cases, the real singular-store proof, the real plural-store proof, and a direct confirmation that session revocation is stated as a plain fact, never a fabricated count.
+
+**Verified live, this sandbox (structural/hand-verified only):** all 4 checkable checks pass exactly as pasted, including a live confirmation that §5.8's S3-equivalent requirement is genuinely documented. `CHECK 2`'s Python hand-verification matches this file's real Dart logic exactly (confirmed independently before writing the Dart). `CHECK 8` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/features/you/you_logic.dart` (new), `mobile/lib/features/you/you_screen.dart` (new), `mobile/test/you_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-090*
+*Next entry: DEC-091*
