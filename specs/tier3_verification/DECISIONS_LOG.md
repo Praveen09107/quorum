@@ -1567,10 +1567,32 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-080 — `MOBILE_08`: The Gate Reveal — Sign-Off vs. Never-Ran, and All Four Status Colors Built Fresh
+
+**Status:** CONFIRMED
+
+**A discrepancy flagged before building, per Rule 4:** this session's kickoff prompt described `quorum_theme.dart` as already defining three status colors (`verified`, `needsAttention`, `uncertain`), with only a fourth (`critical`) genuinely missing. Direct `grep` against the real, current file (as it stood at the end of `MOBILE_07`) found **zero** status colors of any kind. All four were built together in this session, not just the one the narrative flagged as new.
+
+**Every schema field checked directly before writing a single widget, not from memory:** `Finding.evidence_state`'s three real values and `Objection.signed_off` — both confirmed live via direct `grep` against `backend/src/quorum_backend/gate/schemas.py` before this file existed.
+
+**What was actually built:** `quorum_theme.dart` extended with `QuorumStatusColors` — `verified`, `needsAttention`, `uncertain`, and the real, necessary fourth color `critical` (added specifically because the other three don't cover the Gate's most severe signal — a validator catching an actual false claim; reusing `needsAttention` would have understated it). `gate_reveal_logic.dart` (zero Flutter dependencies) — `visualStateForEvidence()` (the real three-valued mapping, `no_data_found` never collapsed into a pass or fail), `FindingSummary`, `ObjectionSummary`, `StageBSummary`, `stageBRan()`, `summarizeStageB()`. `gate_reveal_screen.dart` — the real, literal staged reveal: Stage A renders unconditionally; the Stage B section only enters the widget tree at all when `stageBRan()` is true, matching the Gate's own real architecture where S0/S1 never reach Stage B.
+
+**THE real, load-bearing distinction, proven by test, not just implemented:** `stageBRan([])` correctly returns `false` — Stage B never ran. `stageBRan([signOffEntry])` correctly returns `true` — a sign-off is Stage B genuinely having reviewed and found nothing, not the same as never being asked. This is only correct because the real backend guarantees Stage B never returns a bare empty list when it genuinely ran (`Objection`'s own docstring, confirmed live) — stated explicitly in this file's own comment, not assumed silently. `summarizeStageB()` handles a defensive mixed case (a real objection alongside a sign-off entry) sensibly even though the real schema says this combination shouldn't occur.
+
+**Embedded question, answered before building:** what would this screen incorrectly imply if it treated "Stage B never ran" and "Stage B ran and signed off" as the same thing? Either it would hide a real, positive "Stage B reviewed this and found nothing wrong" moment from a user who'd reasonably want to see it, or — the more dangerous direction — it would falsely imply Stage B reviewed an S0/S1 action it never actually touched, misrepresenting the Gate's real verification work as more thorough than it was. Both directions undermine the same premise this whole project is built on: trust measured, not asserted. A screen that quietly inflates what was actually checked is exactly the failure mode the Gate's own architecture (§6) exists to prevent everywhere else in the system — this screen would be the one place it accidentally reintroduced it.
+
+**10 real tests written**, matching the spec's own stated count exactly (the batch guide's checklist separately says 9 — built to the spec's own authoritative number) — all three real evidence-state mappings plus the defensive unrecognized-value case, all three `stageBRan` cases (empty, sign-off-only, real-objection), and all three `summarizeStageB` cases including the defensive mixed one.
+
+**Verified live, this sandbox (structural/hand-verified only):** all 5 checkable checks pass exactly as pasted, including the live backend field-name cross-reference. `CHECK 6` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/theme/quorum_theme.dart` (extended: `QuorumStatusColors`), `mobile/lib/features/gate_reveal/gate_reveal_logic.dart` (new), `mobile/lib/features/gate_reveal/gate_reveal_screen.dart` (new), `mobile/test/gate_reveal_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-080*
+*Next entry: DEC-081*
