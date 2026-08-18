@@ -1873,10 +1873,36 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-094 — `MOBILE_21`: Platform Features Wiring — Two "Dormant" Files That Were Never Actually Written Here
+
+**Status:** CONFIRMED
+
+**A significant discrepancy, flagged before building per Rule 4:** this session's kickoff prompt and its own real spec describe `share_intent_handler.dart` and `today_widget_bridge.dart` as real, structurally complete code written early in this project, sitting dormant and unreferenced, with a classification method living untested as a private method inside the handler. **Neither file exists anywhere in this repository** — confirmed by exhaustive search before writing a line of this session's code. `mobile/pubspec.yaml`'s own real comment (written honestly during `MOBILE_04`) already discloses this: the packages these files would consume (`home_widget`, `receive_sharing_intent`) are declared, but the consuming files were never built here. There was no dormant private method to extract — `share_intent_logic.dart` was built fresh, directly, with real test coverage from its first line.
+
+**Both new files built structurally correct against their real, documented package APIs, with the same honest uncertainty this project already applies to comparable cases:** `receive_sharing_intent`'s exact API surface (the `.instance` singleton pattern, method names) has shifted across major versions and is flagged, same category as `MOBILE_01`'s `CardThemeData` note and `MOBILE_04`'s `device_calendar` `Result<T>` note — `flutter analyze` on a real machine resolves any mismatch.
+
+**A real, cascading structural change made and immediately fixed in the same session, not left broken:** wiring `ShareIntentHandler` into `main_shell.dart` required reading `pendingShareProvider` via Riverpod, which turned `MainShell` from a plain `StatefulWidget` into a `ConsumerStatefulWidget`. Checked directly rather than assumed: `main_shell_test.dart`'s three real tests each called `tester.pumpWidget(MaterialApp(home: MainShell()))` with no `ProviderScope` ancestor — which would throw immediately against a `ConsumerStatefulWidget`. Fixed in this same session, all three tests now wrap in a real `ProviderScope`.
+
+**A second real structural change, confirmed necessary and made correctly:** firing the home-widget update "on genuine data loads," as this session's own spec requires, needed `HoldingSteadyZone` to become a `StatefulWidget` — a `StatelessWidget` has no `initState`/`didUpdateWidget` hook to fire from. Converted, with `didUpdateWidget` comparing the real `hoursRemainingToday`/`remainingFraction` values before firing again, so the update never re-fires on an unrelated rebuild carrying the same already-relayed numbers.
+
+**Confirmed still absent, not silently reintroduced:** no direct `import 'package:home_widget/home_widget.dart'` exists in `holding_steady_zone.dart` — confirmed by direct `grep -n "^import"` listing every real import in the file, only the intended `today_widget_bridge.dart` import present.
+
+**What was actually built:** `share_intent_logic.dart` (zero Flutter dependencies) — `SharedContentDraft`, `classifySharedContent()`. `share_intent_handler.dart` (new) — delegates every classification decision to the extracted, tested function; confirmed by direct `grep` that zero classification logic (`looksLikeImage`/`suggestedDomain`) exists in this file itself. `today_widget_bridge.dart` (new) — a real, minimal relay of already-computed numbers, never a computation of its own. `pending_share_provider.dart` (new) — a single, real `StateProvider`, deliberately minimal.
+
+**Embedded question, answered before building:** why does extracting untested, private logic into a real, standalone, tested file matter, even without a live prior version to point to? Because the real risk isn't specific to this repository's history — it's structural. Classification logic buried as a private method inside a platform-integration handler is logic no test can reach without also exercising the real, unavailable-in-this-sandbox platform plugin around it. Extracting it into a zero-Flutter-dependency file is what makes `dart test` able to prove the actual decision logic correct at all, independent of whether the surrounding platform code can run here.
+
+**5 real tests written**, matching the spec's own stated count exactly — real image/non-image classification, a second real image subtype, and both `path`/`mimeType` preservation checks.
+
+**Verified live, this sandbox (structural/hand-verified only):** all 4 checkable checks pass — `CHECK 2`'s naive grep finds a match only inside this file's own explanatory comment describing the avoided mistake, the same recurring false-positive pattern; confirmed by direct import-listing that no real `home_widget` import exists. `CHECK 6` (`dart test`, `flutter analyze`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/features/share_intent_logic.dart` (new), `mobile/lib/features/share_intent_handler.dart` (new), `mobile/lib/features/today_widget_bridge.dart` (new), `mobile/lib/features/pending_share_provider.dart` (new), `mobile/lib/features/today/holding_steady_zone.dart` (restructured to `StatefulWidget`), `mobile/lib/shell/main_shell.dart` (restructured to `ConsumerStatefulWidget`, real share-intent wiring), `mobile/test/main_shell_test.dart` (fixed: `ProviderScope` added to all three tests), `mobile/test/share_intent_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-094*
+*Next entry: DEC-095*
