@@ -1525,10 +1525,30 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-078 — `MOBILE_06`: Today — Holding Steady — A Genuinely Missing Prerequisite, Built Real and Disclosed
+
+**Status:** CONFIRMED
+
+**A significant discrepancy, flagged before building, per Rule 4:** `MOBILE_06`'s own real spec document treats `computed_state.dart` as an established prerequisite — "the file proving live and offline-mirror math produce byte-identical results — has existed since well before mobile work even began" — and instructs cross-checking field names directly against it. **Neither `mobile/lib/features/computed_state.dart` nor its Python counterpart, `backend/features/computed_state.py`, exists anywhere in this repository** — confirmed by direct search before writing a line of this session's own code, consistent with `STATUS_INDEX.md` open item 8's standing disclosure. This repository's real, live history never reached the earlier session the spec's narrative assumes existed.
+
+**Resolution:** built `computed_state.dart` here, now, as a real, minimal, disclosed construction — `MOBILE_06` cannot meaningfully exist without it. This is not invented architecture beyond the spec (Rule 3) — the file's real, intended contract (`compute_capacity_state()`/`compute_budget_state()` as pure, deterministic functions; a `source` label always rendered honestly, never silently substituted) is independently documented in `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md` §10.5/§12.2; this session is simply the first to actually build the already-specified thing. Field names (`hoursRemainingToday`, `remainingFraction`, `DataSource.localMirror`) match exactly what `MOBILE_06`'s kickoff prompt names, since those names come from the same real ADD sections both this file and that prompt were written against.
+
+**What was actually built:** `computed_state.dart` — `DataSource` enum, `CapacityState`, `BudgetState`, `computeCapacityState()`, `computeBudgetState()` (pure, deterministic — the arithmetic never branches on `source`, only the label does, the literal implementation of the F4 fix's guarantee). `holding_steady_logic.dart` — `DayTouchpoint`, `classifyTouchpoint()` (real 12/18-hour boundaries, hand-verified in Python across all six real edge hours before being trusted in Dart), `touchpointHeadline()`. `holding_steady_zone.dart` — the real widget: computed numbers render as large (36px, weight 600) numerals directly, no chart or gauge; an `Offline estimate` badge renders via both a real icon (`Icons.cloud_off`) and real text whenever `source` is `DataSource.localMirror` — never color alone.
+
+**Embedded question, answered before building:** why does midday get a genuinely neutral "Holding steady" label rather than either bookend's framing? Because it's neither morning's question ("what does today look like" — already answered) nor evening's ("how did today go" — not yet answerable). Forcing midday into one of those two framings would mean either a stale morning promise re-displayed hours later, or a premature evening verdict on a day that hasn't finished. A genuine third, neutral state protects against both — this is the literal reason "Holding steady" exists as the zone's own name, not an afterthought label.
+
+**9 real tests written**, matching the spec's own stated count exactly — every one of the six hand-verified boundary hours (`11`, `12`, `17`, `18`, `0`, `23`) gets its own real test, plus all three touchpoint headlines, including an explicit assertion that midday's label differs from both bookends'.
+
+**Verified live, this sandbox (structural/hand-verified only):** `CHECK 1`, `CHECK 2`, `CHECK 4` all pass exactly as pasted. `CHECK 3` (`grep` for `streak`/`score`/`count`, expecting zero results) finds real matches — but only inside this file's own explanatory comments *stating* these mechanics are deliberately absent, the same false-positive pattern this project's own history has hit before (`IMPL_09`'s confidence grep, `IMPL_15`'s `deadline_conflict_check` grep) — confirmed by direct reading, not the naive grep alone, that no actual streak/score/count logic exists anywhere in the file. `CHECK 5` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/features/computed_state.dart` (new), `mobile/lib/features/today/holding_steady_logic.dart` (new), `mobile/lib/features/today/holding_steady_zone.dart` (new), `mobile/test/holding_steady_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-078*
+*Next entry: DEC-079*
