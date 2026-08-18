@@ -27,6 +27,15 @@ could silently drift apart.
 Out of scope: the real Postgres/pgvector/mem0 deletion queries themselves
 -- DeletionStore is injected, same real/external boundary pattern as
 everywhere else in this project (llm_call, position_call, RevocationStore).
+
+Batch 10 Phase 3, one real, disclosed change: `delete_account()` is now
+`async` and `await`s `revoke_all_for_user()`, since that function itself
+became async this same session (see `auth/refresh_token.py`'s own
+docstring for why). `DeletionStore`'s own methods are deliberately left
+synchronous for now -- its real implementation is still out of scope
+here, unbuilt; when it is built against the real database, the same
+async reasoning will apply to it too, but there is no real consumer of
+that yet to justify the change today.
 """
 from __future__ import annotations
 
@@ -59,7 +68,7 @@ class DeletionResult:
     oauth_tokens_revoked: int
 
 
-def delete_account(
+async def delete_account(
     user_id: str,
     deletion_store: DeletionStore,
     revocation_store: RevocationStore,
@@ -69,7 +78,7 @@ def delete_account(
     rather than the reverse order, which would leave a real window where
     a still-valid session could act against data mid-deletion."""
 
-    revoke_all_for_user(user_id, revocation_store)
+    await revoke_all_for_user(user_id, revocation_store)
 
     return DeletionResult(
         user_id=user_id,

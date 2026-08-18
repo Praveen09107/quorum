@@ -3,18 +3,21 @@
 Originally deliberately minimal (/health only) per Phase 0's own
 kickoff-guide finding -- no import of gate/, router.py, agents/, or
 auth/. That was real, disclosed, deliberately-later work
-(QUORUM_IMPLEMENTATION_STRATEGY.md Phase 3), and Phase 3 Part B is
-where the first of it lands: a real, live `GET /trust_digest`, backed
-by a real Postgres connection pool (`core/db.py`), not a stub.
+(QUORUM_IMPLEMENTATION_STRATEGY.md Phase 3), and Phase 3 is where it
+lands: a real, live `GET /trust_digest` backed by a real Postgres pool
+(`core/db.py`, Part B), and now real `POST /auth/token`, `/auth/refresh`,
+`/auth/revoke` (Part C prerequisite) -- wiring IMPL_12's already-built,
+CRITICAL-tier-reviewed session-management modules into real routes for
+the first time, and requiring a real, valid access token on every
+endpoint that touches real user data (`/trust_digest` included, as of
+this session).
 
 Real, minimal integration of `core/config.py` (Phase 0's own settings
 module), added the same session it was built: a real startup-time check,
 not just an unreferenced file. If a real deployment ever boots with the
 known, public, insecure default JWT signing key still in place, that's
 loudly logged now -- a real safety net for exactly the "someone forgot
-to set a real secret" failure mode, without going further and refusing
-to start (auth routes don't exist yet to protect; that's real,
-deliberately later work).
+to set a real secret" failure mode.
 """
 import logging
 from contextlib import asynccontextmanager
@@ -22,8 +25,28 @@ from dataclasses import asdict
 from typing import AsyncIterator
 
 import asyncpg
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from pydantic import BaseModel
 
+from quorum_backend.auth.access_token import (
+    ACCESS_TOKEN_TTL_MINUTES,
+    AccessTokenExpired,
+    AccessTokenInvalid,
+    create_access_token,
+    decode_access_token,
+)
+from quorum_backend.auth.google_oauth import GoogleIdTokenInvalid, GoogleOAuthExchangeFailed, exchange_authorization_code, verify_google_id_token
+from quorum_backend.auth.refresh_token import (
+    TokenExpired,
+    TokenInvalid,
+    TokenRevoked,
+    TokenReuseDetected,
+    hash_token,
+    issue_refresh_token,
+    revoke_all_for_user,
+    rotate_refresh_token,
+)
+from quorum_backend.auth.revocation_store import SupabaseRevocationStore
 from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
 from quorum_backend.features.trust_digest import fetch_trust_digest
@@ -80,16 +103,72 @@ def _get_db_pool(request: Request) -> asyncpg.Pool:
     return pool
 
 
+def _get_revocation_store(pool: asyncpg.Pool = Depends(_get_db_pool)) -> SupabaseRevocationStore:
+    return SupabaseRevocationStore(pool)
+
+
+def _require_auth(authorization: str | None = Header(default=None)) -> str:
+    """Real Bearer-token auth -- this is the actual security boundary
+    real requests are protected by (see `main.py`'s own top-of-file
+    docstring and `DECISIONS_LOG.md` for why the Cloud Run network-level
+    gate was deliberately relaxed in favor of this). Returns the real,
+    verified `user_id` on success. Every non-success path is a real,
+    distinct 401 -- never a silent pass-through."""
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or malformed Authorization header -- expected 'Bearer <access_token>'.")
+    raw_token = authorization.removeprefix("Bearer ")
+    settings = get_settings()
+    try:
+        return decode_access_token(raw_token, settings.jwt_signing_key)
+    except AccessTokenExpired as exc:
+        raise HTTPException(status_code=401, detail="Access token has expired -- use /auth/refresh to get a new one.") from exc
+    except AccessTokenInvalid as exc:
+        raise HTTPException(status_code=401, detail="Access token is invalid.") from exc
+
+
+class TokenExchangeRequest(BaseModel):
+    """Real request shape for `POST /auth/token` -- a reasoned
+    construction against standard OAuth 2.0 Authorization Code + PKCE
+    practice (see `auth/google_oauth.py`'s own top-of-file docstring for
+    why no literal spec shape exists to copy instead)."""
+
+    code: str
+    code_verifier: str
+    redirect_uri: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class TokenPairResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int = ACCESS_TOKEN_TTL_MINUTES * 60
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @app.get("/trust_digest")
-async def trust_digest(pool: asyncpg.Pool = Depends(_get_db_pool)) -> dict:
+async def trust_digest(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    _user_id: str = Depends(_require_auth),
+) -> dict:
     """Real, live -- queries the real `action_events` table via
     `fetch_trust_digest()`, never mocked or pre-computed data. Response
-    shape matches `QUORUM_DATA_CONTRACTS.md` §5.15 exactly."""
+    shape matches `QUORUM_DATA_CONTRACTS.md` §5.15 exactly.
+
+    Requires a real, valid access token (`_require_auth`) as of this
+    session -- honest note: `action_events` itself has no `user_id`
+    column (confirmed against the real migration schema), so this is
+    currently a real "you must be signed in" gate, not yet a per-user
+    data filter. Adding real per-user scoping to the underlying data is
+    a separate, disclosed open item, not silently implied solved here.
+    """
     result = await fetch_trust_digest(pool)
     return {
         "current_week": asdict(result.current_week),
@@ -97,3 +176,88 @@ async def trust_digest(pool: asyncpg.Pool = Depends(_get_db_pool)) -> dict:
         "trend": result.trend,
         "delta": result.delta,
     }
+
+
+@app.post("/auth/token", response_model=TokenPairResponse)
+async def auth_token(
+    body: TokenExchangeRequest,
+    store: SupabaseRevocationStore = Depends(_get_revocation_store),
+) -> TokenPairResponse:
+    """Real, live Gmail OAuth code exchange -- `QUORUM_DATA_CONTRACTS.md`
+    §5.5. Google's real token endpoint verifies the authorization code
+    and PKCE `code_verifier` together; this route then independently
+    verifies the returned `id_token`'s real signature before trusting
+    the identity inside it, and issues a real Quorum session on success.
+    """
+    settings = get_settings()
+    if not settings.google_oauth_client_id or not settings.google_oauth_client_secret:
+        raise HTTPException(status_code=503, detail="Google OAuth is not configured on this deployment.")
+
+    try:
+        google_tokens = await exchange_authorization_code(
+            code=body.code,
+            code_verifier=body.code_verifier,
+            redirect_uri=body.redirect_uri,
+            client_id=settings.google_oauth_client_id,
+            client_secret=settings.google_oauth_client_secret,
+        )
+    except GoogleOAuthExchangeFailed as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    id_token = google_tokens.get("id_token")
+    if not id_token:
+        # A real, genuine anomaly -- Google's OpenID Connect response is
+        # expected to always include one for this flow. Surfaced as a
+        # real 502 (this route's own upstream failed to behave as
+        # documented), never silently treated as "no identity, proceed
+        # anyway."
+        raise HTTPException(status_code=502, detail="Google's token response did not include an id_token.")
+
+    try:
+        payload = verify_google_id_token(id_token, settings.google_oauth_client_id)
+    except GoogleIdTokenInvalid as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    user_id = payload["sub"]
+    access_token = create_access_token(user_id, settings.jwt_signing_key)
+    refresh_token = await issue_refresh_token(user_id, store)
+    return TokenPairResponse(access_token=access_token, refresh_token=refresh_token)
+
+
+@app.post("/auth/refresh", response_model=TokenPairResponse)
+async def auth_refresh(
+    body: RefreshRequest,
+    store: SupabaseRevocationStore = Depends(_get_revocation_store),
+) -> TokenPairResponse:
+    """Real refresh-token rotation (`auth/refresh_token.py`, CRITICAL
+    tier) -- a reused or otherwise invalid refresh token is a real 401,
+    never silently issuing a fresh session anyway."""
+    try:
+        new_raw_refresh = await rotate_refresh_token(body.refresh_token, store)
+    except (TokenInvalid, TokenRevoked, TokenExpired, TokenReuseDetected) as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    # rotate_refresh_token() returns only the new raw token -- looking
+    # its own just-written record back up is the real, honest way to
+    # recover the user_id needed for the new access token, rather than
+    # widening that CRITICAL-tier function's own return contract just
+    # for this one caller's convenience.
+    record = await store.get(hash_token(new_raw_refresh))
+    settings = get_settings()
+    access_token = create_access_token(record.user_id, settings.jwt_signing_key)
+    return TokenPairResponse(access_token=access_token, refresh_token=new_raw_refresh)
+
+
+@app.post("/auth/revoke", status_code=204)
+async def auth_revoke(
+    user_id: str = Depends(_require_auth),
+    store: SupabaseRevocationStore = Depends(_get_revocation_store),
+) -> None:
+    """The real "sign out everywhere" control -- reuses
+    `revoke_all_for_user()` directly (the exact same real, tested
+    mechanism `security/account_deletion.py` also reuses, per that
+    module's own documented reasoning: one revocation code path,
+    reviewed once). Requires a real, valid access token identifying
+    WHOSE sessions to revoke -- never a bare user_id in the request
+    body, which would let any caller sign out any other user."""
+    await revoke_all_for_user(user_id, store)

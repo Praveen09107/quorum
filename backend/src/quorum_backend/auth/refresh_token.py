@@ -18,6 +18,35 @@ project's real corpus (only the 15-minute access-token TTL is given,
 QUORUM_CONFIGURATION_CONSTANTS.md §10) -- 7 days is a real, reasoned,
 disclosed choice (a common, sensible refresh-token lifetime), not a
 recalled spec value.
+
+Batch 10 Phase 3, TWO real, disclosed changes to this already-reviewed
+CRITICAL-tier module, made when this module's own storage layer finally
+became real (IMPL_12's docstring named this "a separate, later
+integration concern" -- this is that moment):
+
+1. `RevocationStore` and every function here are now `async`. The real
+   storage backend (`auth/revocation_store.py`, new) is `asyncpg`-backed,
+   and a synchronous DB call from inside this codebase's async FastAPI
+   app would block the whole event loop -- a real problem, not a style
+   preference, given Cloud Run's own `--concurrency=1` means one blocked
+   request stalls everything else that container instance would otherwise
+   serve. Every internal check/branch/exception is unchanged; only the
+   calling convention changed.
+
+2. A NEW `try_claim()` method closes a real race this module's original
+   two-call `get()` then `save()` pattern left open: `--max-instances=2`
+   means two real, separate container instances can genuinely process two
+   requests concurrently. Two concurrent presentations of the same stolen
+   token could both call `get()`, both see `used=False` (the race window
+   between the read and the write), and both "successfully" rotate --
+   silently defeating the exact theft detection this module exists to
+   provide. `try_claim()` performs the read-and-mark-used step as a single
+   atomic database operation; only the first of two racing callers can
+   ever succeed. `rotate_refresh_token`'s exception behavior is completely
+   unchanged from the caller's perspective -- `try_claim()` returning
+   `False` is treated exactly like the pre-existing `record.used` branch,
+   just now genuinely race-safe rather than only correct in the common,
+   non-concurrent case.
 """
 from __future__ import annotations
 
@@ -64,25 +93,34 @@ class RefreshTokenRecord:
 
 
 class RevocationStore(Protocol):
-    """Real, injectable adapter -- the real Supabase-backed implementation
-    is a separate, later integration concern; this module assumes nothing
-    about the storage backend, the same discipline every Gate validator
-    adapter already follows."""
+    """Real, injectable adapter -- `auth/revocation_store.py` is the real
+    Supabase-backed implementation; `FakeStore` in this module's own tests
+    is the in-memory one. Nothing in `rotate_refresh_token`/
+    `issue_refresh_token`/`revoke_all_for_user` assumes a specific storage
+    backend, the same discipline every Gate validator adapter follows."""
 
-    def get(self, token_hash: str) -> RefreshTokenRecord | None: ...
-    def save(self, record: RefreshTokenRecord) -> None: ...
-    def revoke_family(self, family_id: str) -> None: ...
-    def get_family_ids_for_user(self, user_id: str) -> set[str]: ...
+    async def get(self, token_hash: str) -> RefreshTokenRecord | None: ...
+    async def save(self, record: RefreshTokenRecord) -> None: ...
+    async def try_claim(self, token_hash: str) -> bool:
+        """Atomically marks the record `used=True` IF AND ONLY IF it is
+        currently `used=False`. Returns whether THIS call was the one to
+        claim it -- `False` means a concurrent caller (or an earlier real
+        presentation) already claimed it first. The real race-safety
+        guarantee this module depends on lives entirely in this one
+        method being genuinely atomic in the concrete implementation."""
+        ...
+    async def revoke_family(self, family_id: str) -> None: ...
+    async def get_family_ids_for_user(self, user_id: str) -> set[str]: ...
 
 
-def _hash_token(raw_token: str) -> str:
+def hash_token(raw_token: str) -> str:
     """Only a HASH of the token is ever stored -- never the raw value.
     A real database compromise then leaks nothing an attacker could
     present as a valid token."""
     return hashlib.sha256(raw_token.encode()).hexdigest()
 
 
-def issue_refresh_token(
+async def issue_refresh_token(
     user_id: str,
     store: RevocationStore,
     family_id: str | None = None,
@@ -92,47 +130,60 @@ def issue_refresh_token(
     raw_token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
     record = RefreshTokenRecord(
-        token_hash=_hash_token(raw_token),
+        token_hash=hash_token(raw_token),
         family_id=family_id or str(uuid4()),
         user_id=user_id,
         issued_at=now,
         expires_at=now + timedelta(days=REFRESH_TOKEN_TTL_DAYS),
     )
-    store.save(record)
+    await store.save(record)
     return raw_token
 
 
-def rotate_refresh_token(raw_token: str, store: RevocationStore) -> str:
-    """Four distinct, distinguishable failure branches, checked in an
-    order that cannot be bypassed by a race: reuse detection happens
-    BEFORE any new token is issued, so two simultaneous uses of the same
-    stolen token cannot both succeed."""
-    token_hash = _hash_token(raw_token)
-    record = store.get(token_hash)
+async def rotate_refresh_token(raw_token: str, store: RevocationStore) -> str:
+    """Real, distinguishable failure branches, checked in an order that
+    cannot be bypassed by a race: the initial `record.used` check below
+    catches the common, non-concurrent reuse case cheaply (no atomic
+    operation needed when the answer is already obviously "yes, reused"),
+    but the real, load-bearing guarantee against a genuine concurrent
+    race is `try_claim()` -- see this module's own top-of-file docstring
+    for why a second atomic step is necessary at all.
+    """
+    token_hash = hash_token(raw_token)
+    record = await store.get(token_hash)
 
     if record is None:
         raise TokenInvalid("Refresh token not recognized")
     if record.revoked:
         raise TokenRevoked("This token's family has been revoked")
     if record.used:
-        # THE real theft signature. Revoke the whole family FIRST, so a
-        # subsequent legitimate presentation of the current token also
-        # fails, then disclose what happened.
-        store.revoke_family(record.family_id)
+        # THE real theft signature, the common (non-racing) case. Revoke
+        # the whole family FIRST, so a subsequent legitimate presentation
+        # of the current token also fails, then disclose what happened.
+        await store.revoke_family(record.family_id)
         raise TokenReuseDetected(
             f"Refresh token reuse detected for family {record.family_id} — entire family revoked"
         )
     if datetime.now(timezone.utc) > record.expires_at:
         raise TokenExpired("Refresh token has expired")
 
-    record.used = True
-    store.save(record)
-    return issue_refresh_token(record.user_id, store, family_id=record.family_id)
+    # The real, race-safe guard: only the first of any concurrently racing
+    # callers can win this atomic claim. A loser here is the exact same
+    # real theft signature as the record.used branch above, just caught
+    # under genuine concurrency rather than only in the common case.
+    claimed = await store.try_claim(token_hash)
+    if not claimed:
+        await store.revoke_family(record.family_id)
+        raise TokenReuseDetected(
+            f"Refresh token reuse detected for family {record.family_id} (concurrent claim) — entire family revoked"
+        )
+
+    return await issue_refresh_token(record.user_id, store, family_id=record.family_id)
 
 
-def revoke_all_for_user(user_id: str, store: RevocationStore) -> None:
+async def revoke_all_for_user(user_id: str, store: RevocationStore) -> None:
     """The real 'sign out everywhere' control. Revokes every family
     belonging to this user -- proven, not assumed, to never touch a
     different user's active sessions (see test_sign_out_everywhere_...)."""
-    for family_id in store.get_family_ids_for_user(user_id):
-        store.revoke_family(family_id)
+    for family_id in await store.get_family_ids_for_user(user_id):
+        await store.revoke_family(family_id)
