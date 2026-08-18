@@ -24,11 +24,12 @@ from __future__ import annotations
 
 DOMAIN_TOOL_MAP: dict[str, set[str]] = {
     "email": {"gmail.send", "gmail.read", "gmail.archive", "gmail.label"},
+    "calendar": {"calendar.create_local", "calendar.create_external", "calendar.read"},
 }
-# Only "email" exists as of IMPL_13. Four more real domains are added, one
-# per later session in this batch (IMPL_14-17) -- the "all five domains
-# now present" comment is added honestly in IMPL_17, once it's actually
-# true, not written ahead of time as an aspirational claim.
+# Two of five real domains present (email, calendar). Three more are added,
+# one per later session in this batch (IMPL_15-17) -- the "all five
+# domains now present" comment is added honestly in IMPL_17, once it's
+# actually true, not written ahead of time as an aspirational claim.
 
 
 class ToolAuthorizationError(Exception):
