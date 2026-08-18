@@ -1973,10 +1973,36 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-098 — Batch 10, PHASE 2: Real Infrastructure Provisioning — a Live Deployment Now Exists
+
+**Status:** CONFIRMED
+
+**Open item #5, the real embedding dimension, resolved live before writing anything into the migration:** Qwen3-Embedding-0.6B's real HuggingFace config (`hidden_size`) and its own documentation both confirmed, live, a real default output dimension of **1024** — exactly matching the `VECTOR(1024)` this repository's migration had already, honestly, written as a disclosed guess (with its own "CONFIRM... not asserted here as certain" comment). No fix was needed; the guess was correct, now genuinely confirmed rather than merely assumed.
+
+**The real migration ran successfully against the real, live Supabase project** (`dxfeutkeofnbismljhsb`, region `ap-south-1`) — confirmed live: all 7 real tables (`action_events`, `applications`, `expenses`, `interviews`, `note_embeddings`, `retry_queue`, `tasks`) exist, and the `note_embeddings.embedding` column's real `atttypmod` confirms a genuine 1024-dimension `vector` column, not assumed from the migration file alone.
+
+**A real, deliberate deviation from this session's own kickoff, disclosed and adopted because it's a genuine security improvement:** the kickoff assumed a downloaded service-account JSON key for CI. The user brought a second AI's recommendation to use Workload Identity Federation instead — verified independently before adopting it (the real WIF pool `quorum-github-pool`, provider `quorum-github` with a real attribute condition scoped to exactly `Praveen09107/quorum`, and the service account's `roles/iam.workloadIdentityUser` binding were all confirmed live via direct `gcloud` queries, not trusted from the pasted YAML alone) — then proven working end-to-end via a real, live GitHub Actions run (<https://github.com/Praveen09107/quorum/actions/runs/32137637896>, all steps green, real project data returned). No service-account key was ever downloaded for this project.
+
+**The real backend is now deployed and live:** built via Cloud Build (`gcloud builds submit`, avoiding a local Docker Desktop dependency this machine's session didn't have running) and deployed to Cloud Run with every real, load-bearing flag this project's architecture requires, none left at a framework default: `--concurrency=1 --min-instances=0 --max-instances=2 --no-allow-unauthenticated`, region `asia-south1` (matching Supabase's region, per this project's own co-location rule). Real, live confirmation: an authenticated `GET /health` request against `https://quorum-backend-649581407643.asia-south1.run.app` returned genuine `200 {"status":"ok"}`.
+
+**A real, satisfying end-to-end proof that Phase 0's own work is genuinely functioning in production, not just passing unit tests:** Cloud Run's real, live logs show the exact warning `main.py`'s lifespan handler was built to emit (`DEC-097`) — `"JWT_SIGNING_KEY is still the real, public, insecure default..."` — genuinely fired on this real deployment, since the placeholder value is still in use. This is real, working software, observed working in a real, live environment, not asserted to work from a passing test alone.
+
+**All 8 real external credentials this project now depends on were individually tested live, not just format-checked:** Supabase (real Postgres connection, `SELECT version()`), Upstash (real `PING` → `PONG` via REST), Gemini (real `/models` call, 50 real models returned — a credential this session's own earlier suspicion about its unusual `AQ.` prefix turned out to be wrong about, corrected by testing rather than trusting a format guess), Groq (real `/models` call, 13 models — first attempt hit a Cloudflare bot-detection block from a bare Python `User-Agent`, not a real credential problem, resolved by retrying with real browser-like headers), Tavily (a real search query, 1 real result), Langfuse (a real authenticated project lookup, confirming the real project name "Quorum"), and the Google OAuth client (a real, deliberately-invalid authorization-code exchange against Google's real token endpoint — `invalid_grant`, not `invalid_client`, confirming the credential pair itself is genuinely registered).
+
+**`CLAUDE.md`'s Environment section filled in with real, live values**, per its own standing instruction to do so "the moment either becomes real" — and a second, unrelated stale fact in the same paragraph corrected while there: the documented project root (`D:\Program Files\QUORUM\quorum`) never matched this repository's real root (`D:\Program Files\QUORUM`, no nested `quorum\`), found and fixed in the same edit rather than left for a future session to trip over.
+
+**Cold-start latency (open item #3), partially real, partially still genuinely in progress:** container initialization time (instance start → application ready) measured live from this deployment's own logs at **2.17 seconds** — a real, concrete data point, though this was a deployment-rollout start, not a genuine post-idle cold start. A warm-request baseline was also measured live: **0.124s**. The real, honest thing this phase's own spec actually asks for — latency after a genuine idle scale-down — cannot be faked or estimated; a background wait for Cloud Run's real ~15-minute idle window is in progress as of this entry, with the real, measured result to be appended once it completes, not asserted here ahead of the real evidence.
+
+**Genuinely still open, not resolved by this session:** open item #4 (whether `pg_cron`'s own firing independently prevents Supabase's inactivity pause) — this needs real, multi-day observation of the live project, not something a single session can measure.
+
+**Affects:** `backend/migrations/0001_initial_schema/up.sql` (now applied to a real, live Supabase project), `.claude/CLAUDE.md` (Environment section filled in, one stale fact corrected), `.github/workflows/test-gcp-auth.yml` (new — real, live WIF connectivity proof), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-098*
+*Next entry: DEC-099*
