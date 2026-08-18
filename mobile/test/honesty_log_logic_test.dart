@@ -29,6 +29,14 @@ void main() {
     test('a real, non-ambiguous success rate formats correctly', () {
       expect(formatSuccessRate(0.847), '85%');
     });
+
+    // The real, exact `.5` tie case (STATUS_INDEX.md open item #11),
+    // resolved live against a real Dart compiler this session:
+    // round-half-away-from-zero, confirmed directly. Deliberately left
+    // unasserted until now, per this file's own established discipline.
+    test('the real, now-confirmed .5 tie: 0.505 rounds to 51%, round-half-away-from-zero', () {
+      expect(formatSuccessRate(0.505), '51%');
+    });
   });
 
   group('outcomeLabel', () {

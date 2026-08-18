@@ -26,7 +26,14 @@ void main() {
 
     final navigationBar = tester.widget<NavigationBar>(find.byType(NavigationBar));
     expect(navigationBar.destinations.length, 4);
-    expect(navigationBar.destinations.map((d) => d.label).toList(), ['Today', 'Log', 'Trust', 'You']);
+    // NavigationBar.destinations is typed List<Widget> by the Flutter
+    // API itself -- a real cast to the concrete NavigationDestination
+    // type (what main_shell.dart's own NavigationBar actually populates
+    // it with) is required to reach .label; a genuine compiler error
+    // found by this session's first-ever real `flutter analyze` run,
+    // not a style nit.
+    final labels = navigationBar.destinations.map((d) => (d as NavigationDestination).label).toList();
+    expect(labels, ['Today', 'Log', 'Trust', 'You']);
   });
 
   testWidgets('tapping a tab genuinely switches which real content is shown', (WidgetTester tester) async {

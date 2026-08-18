@@ -79,9 +79,9 @@ class _StageBSection extends StatelessWidget {
     if (summary.realObjections.isEmpty) {
       // Stage B genuinely ran and signed off -- a real, positive
       // outcome, never rendered as "nothing happened."
-      return ListTile(
-        leading: const Icon(Icons.verified, color: QuorumStatusColors.verified),
-        title: const Text('Reviewed — no objections'),
+      return const ListTile(
+        leading: Icon(Icons.verified, color: QuorumStatusColors.verified),
+        title: Text('Reviewed — no objections'),
       );
     }
 

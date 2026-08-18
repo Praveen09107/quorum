@@ -23,6 +23,14 @@ void main() {
     test('a non-ambiguous fractional amount (30.2, both languages agree it rounds to 30)', () {
       expect(formatCurrency(30.2), '₹30');
     });
+
+    // The real, exact `.5` tie case (STATUS_INDEX.md open item #11),
+    // resolved live against a real Dart compiler this session:
+    // round-half-away-from-zero, confirmed directly. Deliberately left
+    // unasserted until now, per this file's own established discipline.
+    test('the real, now-confirmed .5 tie: 100.5 rounds to ₹101, round-half-away-from-zero', () {
+      expect(formatCurrency(100.5), '₹101');
+    });
   });
 
   group('formatInterval', () {
@@ -33,12 +41,16 @@ void main() {
     test('a non-ambiguous fractional interval (29.6 -> ~30 days)', () {
       expect(formatInterval(29.6), '~30 days');
     });
+
+    test('the real, now-confirmed .5 tie: 30.5 rounds to ~31 days, round-half-away-from-zero', () {
+      expect(formatInterval(30.5), '~31 days');
+    });
   });
 
   group('sortByAmountDesc', () {
     test('ranks the most expensive subscription first', () {
-      final cheap = DetectedSubscriptionData(payee: 'Spotify', averageAmount: 119.0, occurrences: 4, averageIntervalDays: 30.2);
-      final expensive = DetectedSubscriptionData(payee: 'Netflix', averageAmount: 649.0, occurrences: 4, averageIntervalDays: 30.2);
+      const cheap = DetectedSubscriptionData(payee: 'Spotify', averageAmount: 119.0, occurrences: 4, averageIntervalDays: 30.2);
+      const expensive = DetectedSubscriptionData(payee: 'Netflix', averageAmount: 649.0, occurrences: 4, averageIntervalDays: 30.2);
 
       final result = sortByAmountDesc([cheap, expensive]);
 
@@ -46,8 +58,8 @@ void main() {
     });
 
     test('does not mutate the input list', () {
-      final a = DetectedSubscriptionData(payee: 'A', averageAmount: 100.0, occurrences: 3, averageIntervalDays: 30.2);
-      final b = DetectedSubscriptionData(payee: 'B', averageAmount: 200.0, occurrences: 3, averageIntervalDays: 30.2);
+      const a = DetectedSubscriptionData(payee: 'A', averageAmount: 100.0, occurrences: 3, averageIntervalDays: 30.2);
+      const b = DetectedSubscriptionData(payee: 'B', averageAmount: 200.0, occurrences: 3, averageIntervalDays: 30.2);
       final original = [a, b];
 
       final result = sortByAmountDesc(original);
