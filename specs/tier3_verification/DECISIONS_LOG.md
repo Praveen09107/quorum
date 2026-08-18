@@ -1677,10 +1677,34 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-085 — `MOBILE_13`: Finance — A Real Chronology Correction, and the Rounding Open Item Confirmed on a Second File
+
+**Status:** CONFIRMED
+
+**A chronology discrepancy, disclosed rather than silently matched:** this session's own kickoff prompt frames `finance_logic.dart` as the "ORIGINAL instance" of the Python-vs-Dart `.5`-rounding open item, with `negotiation_logic.dart` (`MOBILE_09`) described as a later, additionally-affected file discovered "per Batch 6." **In this repository's real, actual build order, the reverse is true**: `MOBILE_09` was built in Batch 6, genuinely before this session (`MOBILE_13`, Batch 7) ever existed here — `DEC-081` is where this open item was first tracked in this repository's real history, not this session. The underlying technical concern is identical regardless of which file found it first: Python's `round()` uses banker's rounding; Dart's `num.round()` rounds half away from zero; they disagree only at an exact `.5` boundary (`30.5` → `30` in Python, `31` in Dart, confirmed live).
+
+**Confirmed already fixed, not re-done:** `QUORUM_DATA_CONTRACTS.md` §5.12's `/finance/subscriptions` contract (`payee`, `average_amount`, `occurrences`, `average_interval_days`) is already present in this repository's real copy. No edit was needed.
+
+**A recurring, now-expected discrepancy, re-confirmed rather than assumed:** `backend/features/subscription_detective.py`, this session's attached reference, does not exist anywhere in this repository — confirmed live by direct search. Built directly against §5.12's real, sufficient JSON contract instead.
+
+**What was actually built:** `finance_logic.dart` (zero Flutter dependencies) — `DetectedSubscriptionData`, `formatCurrency()` (whole rupees, zero decimal places), `formatInterval()` (honest, rounded phrasing — "~30 days," never a false-precision "30.2 days"), `sortByAmountDesc()` (most expensive first). `finance_screen.dart` — the real widget. Both the rounding discrepancy and its exact `30.5` boundary example are stated directly in this file's own comment, matching the established pattern from `MOBILE_01`'s `CardThemeData` note and `MOBILE_04`'s `device_calendar` `Result<T>` note — genuine uncertainty named, never hidden behind a confident-looking test.
+
+**Embedded question, answered before building:** why zero decimal places rather than paise? Because the exact paise amount of a recurring charge has never once mattered to the real decision this screen exists to support — whether to cancel a subscription. A person comparing "₹649" against their own budget doesn't need "₹649.00"; the rounded whole-rupee figure is what's actually meaningful here, the same judgment this project's negotiation screens already apply to real numbers (show what's decision-relevant, not spurious precision).
+
+**7 real tests written**, matching the spec's own stated count exactly (this time matching the batch guide's checklist too) — deliberately avoiding every disputed `.5` boundary, confirmed by direct search of the test file's actual assertions (not just its comments): zero real test uses `30.5`, `29.5`, or `27.5`.
+
+**`STATUS_INDEX.md` open item 11 updated**, per the batch's own gate requirement: the Dart rounding open item is no longer framed as "likely affects a future file" — `finance_logic.dart` is now real and genuinely exposed to the identical uncertainty as `negotiation_logic.dart`, confirmed on two real files, not one.
+
+**Verified live, this sandbox (structural/hand-verified only):** all 4 checkable checks pass exactly as pasted — `CHECK 3`'s naive `grep` finds a match only inside this file's own explanatory comment (which names the disputed values specifically to explain why they're *not* tested), the same real false-positive pattern this project has hit repeatedly; a targeted search of actual `expect()` assertions confirms zero real test touches the disputed boundary. `CHECK 6` (`dart test`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/features/finance/finance_logic.dart` (new), `mobile/lib/features/finance/finance_screen.dart` (new), `mobile/test/finance_logic_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-085*
+*Next entry: DEC-086*
