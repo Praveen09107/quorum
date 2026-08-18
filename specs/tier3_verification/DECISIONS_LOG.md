@@ -1315,10 +1315,26 @@ Both real Tasks `ActionType`s confirmed `S1` through the actual `router.get_stak
 
 ---
 
+### DEC-068 — `IMPL_18`: Negotiation Trigger — First Real Negotiation Piece, Pure Computation
+
+**Status:** CONFIRMED
+
+**Decision:** `trigger.py` (`CLAIM_TYPE_TO_DOMAIN`, `DomainState`, `ConflictScanResult`, `scan_for_conflicts`) is real and tested. Same construction-not-copy pattern as every negotiation/Gate file in this repository.
+
+Confirmed by direct inspection, not just assumption: zero `async`, zero `await`, zero model-call pattern anywhere in the file — whether a conflict exists is a fact, checked by comparison, never guessed by a model. The real, exact `>=2` threshold confirmed by test — a single conflicted domain (e.g., a lone over-budget expense) correctly does not trigger negotiation, staying an ordinary Stage A concern.
+
+A note on this batch's own kickoff guide: it claims a "real bug fix" in `impact_simulator.py` (`IMPL_20`, next) affecting an "already-shipped" version of that file — that file has never existed in this repository, so there's no prior bug to have fixed here. The underlying technical insight (inverted polarity for `task_hours_committed`) is genuinely correct and will be built in from the start when `IMPL_20` is implemented, not retrofitted as a "fix." Same for this batch's claimed "157, not 156" test-count baseline — describes the other environment's history; this repository's real count is tracked fresh below.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **126 passed** (120 prior + 6 new).
+
+**Affects:** `backend/src/quorum_backend/negotiation/trigger.py` (new), `backend/tests/test_negotiation_trigger.py` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-068*
+*Next entry: DEC-069*
