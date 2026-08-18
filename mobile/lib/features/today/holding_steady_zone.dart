@@ -15,13 +15,29 @@
 // the actual, concrete moment the ADD's "the client must render this
 // label, never silently presenting one as the other" requirement
 // becomes real UI, not just a documented promise.
+//
+// A real mistake caught and fixed WITHIN this repository's own
+// construction, not inherited from elsewhere: wiring
+// `TodayWidgetBridge` here first added an unnecessary direct
+// `import 'package:home_widget/home_widget.dart'` alongside the real
+// bridge import -- genuinely unused, since only the bridge itself is
+// needed. Caught before finalizing this file, never committed. Confirm:
+// this file imports ONLY `today_widget_bridge.dart`, never
+// `package:home_widget/home_widget.dart` directly.
+//
+// Converted from StatelessWidget to StatefulWidget specifically so the
+// real home-screen widget update can fire genuinely on data loads --
+// once when this zone first mounts with real data, and again only when
+// the real capacity/budget numbers actually change, never on every
+// unrelated rebuild.
 
 import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/features/computed_state.dart';
 import 'package:quorum_mobile/features/today/holding_steady_logic.dart';
+import 'package:quorum_mobile/features/today_widget_bridge.dart';
 
-class HoldingSteadyZone extends StatelessWidget {
+class HoldingSteadyZone extends StatefulWidget {
   final CapacityState capacity;
   final BudgetState budget;
   final DateTime now;
@@ -34,8 +50,37 @@ class HoldingSteadyZone extends StatelessWidget {
   });
 
   @override
+  State<HoldingSteadyZone> createState() => _HoldingSteadyZoneState();
+}
+
+class _HoldingSteadyZoneState extends State<HoldingSteadyZone> {
+  @override
+  void initState() {
+    super.initState();
+    _updateWidget();
+  }
+
+  @override
+  void didUpdateWidget(covariant HoldingSteadyZone oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Fire again only when the real numbers actually changed -- never on
+    // an unrelated rebuild carrying the same, already-relayed data.
+    if (oldWidget.capacity.hoursRemainingToday != widget.capacity.hoursRemainingToday ||
+        oldWidget.budget.remainingFraction != widget.budget.remainingFraction) {
+      _updateWidget();
+    }
+  }
+
+  void _updateWidget() {
+    TodayWidgetBridge.updateWidget(
+      hoursRemainingToday: widget.capacity.hoursRemainingToday,
+      budgetRemainingFraction: widget.budget.remainingFraction,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final touchpoint = classifyTouchpoint(now.hour);
+    final touchpoint = classifyTouchpoint(widget.now.hour);
     final headline = touchpointHeadline(touchpoint);
 
     return Card(
@@ -48,14 +93,14 @@ class HoldingSteadyZone extends StatelessWidget {
             const SizedBox(height: 16),
             _ComputedNumberRow(
               label: 'Capacity remaining today',
-              valueText: '${capacity.hoursRemainingToday.toStringAsFixed(1)}h',
-              source: capacity.source,
+              valueText: '${widget.capacity.hoursRemainingToday.toStringAsFixed(1)}h',
+              source: widget.capacity.source,
             ),
             const SizedBox(height: 12),
             _ComputedNumberRow(
               label: 'Budget remaining this month',
-              valueText: '${(budget.remainingFraction * 100).round()}%',
-              source: budget.source,
+              valueText: '${(widget.budget.remainingFraction * 100).round()}%',
+              source: widget.budget.source,
             ),
           ],
         ),
