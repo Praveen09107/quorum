@@ -1233,10 +1233,26 @@ Confirmed directly, not assumed: `git diff` shows no changes to `main.py` beyond
 
 ---
 
+### DEC-063 — `IMPL_13`: Agent — Email. First Real LangGraph Graph, First Version of `tool_authorization.py`
+
+**Status:** CONFIRMED
+
+**Decision:** `tool_authorization.py` (`DOMAIN_TOOL_MAP`, `authorize_tool_call`, fail-closed via `dict.get(domain, set())`) and `email_agent.py` (`EmailAgentState`, `build_reply_proposal`, `make_draft_reply_node`, `build_email_agent_graph`) are real and tested — the first genuinely compiled, genuinely invoked LangGraph graph in this repository. Same honest disclosure as every construction-not-copy file this project: no literal source ever existed anywhere for either file.
+
+**Real API confirmed before writing anything**, per this project's own established discipline: `langgraph==1.2.11` installed, a standalone throwaway proof-of-concept graph built and run (sync `.invoke()` and async `.ainvoke()`, plain edges and conditional edges) before any real agent code — `StateGraph`/`add_node`/`set_entry_point`/`add_conditional_edges`/`compile()` → `CompiledStateGraph` all confirmed working exactly as expected on this real installed version.
+
+**A real, deliberate correction caught before committing:** an initial draft of `tool_authorization.py` included a comment claiming "all five domain agents now present" — written ahead of time as an aspirational placeholder. Caught and removed before this commit, since at `IMPL_13` only one domain (`email`) actually exists; the comment is added honestly in `IMPL_17`, once it's genuinely true, not written in advance.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **92 passed** (87 prior + 5 new).
+
+**Affects:** `backend/src/quorum_backend/agents/tool_authorization.py` (new), `backend/src/quorum_backend/agents/email_agent.py` (new), `backend/tests/test_email_agent.py` (new), `backend/pyproject.toml` (`langgraph==1.2.11` added), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-063*
+*Next entry: DEC-064*
