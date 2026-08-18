@@ -159,6 +159,25 @@ class Position(BaseModel):
     evidence: list[EvidenceRef] = Field(default_factory=list)
 
 
+class NegotiationOption(BaseModel):
+    """One real synthesized negotiation option. HONEST DISCLOSURE: no
+    document in this project's real corpus ever gave this schema a full,
+    exact field list -- QUORUM_DATA_CONTRACTS.md Sec 1.8 documents
+    Position/ResourceClaim/ImpactDelta exhaustively but never this one.
+    Built here in IMPL_19's bootstrap, real and minimal: option_id and
+    description are always real; source_domains defaults to empty
+    specifically so a genuine "do nothing" option -- which by definition
+    isn't grounded in any domain's proposed_resolution -- can be
+    constructed without violating the schema, while every other real
+    option's source_domains is checked against actual Positions by
+    validate_synthesis_shape() in negotiation/synthesis.py.
+    """
+
+    option_id: str
+    description: str
+    source_domains: list[str] = Field(default_factory=list)
+
+
 class ImpactDelta(BaseModel):
     """Every field here is code-computed — never produced by a model call.
     This is the literal implementation of 'the model narrates, the code
