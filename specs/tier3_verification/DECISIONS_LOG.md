@@ -1249,10 +1249,26 @@ Confirmed directly, not assumed: `git diff` shows no changes to `main.py` beyond
 
 ---
 
+### DEC-064 — `IMPL_14`: Agent — Calendar. Second Real Graph, the S2/S3 Stakes Branch Proven by Real Integration, Not Just Assertion
+
+**Status:** CONFIRMED
+
+**Decision:** `calendar_agent.py` (`CalendarAgentState`, `build_event_proposal`, `make_propose_event_node`, `build_calendar_agent_graph`) is real and tested. `DOMAIN_TOOL_MAP` extended with `calendar` — `authorize_tool_call` itself untouched, per this batch's own established pattern.
+
+**The real, load-bearing decision proven by genuine cross-session integration, not just an isolated assertion:** `test_local_and_external_events_route_to_genuinely_different_real_stakes` runs both of this agent's real outputs through `IMPL_09`'s actual `get_stakes()` function and confirms `S2`/`S3` respectively — proof two sessions built separately (weeks apart, per the original project's own precedent for this exact pattern) actually compose correctly, not just that each is individually correct.
+
+`test_calendar_domain_still_cannot_touch_email_tools` and `test_email_domain_still_cannot_touch_calendar_tools` both real, both passing — the authorization boundary is proven bidirectional now that a second real domain exists, and the second one specifically re-confirms `IMPL_13`'s domain wasn't accidentally loosened by this extension.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **100 passed** (92 prior + 8 new).
+
+**Affects:** `backend/src/quorum_backend/agents/calendar_agent.py` (new), `backend/src/quorum_backend/agents/tool_authorization.py` (extended), `backend/tests/test_calendar_agent.py` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-064*
+*Next entry: DEC-065*
