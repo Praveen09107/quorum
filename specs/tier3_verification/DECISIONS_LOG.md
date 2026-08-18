@@ -2084,10 +2084,31 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-102 — Batch 10, PHASE 3 PART C PREREQUISITE, CLOSED: Cloud Run Network Policy Relaxed, the Real Login System Is Now the Real Security Boundary
+
+**Status:** CONFIRMED
+
+**The real architectural change `DEC-101` set up and left open, now completed and verified live:** Cloud Run's `--no-allow-unauthenticated` flag (`IMPL_11`) blocked every caller that wasn't a Google Cloud IAM principal — necessary while no real application-level auth existed, but a real, hard block against ever letting a real mobile client reach this backend directly. With `DEC-101`'s real, reviewed, race-safe login system now live, this was presented to Preethish as a real architectural choice (open the network, let the app-level login be the real gate) before any code was written — approved, and this entry closes it out.
+
+**Built and deployed:** a fresh image (`quorum-backend:phase3c`, containing all of `DEC-101`'s real auth code) via Cloud Build, deployed to the real Cloud Run service with `--allow-unauthenticated` replacing `--no-allow-unauthenticated` — every other architecturally-required flag unchanged (`--concurrency=1 --min-instances=0 --max-instances=2`, `asia-south1`). Revision `quorum-backend-00003-7lb`, serving 100% of traffic.
+
+**Verified live, three real requests against the actual public URL, not simulated:**
+1. `GET /health`, no credentials of any kind — real `200 {"status":"ok"}`. Proves the network layer is genuinely open now; a Google Cloud identity is no longer required to reach this service at all.
+2. `GET /trust_digest`, no credentials — real `401`, with `main.py`'s own real, honest error detail (`"Missing or malformed Authorization header..."`). Proves the real application-level login is now the thing actually stopping an unauthenticated caller, not Cloud Run's IAM layer (which no longer participates at all).
+3. `GET /trust_digest`, with a real, valid Quorum access token minted via the real, live `JWT_SIGNING_KEY` — real `200`, real data from the real, live database. Proves the whole real chain works end to end against the actual production deployment: open network → real Bearer-token verification → real database query → real response.
+
+**This closes the real prerequisite gap `DEC-101` opened Phase 3 Part C with.** A real mobile client can now genuinely reach this backend and log in for real — the actual mobile-repository wiring (Phase 3 Part C's own original scope) is now unblocked and can begin as its own, separate, real session.
+
+**Genuinely still open, not addressed by this entry:** a genuine, human-completed Google OAuth login has never been exercised end to end (no browser automation available in this environment — this needs either the real mobile client or a manual browser test); real per-user data scoping on `action_events`/`/trust_digest` (the auth gate today proves "signed in," not yet "this is your data" — `action_events` has no `user_id` column); Google's own Gmail/Calendar OAuth tokens are still not persisted (separate, later work).
+
+**Affects:** the live Cloud Run deployment (new revision, `--allow-unauthenticated`), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-102*
+*Next entry: DEC-103*
