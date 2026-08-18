@@ -1409,10 +1409,34 @@ This session's `STANDARD` (not `CRITICAL`) review tier is genuinely justified in
 
 ---
 
+### DEC-073 — `MOBILE_01`: Flutter Scaffold — The First Mobile Session, With Real Environment and Narrative Discrepancies Flagged
+
+**Status:** CONFIRMED
+
+**A genuine phase transition, confirmed directly on this machine too, not just inherited from the spec's own claim:** `which dart`/`which flutter` and a direct version-check attempt both confirm no Dart or Flutter SDK exists anywhere in this environment either — the same real constraint `MOBILE_01`'s own spec document describes for wherever it was originally written. Every file this session creates carries an honest `UNVERIFIED IN SANDBOX` header, structurally correct against each package's documented API, never implied to have been compiled or run.
+
+**Discrepancy 1, flagged before building, per Rule 4:** the batch guide's kickoff prompt instructed reading `main_shell.dart` as its real, "post-`MOBILE_22`" state — screen composition already applied, placeholder tabs already replaced. **`MOBILE_22` has not happened in this repository.** This repository's mobile tree was entirely empty before this session (confirmed: zero `.dart` files, no `pubspec.yaml`, per `STATUS_INDEX.md`). `main_shell.dart` here is genuinely the original `MOBILE_01` scaffold — four stable tabs, deliberately placeholder content only, per this session's own real spec's explicit scope boundary ("real screen content... is `MOBILE_05` onward"). A direct, honest consequence: `CHECK 2` of this session's pasted verification checklist (`grep` for `PlaceholderTab`, expecting zero results) **will find real matches** — `_PlaceholderTabContent` is this repository's genuinely correct, current state, not a stale scaffold marker left behind after a rewrite that, here, never occurred.
+
+**Discrepancy 2:** the kickoff prompt cited `QUORUM_MASTER_REFERENCE.md` §12 — that document has only 7 sections; no §12 exists. Read the real, relevant section instead (§5, the Models Pointer Table, which does confirm `SmolLM2-1.7B` as `Locked`, consistent with `MOBILE_02`'s later claim).
+
+**Discrepancy 3:** the kickoff prompt said "confirm against the 2 real tests in `main_shell_test.dart`"; `MOBILE_01`'s own real spec document states 3, named explicitly (all four tabs present, tapping switches content, exactly four navigation destinations). Built to the spec's own authoritative count — 3 real tests — not the kickoff's abbreviated one.
+
+**Discrepancy 4:** `MOBILE_01`'s spec describes `pubspec.yaml`'s dependencies (`home_widget`, `receive_sharing_intent`, `device_calendar`) as serving "already-real (but sandbox-unverified) platform-feature files from earlier sessions" (`share_intent_handler.dart`, `TodayWidgetProvider.kt`, `computed_state.dart`). **None of these files exist anywhere in this repository** — confirmed by direct search. Declared these dependencies anyway, since they are genuinely part of this project's specified real architecture and `device_calendar` is needed immediately by this same batch's `MOBILE_04` — but disclosed plainly that the consuming files this framing describes as already-real are not real here.
+
+**What was actually built:** `pubspec.yaml` (real, reasoned dependency versions — no exact version is specified anywhere in the real corpus, same disclosed-choice pattern as `REFRESH_TOKEN_TTL_DAYS`; flagged for re-confirmation via `flutter pub outdated` on a real machine), `main.dart`, `main_shell.dart` (four fixed tabs — Today, Log, Trust, You — exact names and order from `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md` §12.3), `quorum_theme.dart` (light-primary, neutral slate seed, the `CardThemeData`/`CardTheme` uncertainty explicitly flagged in-file per the spec's own instruction), `database.dart` (4 real Drift tables — `OfflineActionQueue`, `TasksMirror`, `BudgetMirror`, `CalendarMirror` — field names kept consistent on purpose with the real backend Postgres `tasks` table and `finance_agent.py`'s real `amount`/`category` payload fields, since no real Postgres `budget` table exists to mirror literally).
+
+**Embedded question, answered before building:** `database.dart` defines two genuinely different jobs, not one. `OfflineActionQueue` is the real record of an action proposed while Extended-Outage Local Continuity Mode is active (ADD §10.4) — an S2 entry is marked `pendingReverification` and fully re-checked against the cloud Gate the moment connectivity returns, never grandfathered in; an S3 entry is prepared but deliberately never sent regardless of any tap recorded offline. `TasksMirror`/`BudgetMirror`/`CalendarMirror` are a read-side local COPY of live backend state, kept current by each domain's own sync path — their job is powering `computed_state.dart`'s eventual "local_mirror" source path (ADD §10.5), so the Today screen's live capacity/budget numbers stay numerically identical online or offline. `computed_state.dart` itself does not exist in this repository yet; this session gives its future consumer a real schema to query against ahead of time.
+
+**Verified live, this sandbox:** all 3 genuinely file-existence/pattern checks that don't require a compiler pass — `CHECK 1` (all three files exist), `CHECK 3` (`CardThemeData` and `UNVERIFIED IN SANDBOX` both present), `CHECK 4` (exactly 4 real `Table` subclasses). `CHECK 2` shows real, expected matches for the reason disclosed above, not a regression. `CHECK 5` (`dart test`, `flutter analyze`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/pubspec.yaml` (new), `mobile/lib/main.dart` (new), `mobile/lib/shell/main_shell.dart` (new), `mobile/lib/theme/quorum_theme.dart` (new), `mobile/lib/db/database.dart` (new), `mobile/test/main_shell_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-073*
+*Next entry: DEC-074*

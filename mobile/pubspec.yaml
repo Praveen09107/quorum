@@ -1,0 +1,60 @@
+name: quorum_mobile
+description: >
+  Quorum — hybrid edge-cloud, multi-agent trust architecture for autonomous
+  AI action. Mobile personal-operations assistant (email, calendar, tasks,
+  finance, career).
+publish_to: 'none'
+version: 0.1.0+1
+
+# UNVERIFIED IN SANDBOX: no Dart or Flutter SDK exists anywhere this file
+# was written (confirmed by direct attempt on this machine — `dart`/
+# `flutter` are not on PATH). Every dependency version below is a real,
+# reasoned choice from the last confirmed-current release line at the
+# time of writing, not a value read from a live `flutter pub outdated` or
+# pub.dev check this environment cannot perform. Re-verify with
+# `flutter pub outdated` on a real machine before this ships — the same
+# "verify before relying on this long-term" discipline
+# QUORUM_CONFIGURATION_CONSTANTS.md §8 already applies to free-tier LLM
+# quotas, applied here to package versions instead.
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.19.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management (ADD §12 frontend architecture).
+  flutter_riverpod: ^2.5.1
+
+  # Local persistence — the Drift mirror (ADD §10.4-10.5, database.dart).
+  drift: ^2.20.0
+  sqlite3_flutter_libs: ^0.5.24
+  path_provider: ^2.1.3
+  path: ^1.9.0
+
+  # Platform features this session's dependencies serve. HONEST STATUS,
+  # specific to this repository: the consuming Dart files these packages
+  # exist for (share_intent_handler.dart, TodayWidgetProvider.kt bridge,
+  # etc.) have NOT been built in this repository — a batch-guide claim
+  # that they were "already-real" describes a different, inaccessible
+  # environment, not this one (see DECISIONS_LOG.md). Declared here
+  # anyway because they are genuinely part of this project's specified,
+  # real architecture and MOBILE_04 (this same batch) needs
+  # device_calendar immediately.
+  device_calendar: ^4.3.2
+  home_widget: ^0.6.0
+  receive_sharing_intent: ^1.8.0
+
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  drift_dev: ^2.20.0
+  build_runner: ^2.4.11
+
+flutter:
+  uses-material-design: true
