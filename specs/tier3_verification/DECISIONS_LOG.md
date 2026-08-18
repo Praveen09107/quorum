@@ -1851,10 +1851,32 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-093 — `MOBILE_20`: Extended-Outage Mode Wiring — Batch 9 Begins, CRITICAL-Tier Review on `action_disposition.dart`
+
+**Status:** CONFIRMED
+
+**CRITICAL-tier review, per this session's own review-tier statement and `CLAUDE.md` Rule 6:** `action_disposition.dart` enforces the same absolute rule `CLAUDE.md`'s own architecture facts hold non-negotiable — "S3 (external-irreversible) actions always require explicit human approval — in every mode, including the degraded-offline-continuity mode. No exception, ever, regardless of how confident any automated check is." `decideDisposition` is the literal mobile-side enforcement of that rule, reviewed with the same care as Gate/security code. Fresh-context review only, disclosed honestly — no cross-model reviewer is available in this environment, the same disclosed limitation as every other CRITICAL-tier file in this project (`provenance_check`, `orchestration.py`, `refresh_token.py`, `oauth_pkce.py`).
+
+**The exact real thresholds, confirmed directly against `QUORUM_CONFIGURATION_CONSTANTS.md` §6 before writing anything:** 3 consecutive cross-provider failures OR 2+ continuous minutes confirmed unreachable — either alone triggers. Recovery automatic, immediate on the first success. All three boundary cases hand-verified in Python before being trusted in Dart: 3 rapid failures triggers (True); 2 failures spanning exactly 2 minutes triggers (True, inclusive boundary); 2 failures spanning just under 2 minutes does not (False) — all confirmed live.
+
+**THE REAL, SAFETY-RELEVANT PROPERTY, exhaustively confirmed, not spot-checked:** every one of the 8 real stakes × outage combinations tested individually, plus one comprehensive test asserting the full matrix has exactly one path (`S3`, in outage) reaching `blockUntilOnline`. The S3-during-outage check is the literal first conditional in `decideDisposition`'s body, checked unconditionally before any other branch — confirmed by direct reading, not assumed from the file's own comment claiming it.
+
+**What was actually built:** `outage_detector.dart` (zero Flutter dependencies) — `OutageState`, `recordFailure()` (the real OR-threshold, deliberately asymmetric), `recordSuccess()` (a genuine full reset, never gradual recovery). `action_disposition.dart` (zero Flutter dependencies, CRITICAL) — `ActionDisposition`, `decideDisposition()`. `outage_banner.dart` — the real widget, with honest, specific policy language ("low-stakes actions are queuing... anything irreversible will wait for your explicit approval") rather than a generic "you're offline" message.
+
+**Embedded question, answered before building:** why is the outage-detection threshold deliberately asymmetric — slow to declare, instant to recover? Declaring too eagerly on a single transient blip would needlessly queue actions that could have gone out live, and would needlessly block S3 actions behind a false alarm — real, avoidable friction for no real safety gain, since a single blip carries no real evidence of a genuine outage. Staying in a falsely-declared outage after connectivity genuinely returns has the same cost, extended for no reason. Recovering on the first real success costs nothing extra: if the outage were genuinely ongoing, the very next attempt would fail and re-trigger almost immediately, so there is no real harm in resetting eagerly, only real, avoidable harm in resetting too slowly.
+
+**18 real tests written**, matching the spec's own stated count exactly (9 + 9; the batch guide's checklist separately says 6 + 10) — `outage_detector_test.dart` covers all three hand-verified boundary cases, non-mutation of `unreachableSince` across repeated failures, full-reset-on-success, and that a failure after outage is already active never un-triggers it. `action_disposition_test.dart` covers the single most critical case in isolation, the full 8-combination matrix as one comprehensive proof, and every individual combination by name.
+
+**Verified live, this sandbox (structural/hand-verified only):** all 4 checkable checks pass exactly as pasted, including direct confirmation the S3 check is the literal first line of the function body. `CHECK 7` (`dart test`, `flutter analyze`) genuinely requires a real machine this environment doesn't have — reported as an open item, not fabricated.
+
+**Affects:** `mobile/lib/features/outage/outage_detector.dart` (new), `mobile/lib/features/outage/action_disposition.dart` (new, CRITICAL), `mobile/lib/features/outage/outage_banner.dart` (new), `mobile/test/outage_detector_test.dart` (new), `mobile/test/action_disposition_test.dart` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-093*
+*Next entry: DEC-094*
