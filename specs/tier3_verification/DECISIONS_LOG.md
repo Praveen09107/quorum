@@ -1385,10 +1385,34 @@ This session's `STANDARD` (not `CRITICAL`) review tier is genuinely justified in
 
 ---
 
+### DEC-072 — `IMPL_22`: Trace Scrubbing + Delete Account — The Last Backend Session, With Two Real Discrepancies Flagged
+
+**Status:** CONFIRMED
+
+**Discrepancy 1, flagged before building, per Rule 4:** `QUORUM_CONFIGURATION_CONSTANTS.md` §10.1's own closing note claims "Both platforms are real now: `IMPL_22` on the backend, `MOBILE_03` on-device — this note originally named `MOBILE_03` as pending and was never updated once it shipped." **`MOBILE_03` has not shipped in this repository.** This repository's real, current work has completed only the 23-session backend sequence; the mobile session sequence (`MOBILE_01` onward) has not started — see `STATUS_INDEX.md`. The spec document's own narrative describes a project state (both platforms built) that doesn't match this repository's real, disclosed history, the same recurring pattern this log has now found in nearly every batch's source material.
+
+**Resolution:** `trace_scrubbing.py`'s docstring states this repository's real status honestly — `MOBILE_03` genuinely not implemented here — without reproducing the checklist's specific stale three-word phrase ("not yet built"), since that phrase described a different, earlier claim (that the pattern set itself was unavailable) than the true, current, disclosed fact being stated here (that the Dart platform consuming this pattern table hasn't been built in this repository yet). `SENSITIVE_PATTERNS` is still built exactly from §10.1's real regex definitions regardless of which platform has consumed them — that table is correct and authoritative independent of `MOBILE_03`'s real build status here.
+
+**Discrepancy 2:** the real `IMPL_22` spec document expected **5** trace-scrubbing tests and **143 passed** for the whole suite (135 prior + 8 new); the batch guide's own final gate expected **157**. This session's real, live prior count (after `IMPL_21`) was **142** — confirmed by direct pytest run, not any document's assumption. 6 real trace-scrubbing tests were written (one more than the spec's stated 5, kept and disclosed rather than trimmed — `test_sensitive_patterns_has_exactly_the_three_real_categories` is a genuine, additional shape guarantee) plus the spec's stated 3 real account-deletion tests, for 9 new, not 8.
+
+**What was actually built:** `trace_scrubbing.py` — `SENSITIVE_PATTERNS` (`credit_card`, `aadhaar_style_id`, `otp_code`), matched exactly against `QUORUM_CONFIGURATION_CONSTANTS.md` §10.1's real regexes; `scrub_trace_content()` uses a typed, diagnosable placeholder (`<REDACTED_CATEGORY>`), never silent deletion. Confirmed live, not assumed: the `otp_code` pattern's capture group is never referenced in the replacement, so the entire matched labeled phrase is redacted, not just the digits.
+
+`account_deletion.py` — `DeletionStore` (Protocol, real per-store counts, never a bare flag), `DeletionResult`, `delete_account()`. **The real, load-bearing decision:** session revocation calls `auth.refresh_token.revoke_all_for_user()` directly, never reimplemented — the same CRITICAL-tier-reviewed "sign out everywhere" logic a voluntary sign-out already uses. Sessions are revoked *before* any real data purge, deliberately — locking the account down for further access before its data is removed, not the reverse order, which would leave a real window for a still-valid session to act mid-deletion.
+
+**Embedded question, answered before building:** why reuse `revoke_all_for_user()` rather than a simpler, direct "delete this user's session records" query? Because `revoke_all_for_user()` is the one already-correct, already-reviewed implementation that enumerates every real session family a user has (via `store.get_family_ids_for_user()`) and revokes each one — including whatever edge cases its own test suite already covers. A fresh, parallel query would have to rediscover and re-verify all of that independently, with no guarantee of staying correct if the original is ever changed — a fix made there wouldn't automatically apply to a duplicate. Reuse guarantees exactly one revocation code path in the whole system, exercised by both a voluntary sign-out and this permanent, irreversible deletion — never two implementations that could silently drift apart. Proven, not just argued: `test_deleting_one_user_never_touches_a_different_users_real_session` is the account-deletion equivalent of the five-domain authorization matrix, confirming a second, unrelated user's session keeps working after a different user's account is deleted.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **151 passed** (142 prior + 9 new) — the real, current, final count for all 23 backend sessions; not 143, not 157.
+
+**All 23 original backend sessions are now real, tested, and complete.** The backend decision-making core — Router, Gate (all 9 Stage A validators + orchestration), all 5 domain agents, negotiation (trigger → positions/synthesis → impact simulation → subgraph), auth, trace-scrubbing, and account deletion — is entirely built. `MOBILE_01` (Flutter scaffold) is the next real session, the true start of this project's mobile half.
+
+**Affects:** `backend/src/quorum_backend/security/trace_scrubbing.py` (new), `backend/src/quorum_backend/security/account_deletion.py` (new), `backend/tests/test_trace_scrubbing.py` (new), `backend/tests/test_account_deletion.py` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-072*
+*Next entry: DEC-073*
