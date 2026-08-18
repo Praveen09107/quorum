@@ -2019,10 +2019,38 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
+### DEC-100 — Batch 10, PHASE 3 PART B: The Backend's First Real Database Query, a Live `GET /trust_digest`
+
+**Status:** CONFIRMED
+
+**A real, significant discrepancy found before writing anything, per Rule 4 — this phase's own spec assumed a narrower gap than what was actually true:** `QUORUM_IMPLEMENTATION_STRATEGY.md`'s Phase 3 describes this as "closing the gap between `trust_digest.py`'s already-correct `compare_weeks()` and a live `/trust_digest` endpoint" — phrasing that implies the aggregation query is most of what's missing. Confirmed directly before touching anything: **no database access layer of any kind existed anywhere in this backend** (`asyncpg|sqlalchemy|psycopg|create_engine` returns zero matches across `backend/src`, confirmed by direct search). Every session's Gate/router/agent logic to this point operates purely on in-memory dataclasses passed as arguments — nothing in this backend had ever actually read from or written to the real, live Supabase database Phase 2 provisioned. Building the aggregation query required building real Postgres connectivity first — genuine, necessary, in-scope plumbing (the spec's own Phase 2 explicitly exists to make this possible), not invented architecture under Rule 3.
+
+**Built, in order:**
+1. `backend/src/quorum_backend/core/db.py` — a real `asyncpg` connection-pool factory. Chosen over an ORM deliberately, consistent with this backend's established simple/explainable-over-abstracted philosophy (the Gate's pure-code Stage A validators, `trust_digest.py`'s own named-constant-over-trained-model choice). Fails loud (`RuntimeError`) if `SUPABASE_URL` is unset — never a silent mock fallback.
+2. **A real, load-bearing fix confirmed live before trusting it:** `SUPABASE_URL` points at Supabase's transaction-mode connection pooler (port 6543, PgBouncer/Supavisor) — a well-documented real incompatibility with asyncpg's default server-side prepared-statement caching. `statement_cache_size=0` is the standard fix; verified with a real `SELECT version()` round-trip against the real, live database before it was trusted, not assumed from documentation alone.
+3. `trust_digest.py` extended with `aggregate_weekly_summary()` (the real weekly-aggregation query `compare_weeks()`'s own docstring named as explicitly out of scope) and `fetch_trust_digest()` (the real end-to-end entry point: computes the current and previous ISO week, queries both, hands the results to the already-correct, unmodified `compare_weeks()`).
+4. `main.py` wires a real, live `GET /trust_digest` — the backend's first HTTP route beyond `/health`.
+
+**A real, disclosed design decision with no explicit spec answer, made and reasoned rather than guessed:** how should `uncertain_no_data` outcomes affect `success_rate`? Nothing in this project's spec corpus states the formula. Decided by direct analogy to an existing, explicit architecture rule: `CLAUDE.md` forbids collapsing `Finding.evidence_state`'s `no_data_found` into a pass or a fail. The same reasoning applies here — counting `uncertain_no_data` rows as attempts that merely didn't succeed would be exactly that collapse. `aggregate_weekly_summary()` therefore excludes `uncertain_no_data` from both `total_actions` and the success-rate numerator entirely, counting only `approved_unchanged` / `caught_by_gate` / `corrected_by_user` — actions with a real, known verdict.
+
+**A second real design decision, found and fixed before it became a real production incident, not a hypothetical:** the spec's own phrasing treats "closing the gap to a live endpoint" as the whole task, but wiring a real DB pool into the same `lifespan` that already backs `/health` would have coupled `/health`'s availability to Supabase's — a real regression, since `/health` is meant as a liveness check (is this process alive?), not a readiness check (are its dependencies reachable?). Fixed directly: pool-creation failure at startup is caught, logged, and leaves `app.state.db_pool = None` rather than crashing the app; `/trust_digest` fails loud with a real `503` if the pool isn't available; `/health` is entirely unaffected either way. Proven by a real test that clears the pool reference after genuine startup and confirms `/trust_digest` returns `503` while `/health` still returns `200`.
+
+**6 real tests written, all genuinely new** (a fresh-context review caught an earlier draft of this entry incorrectly stating "16" — the real, post-change total across both files, not the count of new ones; corrected here before merge): 4 in `test_trust_digest.py` running live `INSERT`/query/`DELETE` cycles against the real, live Supabase database (per Rule 5 — real Postgres, never mocked, since the point is proving the integration works) — each using a deliberately obscure, fixed historical date range so it can never collide with real data, and a `finally` block guaranteeing cleanup even on failure; one confirms the `uncertain_no_data` exclusion directly (4 rows inserted, `total_actions` reports 3); one confirms the `COALESCE(resolved_at, created_at)` defensive fallback; one confirms a real zero-row week; one runs `fetch_trust_digest()` fully end-to-end and asserts a real `"improving"` trend computed genuinely through the database, not asserted from the pure function alone. 2 in `test_main.py`: the live endpoint via `TestClient` (shape/type assertions only, deliberately never specific counts — real production data will change as this project actually gets used, and asserting an exact number here would be exactly the stale-restated-number drift pattern `CLAUDE.md` warns against) and the `503`-not-a-crash resilience proof above.
+
+**Verified live:** `ruff check backend` → clean. `PYTHONPATH=backend/src pytest backend/tests -q` (run from `backend/`, so `.env` resolves — confirmed this matters directly: running from the repo root silently fails over to the OS username as a Postgres user, a real, disclosed pitfall hit and fixed in this session before it could cause a false negative) → **187 passed** (181 prior + 4 `trust_digest` + 2 `main.py`).
+
+**`QUORUM_DATA_CONTRACTS.md`'s own §5 staleness note updated** — §5.15 moved from "specified, not implemented" to confirmed live, the first of twelve endpoint sections to make that transition.
+
+**Genuinely still open, not addressed by this session:** the real code has not yet been redeployed to the live Cloud Run service — the currently-running revision still predates this work. Redeployment is the natural next real step, tracked here rather than silently assumed done.
+
+**Affects:** `backend/src/quorum_backend/core/db.py` (new), `backend/src/quorum_backend/features/trust_digest.py` (extended), `backend/src/quorum_backend/main.py` (real `/trust_digest` route + hardened lifespan), `backend/pyproject.toml` (`asyncpg==0.30.0` added), `backend/tests/test_trust_digest.py` (extended), `backend/tests/test_main.py` (extended), `QUORUM_DATA_CONTRACTS.md`, `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-100*
+*Next entry: DEC-101*
