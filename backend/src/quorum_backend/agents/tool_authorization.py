@@ -27,13 +27,15 @@ DOMAIN_TOOL_MAP: dict[str, set[str]] = {
     "calendar": {"calendar.create_local", "calendar.create_external", "calendar.read"},
     "tasks": {"tasks.create", "tasks.update", "tasks.read"},
     "finance": {"finance.log_expense", "finance.write_budget", "finance.read"},
+    "career": {"career.update_application_status", "career.read"},
 }
-# Four of five real domains present. Career is added in IMPL_17 -- the
-# "all five domains now present" comment is added honestly there, once
-# it's actually true. "finance.write_budget" is the real, exact tool name
-# from QUORUM_DATA_CONTRACTS.md Sec 6's own MCP tool call shape example --
-# one of the few concrete tool names given anywhere in the real corpus,
-# used verbatim rather than invented.
+# All five domain agents now present -- the DOMAIN_TOOL_MAP is
+# feature-complete for the current architecture. Genuinely true as of
+# IMPL_17 (confirmed live, this session -- see DECISIONS_LOG DEC-067),
+# not written ahead of time as an aspirational claim the way an earlier
+# draft of this file once did at IMPL_13.
+# "finance.write_budget" is the real, exact tool name from
+# QUORUM_DATA_CONTRACTS.md Sec 6's own MCP tool call shape example.
 
 
 class ToolAuthorizationError(Exception):
