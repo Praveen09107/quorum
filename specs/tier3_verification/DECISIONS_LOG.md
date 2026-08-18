@@ -1265,10 +1265,26 @@ Confirmed directly, not assumed: `git diff` shows no changes to `main.py` beyond
 
 ---
 
+### DEC-065 — `IMPL_15`: Agent — Tasks. Third Real Graph, the Boundary Rule Held Without Re-Deriving It
+
+**Status:** CONFIRMED
+
+**Decision:** `tasks_agent.py` (`TasksAgentState`, `build_task_proposal`, `make_propose_task_node`, `build_tasks_agent_graph`) is real and tested. `DOMAIN_TOOL_MAP` extended with `tasks`.
+
+Inherits `DEC-013`'s boundary rule (agents propose, the Gate verifies) without re-deriving it — confirmed by **AST parsing**, not just a text `grep`, that `deadline_conflict_check` is never actually called anywhere in this file (a `grep -n "deadline_conflict_check"` does match, but only inside the docstring prose explaining *why* it's deliberately absent — the same category of grep false-positive already found in `IMPL_09`'s "confidence" check; this session verified the real intent with a stronger method rather than trusting the naive text search).
+
+Both real Tasks `ActionType`s confirmed `S1` through the actual `router.get_stakes()`, continuing the real cross-session integration-proof pattern from `IMPL_14`.
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **106 passed** (100 prior + 6 new).
+
+**Affects:** `backend/src/quorum_backend/agents/tasks_agent.py` (new), `backend/src/quorum_backend/agents/tool_authorization.py` (extended), `backend/tests/test_tasks_agent.py` (new), `STATUS_INDEX.md`, this log.
+
+---
+
 ## Part 2 — Open Items Register
 
 *(empty — populated as real sessions surface genuinely unresolved items)*
 
 ---
 
-*Next entry: DEC-065*
+*Next entry: DEC-066*
