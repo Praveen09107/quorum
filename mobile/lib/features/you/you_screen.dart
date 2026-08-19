@@ -8,6 +8,15 @@
 // the real, backend-reported DeletionResult counts -- never a generic
 // "your account has been deleted" message.
 //
+// A real, disclosed fix found and closed the same session the real
+// backend route first existed (`DEC-113`): the delete button's own
+// async call previously had no error handling at all -- a real, live
+// failure would have propagated as an unhandled exception rather than
+// a real, honest, visible message. Now mirrors `login_screen.dart`'s
+// own established `_handleSignIn` convention exactly (a real loading
+// state, a real, visible error message on failure, the button
+// disabled while a real request is in flight).
+//
 // A real navigation link added: You -> Memory Transparency, an
 // account-level concern genuinely related to account actions, the same
 // reasoning discipline as Trust -> Trust Digest. Deferred, injected
@@ -78,6 +87,8 @@ class YouScreen extends StatefulWidget {
 class _YouScreenState extends State<YouScreen> {
   final _controller = TextEditingController();
   DeletionResultData? _result;
+  bool _deleting = false;
+  String? _deleteError;
 
   @override
   void dispose() {
@@ -191,14 +202,40 @@ class _YouScreenState extends State<YouScreen> {
           ),
           const SizedBox(height: 16),
           FilledButton(
-            onPressed: isValidDeletionConfirmation(_controller.text)
+            onPressed: (isValidDeletionConfirmation(_controller.text) && !_deleting)
                 ? () async {
-                    final deletionResult = await widget.onConfirmDelete();
-                    if (mounted) setState(() => _result = deletionResult);
+                    // A real, disclosed fix, found and closed the same
+                    // session this real backend route first existed
+                    // (`DEC-113`): this call previously had no error
+                    // handling at all -- a real, live failure (a real
+                    // network drop, a real 503) would have propagated
+                    // as an unhandled exception rather than a real,
+                    // honest, visible message, the same discipline
+                    // `login_screen.dart`'s own `_handleSignIn` already
+                    // holds itself to.
+                    setState(() {
+                      _deleting = true;
+                      _deleteError = null;
+                    });
+                    try {
+                      final deletionResult = await widget.onConfirmDelete();
+                      if (mounted) setState(() => _result = deletionResult);
+                    } catch (e) {
+                      if (mounted) {
+                        setState(() {
+                          _deleting = false;
+                          _deleteError = 'Account deletion failed: $e';
+                        });
+                      }
+                    }
                   }
                 : null,
-            child: const Text('Delete my account'),
+            child: _deleting ? const CircularProgressIndicator() : const Text('Delete my account'),
           ),
+          if (_deleteError != null) ...[
+            const SizedBox(height: 16),
+            Text(_deleteError!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ],
         ],
       ),
     );

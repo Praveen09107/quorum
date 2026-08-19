@@ -24,18 +24,32 @@ system, reviewed once, exercised by both a user's voluntary sign-out and
 this permanent, irreversible deletion flow -- not two implementations that
 could silently drift apart.
 
-Out of scope: the real Postgres/pgvector/mem0 deletion queries themselves
--- DeletionStore is injected, same real/external boundary pattern as
-everywhere else in this project (llm_call, position_call, RevocationStore).
+**RESOLVED, `DEC-113`, CRITICAL tier:** found live while finally building
+a real `DeletionStore` -- this module previously took one single `user_id`
+string and passed it, unchanged, to both `revoke_all_for_user()` (which
+needs the real Google `sub`, confirmed against `refresh_tokens.user_id`'s
+real `TEXT` column type) and `deletion_store`'s own methods (which need
+the real, internal `UUID` every per-user domain table actually uses,
+since `DEC-110`'s real `users` table exists). Passing the same value to
+both was silently correct only because no real `DeletionStore`
+implementation existed yet to expose the mismatch -- a real Postgres
+purge scoped by a Google `sub` string would have failed outright (not a
+valid UUID) or, worse, silently matched nothing while claiming success.
+Split into two explicit, named parameters below; never conflated again.
 
-Batch 10 Phase 3, one real, disclosed change: `delete_account()` is now
-`async` and `await`s `revoke_all_for_user()`, since that function itself
-became async this same session (see `auth/refresh_token.py`'s own
-docstring for why). `DeletionStore`'s own methods are deliberately left
-synchronous for now -- its real implementation is still out of scope
-here, unbuilt; when it is built against the real database, the same
-async reasoning will apply to it too, but there is no real consumer of
-that yet to justify the change today.
+**RESOLVED, `DEC-113`:** `DeletionStore`'s own methods are now `async`,
+exactly as this module's own prior docstring already anticipated ("when
+it is built against the real database, the same async reasoning will
+apply to it too") -- `delete_account()` now `await`s each real call, the
+same real, disclosed conversion `refresh_token.py`'s own `async` change
+already established as this project's precedent for exactly this
+situation.
+
+Out of scope: the real Postgres/pgvector/mem0 deletion queries
+themselves used to be -- `DeletionStore` is injected, same real/external
+boundary pattern as everywhere else in this project (llm_call,
+position_call, RevocationStore). As of `DEC-113`, a real, live
+implementation exists: `security/supabase_deletion_store.py`.
 """
 from __future__ import annotations
 
@@ -50,12 +64,15 @@ class DeletionStore(Protocol):
     purge and stored-OAuth-token revocation. Returns a real count per
     store, not a bare success/fail flag, so a caller can confirm data was
     genuinely found and removed rather than silently doing nothing for an
-    unknown user_id."""
+    unknown user_id. Every method takes the real, internal UUID
+    (`DEC-110`'s `users` table), never the Google `sub` -- that identity
+    stays entirely on the session-revocation side of `delete_account()`
+    below."""
 
-    def purge_postgres_rows(self, user_id: str) -> int: ...
-    def purge_vector_embeddings(self, user_id: str) -> int: ...
-    def purge_memories(self, user_id: str) -> int: ...
-    def revoke_oauth_tokens(self, user_id: str) -> int: ...
+    async def purge_postgres_rows(self, internal_user_id: str) -> int: ...
+    async def purge_vector_embeddings(self, internal_user_id: str) -> int: ...
+    async def purge_memories(self, internal_user_id: str) -> int: ...
+    async def revoke_oauth_tokens(self, internal_user_id: str) -> int: ...
 
 
 @dataclass
@@ -69,22 +86,33 @@ class DeletionResult:
 
 
 async def delete_account(
-    user_id: str,
+    *,
+    google_sub: str,
+    internal_user_id: str,
     deletion_store: DeletionStore,
     revocation_store: RevocationStore,
 ) -> DeletionResult:
     """Sessions are revoked FIRST, before any real data purge -- locking
     the account down for any further access before its data is removed,
     rather than the reverse order, which would leave a real window where
-    a still-valid session could act against data mid-deletion."""
+    a still-valid session could act against data mid-deletion.
 
-    await revoke_all_for_user(user_id, revocation_store)
+    Two real, distinct identifiers, never conflated (`DEC-113`):
+    `google_sub` is the real identity `revoke_all_for_user()` and the
+    whole JWT/refresh-token session-management system use; `internal_
+    user_id` is the real, resolved UUID every per-user domain table
+    (and `deletion_store`'s own methods) actually expects. The real
+    `DeletionResult.user_id` reports the internal UUID -- the identity
+    that will actually mean something once this session's tokens are
+    gone.
+    """
+    await revoke_all_for_user(google_sub, revocation_store)
 
     return DeletionResult(
-        user_id=user_id,
+        user_id=internal_user_id,
         sessions_revoked=True,
-        postgres_rows_deleted=deletion_store.purge_postgres_rows(user_id),
-        vector_embeddings_deleted=deletion_store.purge_vector_embeddings(user_id),
-        memories_deleted=deletion_store.purge_memories(user_id),
-        oauth_tokens_revoked=deletion_store.revoke_oauth_tokens(user_id),
+        postgres_rows_deleted=await deletion_store.purge_postgres_rows(internal_user_id),
+        vector_embeddings_deleted=await deletion_store.purge_vector_embeddings(internal_user_id),
+        memories_deleted=await deletion_store.purge_memories(internal_user_id),
+        oauth_tokens_revoked=await deletion_store.revoke_oauth_tokens(internal_user_id),
     )

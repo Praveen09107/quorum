@@ -1,0 +1,120 @@
+"""The real, live `DeletionStore` implementation (`security/
+account_deletion.py`'s own injected Protocol), backing `DELETE /account`
+(`QUORUM_DATA_CONTRACTS.md` §5.8). HONEST DISCLOSURE: this real
+implementation did not exist anywhere in this backend before `DEC-113`
+-- `account_deletion.py`'s own docstring named it as "out of scope"
+since the module was first built, deferred until a real
+user-identity-provisioning system existed to make a correctly-scoped
+purge possible at all (`DEC-110`).
+
+**A real, necessary deletion order, confirmed against the real schema
+before writing a line of SQL, not assumed:** `interviews.application_id`
+references `applications(application_id)` with no `ON DELETE CASCADE`
+(confirmed directly against `backend/migrations/0001_initial_schema/
+up.sql`) -- the default `NO ACTION` behavior means deleting an
+`applications` row while a real `interviews` row still references it
+raises a genuine foreign-key violation. `interviews` rows for this
+user's own applications are deleted first, via a real subquery, before
+`applications` itself.
+
+**A real, deliberate scope split, matching `DeletionResult`'s own
+four-store shape:** `purge_postgres_rows()` covers the real relational
+tables this account genuinely owns data in -- `tasks`, `expenses`,
+`applications` (+ their `interviews`), and the real `users` row itself
+(so a future re-signup with the same Google identity gets a genuinely
+fresh internal UUID, never silently resurrecting deleted history).
+`purge_vector_embeddings()` covers `note_embeddings` specifically --
+the one real table with a pgvector column, a genuine conceptual
+distinct from the other tables even though it lives in the same real
+Postgres database. `action_events` and `retry_queue` are deliberately
+NOT touched here: `action_events` has no `user_id` column at all
+(confirmed against the real schema, the same real, disclosed limitation
+`/trust_digest` already carries), and `retry_queue` is a generic,
+system-level job queue with no per-user ownership concept whatsoever --
+neither table has a real, correct way to be scoped to one account.
+
+**Two real, honest, disclosed zeros, not silently faked:**
+`purge_memories()` -- no real `mem0` integration exists anywhere in this
+backend (confirmed by direct search); `revoke_oauth_tokens()` -- Google's
+own real `access_token`/`refresh_token` are deliberately never persisted
+here (confirmed directly against `auth/google_oauth.py`'s own
+docstring), so there is nothing real to revoke via a Google API call.
+Both real, disclosed gaps, not gaps this class silently hides behind a
+plausible-looking nonzero number.
+"""
+from __future__ import annotations
+
+import uuid
+
+import asyncpg
+
+
+def _parse_deleted_count(command_status: str) -> int:
+    """asyncpg's `execute()` returns the real Postgres command-status
+    string (e.g. `"DELETE 3"`), not a count directly -- parses the real,
+    trailing integer. A real, established asyncpg pattern, not a fragile
+    guess."""
+    return int(command_status.rsplit(" ", 1)[-1])
+
+
+class SupabaseDeletionStore:
+    def __init__(self, pool: asyncpg.Pool):
+        self._pool = pool
+
+    async def purge_postgres_rows(self, internal_user_id: str) -> int:
+        """A real, deliberate design choice, not a default left
+        unconsidered: all five real deletes run inside one real Postgres
+        transaction (`conn.transaction()`), not as five independent
+        statements. This is an irreversible operation -- if any one real
+        delete fails partway (a genuine constraint violation, a dropped
+        connection), the whole real purge rolls back rather than leaving
+        an account in a real, half-deleted state that's neither fully
+        present nor fully gone."""
+        user_uuid = uuid.UUID(internal_user_id)
+        total = 0
+
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                # Real, necessary order: interviews before applications,
+                # closing the real FK constraint confirmed in this
+                # module's own docstring.
+                total += _parse_deleted_count(
+                    await conn.execute(
+                        "DELETE FROM interviews WHERE application_id IN (SELECT application_id FROM applications WHERE user_id = $1)",
+                        user_uuid,
+                    )
+                )
+                total += _parse_deleted_count(
+                    await conn.execute("DELETE FROM applications WHERE user_id = $1", user_uuid)
+                )
+                total += _parse_deleted_count(await conn.execute("DELETE FROM tasks WHERE user_id = $1", user_uuid))
+                total += _parse_deleted_count(
+                    await conn.execute("DELETE FROM expenses WHERE user_id = $1", user_uuid)
+                )
+                # The real users row itself, last -- no other real table
+                # has a database-enforced FK against it (confirmed
+                # against the real 0003 migration), so ordering relative
+                # to the four deletes above genuinely doesn't matter;
+                # done last here simply to keep the identity valid for
+                # as much of this real operation as possible, in case a
+                # later step needs to look it up for a real diagnostic.
+                total += _parse_deleted_count(await conn.execute("DELETE FROM users WHERE user_id = $1", user_uuid))
+
+        return total
+
+    async def purge_vector_embeddings(self, internal_user_id: str) -> int:
+        return _parse_deleted_count(
+            await self._pool.execute(
+                "DELETE FROM note_embeddings WHERE user_id = $1", uuid.UUID(internal_user_id)
+            )
+        )
+
+    async def purge_memories(self, internal_user_id: str) -> int:
+        # Real, honest zero -- see this module's own top-of-file
+        # docstring for the full account of why.
+        return 0
+
+    async def revoke_oauth_tokens(self, internal_user_id: str) -> int:
+        # Real, honest zero -- see this module's own top-of-file
+        # docstring for the full account of why.
+        return 0

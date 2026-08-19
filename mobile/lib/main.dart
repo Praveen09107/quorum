@@ -27,15 +27,19 @@
 /// and genuinely live: the You tab always renders regardless of which
 /// "More" section fetchers are configured, so wiring either one alone
 /// makes a real, new screen reachable in the running app (`DEC-108`,
-/// `DEC-109`). Every other `MainShell` fetcher stays unconfigured,
-/// honestly, until its own backend endpoint exists (Part C-2, tracked
-/// in `STATUS_INDEX.md`).
+/// `DEC-109`). `confirmDelete` is real and live too, as of `DEC-113`
+/// -- the real, irreversible `DELETE /account`, unblocked only once
+/// real user provisioning existed (`DEC-110`) to make a correctly
+/// per-user-scoped deletion possible at all. Every other `MainShell`
+/// fetcher stays unconfigured, honestly, until its own backend
+/// endpoint exists (Part C-2, tracked in `STATUS_INDEX.md`).
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
+import 'package:quorum_mobile/api/account_api.dart';
 import 'package:quorum_mobile/api/career_pipeline_api.dart';
 import 'package:quorum_mobile/api/finance_api.dart';
 import 'package:quorum_mobile/api/tasks_api.dart';
@@ -46,6 +50,7 @@ import 'package:quorum_mobile/auth/auth_controller.dart';
 import 'package:quorum_mobile/auth/login_screen.dart';
 import 'package:quorum_mobile/auth/token_store.dart';
 import 'package:quorum_mobile/config/api_config.dart';
+import 'package:quorum_mobile/features/you/you_logic.dart';
 import 'package:quorum_mobile/shell/main_shell.dart';
 import 'package:quorum_mobile/theme/quorum_theme.dart';
 
@@ -103,6 +108,24 @@ class _QuorumAppState extends State<QuorumApp> {
     setState(() => _sessionState = _SessionState.signedOut);
   }
 
+  /// Real, irreversible (`DEC-113`) -- unlike `_handleSignOut` above,
+  /// this deliberately does NOT force an immediate transition back to
+  /// `LoginScreen`: `you_screen.dart`'s own real confirmation message
+  /// (the actual `DeletionResult` counts) needs to stay on screen long
+  /// enough for a person to read it, not be torn down the instant
+  /// deletion succeeds. Local tokens are cleared immediately regardless
+  /// -- this device must never keep holding onto credentials for a
+  /// session that was just permanently, server-side revoked as part of
+  /// the same real deletion call.
+  Future<DeletionResultData> _handleAccountDeletion() async {
+    final result = await createAccountDeletionConfirmer(
+      getAccessToken: _authController.getValidAccessToken,
+      client: _httpClient,
+    )();
+    await const TokenStore().clear();
+    return result;
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -136,6 +159,7 @@ class _QuorumAppState extends State<QuorumApp> {
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
+            confirmDelete: _handleAccountDeletion,
             onSignOut: _handleSignOut,
           ),
       },
