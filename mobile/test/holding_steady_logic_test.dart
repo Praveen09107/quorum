@@ -43,11 +43,15 @@ void main() {
       expect(touchpointHeadline(DayTouchpoint.morning), 'What does today look like');
     });
 
-    test('midday gets a genuinely neutral label, distinct from both bookends', () {
+    test('midday gets a genuinely neutral label, distinct from both bookends and from the zone title', () {
       final headline = touchpointHeadline(DayTouchpoint.midday);
-      expect(headline, 'Holding steady');
+      expect(headline, 'Where things stand');
       expect(headline, isNot(touchpointHeadline(DayTouchpoint.morning)));
       expect(headline, isNot(touchpointHeadline(DayTouchpoint.evening)));
+      // The real, disclosed bug this test now guards against: midday's
+      // headline must never collide with today_screen.dart's own
+      // "Holding steady" zone-section title it renders inside.
+      expect(headline, isNot('Holding steady'));
     });
 
     test('evening gets the real "how did today go" framing', () {

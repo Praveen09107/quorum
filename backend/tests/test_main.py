@@ -70,6 +70,81 @@ def test_real_startup_does_not_warn_once_a_real_secret_is_configured(monkeypatch
     get_settings.cache_clear()
 
 
+def test_trust_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.get("/trust")
+    assert response.status_code == 401
+
+
+def test_trust_endpoint_runs_the_real_default_scenario_suite_against_the_real_gate():
+    """Real, live -- no mocking of self_test_harness.py or gate.review().
+    Confirms the exact real, current default suite (3 scenarios, all
+    genuinely expected to pass -- clean S0 approval, a Stage A hard-fail
+    revise, a real S3 Critic-objection escalation) and the real, honest
+    `target` label this repository always produces."""
+    with TestClient(app) as client:
+        response = client.get("/trust", headers=_auth_header())
+    assert response.status_code == 200
+    body = response.json()
+
+    assert set(body.keys()) == {"total", "caught", "missed", "results", "target"}
+    assert body["target"] == "real_gate"
+    assert body["total"] == 3
+    assert body["caught"] == 3
+    assert body["missed"] == []
+    assert len(body["results"]) == 3
+
+    for result in body["results"]:
+        assert set(result.keys()) == {"scenario_id", "expected", "actual", "passed"}
+        assert result["passed"] is True
+        assert result["expected"] == result["actual"]
+
+    scenario_ids = {r["scenario_id"] for r in body["results"]}
+    assert scenario_ids == {"S0_clean_approval", "S2_stage_a_hard_fail", "S3_real_critic_objection_escalates"}
+
+
+def test_trust_endpoint_missed_is_a_real_honest_subset_never_hidden(monkeypatch):
+    """A real, deliberately mis-specified scenario (a genuine expectation
+    mismatch, not a Gate bug) must surface in `missed` with the same
+    prominence as a catch -- the same real proof self_test_harness.py's
+    own test suite already establishes at the function level, exercised
+    here through the real HTTP route."""
+    from quorum_backend import main as main_module
+    from quorum_backend.features.self_test_harness import (
+        AdversarialScenario,
+        _default_scenarios,
+        run_self_test as real_run_self_test,
+    )
+
+    real_scenarios = _default_scenarios()
+    mis_specified = AdversarialScenario(
+        scenario_id="deliberately_mis_specified",
+        description="A real clean approval, deliberately asserted against the wrong expected decision.",
+        proposal=real_scenarios[0].proposal,
+        stakes=real_scenarios[0].stakes,
+        stage_a_checks=real_scenarios[0].stage_a_checks,
+        critic_call=real_scenarios[0].critic_call,
+        judge_call=real_scenarios[0].judge_call,
+        expected_decision="reject",  # the real Gate will actually approve this
+    )
+
+    async def _fake_run_self_test(scenarios=None, target="real_gate"):
+        return await real_run_self_test(scenarios=[mis_specified], target=target)
+
+    monkeypatch.setattr(main_module, "run_self_test", _fake_run_self_test)
+
+    with TestClient(app) as client:
+        response = client.get("/trust", headers=_auth_header())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["caught"] == 0
+    assert len(body["missed"]) == 1
+    assert body["missed"][0]["scenario_id"] == "deliberately_mis_specified"
+    assert body["missed"][0]["passed"] is False
+
+
 def test_trust_digest_requires_real_auth_missing_header_is_401():
     with TestClient(app) as client:
         response = client.get("/trust_digest")
