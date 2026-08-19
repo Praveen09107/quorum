@@ -2399,4 +2399,25 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
-*Next entry: DEC-115*
+## DEC-116: Real, basic, PR-gating CI — Roadmap Phase 1, proven live via a real PR, two genuine gaps found and disclosed on its own first run
+
+**Built:** `.github/workflows/ci.yml` — a real GitHub Actions workflow, distinct from `test-gcp-auth.yml`'s narrow WIF-auth proof, that runs the same four commands `CLAUDE.md`'s own Common Commands section has always asked a human to run by hand, automatically, on every real PR and every push to `main`: `ruff check backend`, `pytest backend/tests -q`, `flutter analyze`, `flutter test`.
+
+**A real, deliberate design decision, made and disclosed rather than left implicit:** backend tests run against a real, disposable `pgvector/pgvector:pg16` service container (the same real image `DEC-010` first proved this migration against, locally, long before any live Supabase project existed) — the real, live Supabase project is never touched by CI. A real PR must never be able to mutate production-adjacent data as a side effect of being opened.
+
+**A real, blocked action, disclosed rather than worked around:** provisioning `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET` as real GitHub Actions repo secrets (needed for two real tests that distinguish a genuine `invalid_grant` from `invalid_client` against Google's real token endpoint, per `DEC-101`) was attempted directly from this session via `gh secret set`, reading the real values straight from the local `.env` file without ever printing them — and was blocked by this environment's own permission classifier. Per this project's own standing practice (`CLAUDE.md`: stop and report rather than route around a blocker), no workaround was attempted. Both dependent tests are excluded from this CI run instead, disclosed directly in `ci.yml`'s own header comment, not silently skipped with no record — and tracked as part of `STATUS_INDEX.md`'s open item #17.
+
+**Proven live, not just written — a real, adversarial first run caught real gaps this session's own design missed:**
+1. The workflow's actual first CI run (real PR #1) failed on the very test the header comment had already flagged and excluded (`test_auth_google_oauth.py`, correctly `--ignore`d) — but surfaced a **second**, previously-unaccounted-for real test in `test_main.py` (`test_auth_token_with_a_fake_code_fails_loud_with_a_real_400`) that also needs the same real Google credentials, and failed with a real `503` instead of its expected `400` (the settings genuinely unset in CI, not a mocked value). Found by actually running the workflow for real, not by reasoning about it in advance.
+2. Fixed by explicitly deselecting that one test too (`--deselect`), verified locally first — `pytest --collect-only` confirmed `267/268 tests collected (1 deselected)` exactly matching the intended scope — before pushing a second time, rather than round-tripping through CI again to find the same class of gap a third time.
+3. The re-run passed clean: `267/268` real backend tests, full mobile suite (`297/297`, unaffected — flutter side never touched Google OAuth), confirmed via `gh pr checks`.
+
+**Merged:** PR #1, real merge commit, via `gh pr merge --merge --delete-branch`, both local and remote feature branches cleaned up.
+
+**Verified live:** `gh pr checks 1` → `backend: pass (43s)`, `mobile: pass (2m32s)`, both against the actual, real GitHub Actions run, not a local simulation of what CI would do.
+
+**Affects:** `.github/workflows/ci.yml` (new), `STATUS_INDEX.md`, this log.
+
+---
+
+*Next entry: DEC-117*
