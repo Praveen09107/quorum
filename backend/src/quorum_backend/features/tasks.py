@@ -9,21 +9,19 @@ zero references to `user_id` or any SQL anywhere in that file), the
 same "the Gate/agents never touch the database directly" separation
 `trust_digest.py`'s own real, live database work established first.
 
-Mirrors `trust_digest.py`'s real, disclosed limitation exactly, not a
-new gap: `tasks.user_id` is a real, non-null `UUID` column in the
-schema, but no real user-provisioning system exists anywhere in this
-backend to map a real Google `sub` claim (an arbitrary string, not a
-UUID) onto it -- confirmed directly, no `users` table exists in the
-real migration, and no code anywhere in this repository ever writes
-one. Filtering `WHERE user_id = $1` against an identity that was never
-actually provisioned would silently return zero rows for every real
-caller, which would be worse than the honest alternative. This route
-is, like `/trust_digest`, currently a real "you must be signed in"
-gate, not yet a per-user data filter -- the same real, disclosed open
-item, not duplicated as a second one.
+**RESOLVED, `DEC-110`:** this module previously carried the same
+disclosed per-user-scoping limitation as `trust_digest.py` --
+`tasks.user_id` is real, but no real user-provisioning system existed
+anywhere in this backend to map a real Google `sub` onto it. A real
+`users` table and `auth/user_provisioning.py` now close that gap;
+`fetch_tasks()` below takes the real, resolved internal `user_id` and
+filters by it directly. `/trust_digest` still carries the original
+limitation -- `action_events` itself has no `user_id` column at all,
+a genuinely different, unresolved gap.
 """
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -63,17 +61,26 @@ def _row_to_task(row: asyncpg.Record) -> TaskRecord:
     )
 
 
-async def fetch_tasks(pool: asyncpg.Pool) -> list[TaskRecord]:
-    """The real, live query backing `GET /tasks`. Ordered by
-    `created_at` for a real, deterministic response -- the mobile
-    client's own `sortTasks()` (`tasks_logic.dart`) re-sorts for
-    display regardless, so this order is a real, reasoned default
-    (insertion order), not a claim about display order."""
+async def fetch_tasks(pool: asyncpg.Pool, *, user_id: str) -> list[TaskRecord]:
+    """The real, live query backing `GET /tasks`, real per-user scoped
+    as of `DEC-110`. Ordered by `created_at` for a real, deterministic
+    response -- the mobile client's own `sortTasks()` (`tasks_logic.
+    dart`) re-sorts for display regardless, so this order is a real,
+    reasoned default (insertion order), not a claim about display
+    order.
+
+    `user_id` is the real, resolved internal UUID (from
+    `auth/user_provisioning.py`), converted to a real `uuid.UUID`
+    object before binding -- asyncpg's default UUID codec expects one,
+    never a plain string, matching the pattern every real UUID-column
+    insert in this codebase's own test suite already established."""
     rows = await pool.fetch(
         """
         SELECT task_id, title, estimated_hours, deadline, status
         FROM tasks
+        WHERE user_id = $1
         ORDER BY created_at
-        """
+        """,
+        uuid.UUID(user_id),
     )
     return [_row_to_task(row) for row in rows]

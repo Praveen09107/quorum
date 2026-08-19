@@ -49,6 +49,7 @@ from quorum_backend.auth.refresh_token import (
     rotate_refresh_token,
 )
 from quorum_backend.auth.revocation_store import SupabaseRevocationStore
+from quorum_backend.auth.user_provisioning import get_or_create_user, resolve_internal_user_id
 from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
 from quorum_backend.features.career_pipeline import fetch_career_pipeline
@@ -130,6 +131,20 @@ def _require_auth(authorization: str | None = Header(default=None)) -> str:
         raise HTTPException(status_code=401, detail="Access token has expired -- use /auth/refresh to get a new one.") from exc
     except AccessTokenInvalid as exc:
         raise HTTPException(status_code=401, detail="Access token is invalid.") from exc
+
+
+async def _resolve_internal_user_id_or_404(pool: asyncpg.Pool, google_sub: str) -> str:
+    """Real, shared helper for every per-user-scoped route -- resolves
+    `_require_auth`'s real Google `sub` into the real, internal UUID
+    `auth/user_provisioning.py` provisions at `/auth/token` time
+    (`DEC-110`). In practice this should always succeed (provisioning
+    happens before any access token exists to reach here with), but a
+    genuinely unprovisioned identity is a real, honest 404 -- never
+    silently treated as "show every user's data.\""""
+    internal_user_id = await resolve_internal_user_id(pool, google_sub=google_sub)
+    if internal_user_id is None:
+        raise HTTPException(status_code=404, detail="No account found for this session -- sign in again.")
+    return internal_user_id
 
 
 class TokenExchangeRequest(BaseModel):
@@ -222,7 +237,7 @@ async def trust_digest(
 @app.get("/tasks")
 async def tasks(
     pool: asyncpg.Pool = Depends(_get_db_pool),
-    _user_id: str = Depends(_require_auth),
+    google_sub: str = Depends(_require_auth),
 ) -> list[dict]:
     """Real, live -- queries the real `tasks` table via `fetch_tasks()`,
     never mocked or pre-computed data. Response shape matches
@@ -231,15 +246,13 @@ async def tasks(
     constraint), so this route never needs to defend against an
     unrecognized value the way an open-vocabulary field would.
 
-    Requires a real, valid access token (`_require_auth`), the same
-    real "you must be signed in" gate as `/trust_digest` -- and the
-    same disclosed limitation: no real user-provisioning system maps a
-    Google `sub` onto `tasks.user_id` anywhere in this backend yet, so
-    this is not yet a per-user filter either. See `features/tasks.py`'s
-    own docstring for the full account -- this is the same real,
-    already-disclosed open item, not a second one.
+    Requires a real, valid access token (`_require_auth`) and, as of
+    `DEC-110`, is real per-user scoped -- `_resolve_internal_user_id_
+    or_404` maps the real Google identity onto the real internal UUID
+    `tasks.user_id` actually expects.
     """
-    records = await fetch_tasks(pool)
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    records = await fetch_tasks(pool, user_id=internal_user_id)
     return [
         {
             "task_id": record.task_id,
@@ -255,7 +268,7 @@ async def tasks(
 @app.get("/career_pipeline")
 async def career_pipeline(
     pool: asyncpg.Pool = Depends(_get_db_pool),
-    _user_id: str = Depends(_require_auth),
+    google_sub: str = Depends(_require_auth),
 ) -> list[dict]:
     """Real, live -- queries the real `applications` table via
     `fetch_career_pipeline()`, never mocked or pre-computed data.
@@ -269,12 +282,11 @@ async def career_pipeline(
     already handles this defensively (`statusLabel()`'s de-snaking
     fallback for an unrecognized value).
 
-    Requires a real, valid access token (`_require_auth`), the same
-    real "you must be signed in" gate and the same disclosed
-    per-user-scoping limitation as `/trust_digest`/`/tasks` -- see
-    `features/career_pipeline.py`'s own docstring for the full account.
+    Requires a real, valid access token (`_require_auth`) and, as of
+    `DEC-110`, is real per-user scoped.
     """
-    records = await fetch_career_pipeline(pool)
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    records = await fetch_career_pipeline(pool, user_id=internal_user_id)
     return [
         {
             "application_id": record.application_id,
@@ -290,7 +302,7 @@ async def career_pipeline(
 @app.get("/finance/subscriptions")
 async def finance_subscriptions(
     pool: asyncpg.Pool = Depends(_get_db_pool),
-    _user_id: str = Depends(_require_auth),
+    google_sub: str = Depends(_require_auth),
 ) -> list[dict]:
     """Real, live -- queries the real `expenses` table and applies the
     real, deliberately simple detection rule in
@@ -306,12 +318,11 @@ async def finance_subscriptions(
     `features/subscription_detective.py`'s own docstring for the full
     account.
 
-    Requires a real, valid access token (`_require_auth`), the same
-    real "you must be signed in" gate and the same disclosed
-    per-user-scoping limitation as `/trust_digest`/`/tasks`/
-    `/career_pipeline`.
+    Requires a real, valid access token (`_require_auth`) and, as of
+    `DEC-110`, is real per-user scoped.
     """
-    records = await fetch_detected_subscriptions(pool)
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    records = await fetch_detected_subscriptions(pool, user_id=internal_user_id)
     return [
         {
             "payee": record.payee,
@@ -361,6 +372,7 @@ async def auth_callback(code: str | None = None, state: str | None = None, error
 @app.post("/auth/token", response_model=TokenPairResponse)
 async def auth_token(
     body: TokenExchangeRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
     store: SupabaseRevocationStore = Depends(_get_revocation_store),
 ) -> TokenPairResponse:
     """Real, live Gmail OAuth code exchange -- `QUORUM_DATA_CONTRACTS.md`
@@ -368,6 +380,13 @@ async def auth_token(
     and PKCE `code_verifier` together; this route then independently
     verifies the returned `id_token`'s real signature before trusting
     the identity inside it, and issues a real Quorum session on success.
+
+    Also real-provisions this identity (`DEC-110`) -- the JWT/refresh-
+    token layer keeps using Google's raw `sub` unchanged (no change to
+    the already-reviewed, CRITICAL-tier session-management system), but
+    every per-user domain table needs a real internal UUID mapped to
+    it, and this is the one real place in the whole system where a
+    genuinely new identity is first seen.
     """
     settings = get_settings()
     if not settings.google_oauth_client_id or not settings.google_oauth_client_secret:
@@ -399,6 +418,7 @@ async def auth_token(
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
     user_id = payload["sub"]
+    await get_or_create_user(pool, google_sub=user_id, email=payload.get("email"))
     access_token = create_access_token(user_id, settings.jwt_signing_key)
     refresh_token = await issue_refresh_token(user_id, store)
     return TokenPairResponse(access_token=access_token, refresh_token=refresh_token)

@@ -23,9 +23,19 @@ limitation, not a silent gap). No amount clustering, no
 interval-regularity scoring, no ML -- a person deciding whether to
 cancel something benefits from seeing every real, recurring payee, not
 a "subscription-like enough" pre-filter guessing at their intent.
+**RESOLVED, `DEC-110`:** this module's real query previously read
+every real `expenses` row regardless of owner, the same disclosed
+per-user-scoping limitation `trust_digest.py`/`tasks.py`/
+`career_pipeline.py` carried -- no real user-provisioning system
+existed anywhere in this backend. A real `users` table and
+`auth/user_provisioning.py` now close that gap;
+`fetch_detected_subscriptions()` below takes the real, resolved
+internal `user_id` and filters by it before ever handing rows to the
+pure `detect_subscriptions()` grouping logic.
 """
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -90,13 +100,17 @@ def detect_subscriptions(rows: list[tuple[str, float, datetime]]) -> list[Detect
     return results
 
 
-async def fetch_detected_subscriptions(pool: asyncpg.Pool) -> list[DetectedSubscription]:
-    """The real, live query backing `GET /finance/subscriptions` --
-    reads every real `expenses` row (all sources: `on_device`, `manual`,
+async def fetch_detected_subscriptions(pool: asyncpg.Pool, *, user_id: str) -> list[DetectedSubscription]:
+    """The real, live query backing `GET /finance/subscriptions`, real
+    per-user scoped as of `DEC-110` -- reads every real `expenses` row
+    belonging to this real user (all sources: `on_device`, `manual`,
     `extracted`, per the real schema's own `CHECK` constraint -- a
     recurring charge is real regardless of how it was captured) and
     hands them to the pure `detect_subscriptions()` above."""
-    rows = await pool.fetch("SELECT payee, amount, occurred_at FROM expenses ORDER BY occurred_at")
+    rows = await pool.fetch(
+        "SELECT payee, amount, occurred_at FROM expenses WHERE user_id = $1 ORDER BY occurred_at",
+        uuid.UUID(user_id),
+    )
     # asyncpg maps a real NUMERIC(10,2) column to Decimal by default (no
     # custom type codec registered in core/db.py) -- cast to float
     # explicitly, the same real correctness detail tasks.py's own

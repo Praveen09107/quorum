@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest_asyncio
 
+from quorum_backend.auth.user_provisioning import get_or_create_user
 from quorum_backend.core import db
 from quorum_backend.features.subscription_detective import (
     MIN_OCCURRENCES_TO_COUNT_AS_RECURRING,
@@ -103,6 +104,11 @@ def test_an_empty_real_input_produces_a_real_empty_list_never_a_crash():
 
 
 # --- Real, live database tests -------------------------------------------
+#
+# Real per-user scoping retrofit (DEC-110): fetch_detected_subscriptions()
+# now requires a real, provisioned internal user_id. The user_id fixture
+# below provisions one real, fresh test identity per test and cleans it
+# up afterward.
 
 
 @pytest_asyncio.fixture
@@ -112,14 +118,22 @@ async def pool():
     await real_pool.close()
 
 
-async def _insert_test_expense(pool, expense_id, *, payee, amount, occurred_at, user_id=None, source="manual"):
+@pytest_asyncio.fixture
+async def user_id(pool):
+    google_sub = f"test-finance-{uuid.uuid4()}"
+    real_user_id = await get_or_create_user(pool, google_sub=google_sub, email=None)
+    yield real_user_id
+    await pool.execute("DELETE FROM users WHERE google_sub = $1", google_sub)
+
+
+async def _insert_test_expense(pool, expense_id, *, payee, amount, occurred_at, user_id, source="manual"):
     await pool.execute(
         """
         INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source)
         VALUES ($1, $2, $3, $4, $5, $6)
         """,
         expense_id,
-        user_id or uuid.uuid4(),
+        uuid.UUID(user_id),
         payee,
         amount,
         occurred_at,
@@ -127,17 +141,25 @@ async def _insert_test_expense(pool, expense_id, *, payee, amount, occurred_at, 
     )
 
 
-async def test_fetch_detected_subscriptions_is_real_and_live_against_the_real_database(pool):
+async def test_fetch_detected_subscriptions_is_real_and_live_against_the_real_database(pool, user_id):
     # A real, deliberately obscure payee name -- can never collide with
     # real production data.
+    #
+    # A real, disclosed correction made while retrofitting this test for
+    # DEC-110: the original version's _insert_test_expense defaulted to
+    # a fresh uuid.uuid4() PER CALL when no user_id was passed -- meaning
+    # the two "same recurring charge" rows below were silently inserted
+    # under two DIFFERENT random users the whole time. Harmless before
+    # real per-user filtering existed; would have silently broken this
+    # test once it did. Fixed to use one real, consistent user_id.
     payee = f"Real Test Subscription Vendor {uuid.uuid4()}"
     ids = [uuid.uuid4(), uuid.uuid4()]
 
     try:
-        await _insert_test_expense(pool, ids[0], payee=payee, amount=299.00, occurred_at=_at(1))
-        await _insert_test_expense(pool, ids[1], payee=payee, amount=299.00, occurred_at=_at(31))
+        await _insert_test_expense(pool, ids[0], payee=payee, amount=299.00, occurred_at=_at(1), user_id=user_id)
+        await _insert_test_expense(pool, ids[1], payee=payee, amount=299.00, occurred_at=_at(31), user_id=user_id)
 
-        results = await fetch_detected_subscriptions(pool)
+        results = await fetch_detected_subscriptions(pool, user_id=user_id)
         match = next(r for r in results if r.payee == payee)
 
         assert match.occurrences == 2
@@ -145,3 +167,24 @@ async def test_fetch_detected_subscriptions_is_real_and_live_against_the_real_da
         assert match.average_interval_days == 30.0
     finally:
         await pool.execute("DELETE FROM expenses WHERE expense_id = ANY($1::uuid[])", ids)
+
+
+async def test_fetch_detected_subscriptions_never_returns_another_real_users_rows(pool, user_id):
+    other_google_sub = f"test-finance-other-{uuid.uuid4()}"
+    other_user_id = await get_or_create_user(pool, google_sub=other_google_sub, email=None)
+    payee = f"Another real user's real recurring vendor {uuid.uuid4()}"
+    ids = [uuid.uuid4(), uuid.uuid4()]
+
+    try:
+        await _insert_test_expense(
+            pool, ids[0], payee=payee, amount=50.00, occurred_at=_at(1), user_id=other_user_id
+        )
+        await _insert_test_expense(
+            pool, ids[1], payee=payee, amount=50.00, occurred_at=_at(31), user_id=other_user_id
+        )
+
+        results = await fetch_detected_subscriptions(pool, user_id=user_id)
+        assert all(r.payee != payee for r in results)
+    finally:
+        await pool.execute("DELETE FROM expenses WHERE expense_id = ANY($1::uuid[])", ids)
+        await pool.execute("DELETE FROM users WHERE google_sub = $1", other_google_sub)

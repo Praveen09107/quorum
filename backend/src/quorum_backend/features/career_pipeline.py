@@ -9,12 +9,13 @@ directly: zero references to `user_id` or any SQL anywhere in that
 file), the same "the Gate/agents never touch the database directly"
 separation `trust_digest.py`/`tasks.py` already established.
 
-Same real, disclosed limitation as `trust_digest.py`/`tasks.py`, not a
-new gap: `applications.user_id` is a real, non-null `UUID` column, but
-no real user-provisioning system anywhere in this backend maps a
-Google `sub` claim onto it (no `users` table exists in the real
-migration) -- this route is a real "you must be signed in" gate, not
-yet a per-user data filter.
+**RESOLVED, `DEC-110`:** this module previously carried the same
+disclosed per-user-scoping limitation as `trust_digest.py`/`tasks.py`
+-- `applications.user_id` is real, but no real user-provisioning
+system existed anywhere in this backend to map a real Google `sub`
+onto it. A real `users` table and `auth/user_provisioning.py` now
+close that gap; `fetch_career_pipeline()` below takes the real,
+resolved internal `user_id` and filters by it directly.
 
 A real, deliberate CONTRAST with `tasks.py`, confirmed directly against
 the real schema before writing this file, not assumed by habit:
@@ -28,6 +29,7 @@ handling on the client side (`statusLabel()`'s de-snaking fallback,
 """
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -61,18 +63,21 @@ def _row_to_application(row: asyncpg.Record) -> CareerApplicationRecord:
     )
 
 
-async def fetch_career_pipeline(pool: asyncpg.Pool) -> list[CareerApplicationRecord]:
-    """The real, live query backing `GET /career_pipeline`. Ordered by
-    `created_at` for a real, deterministic response -- the mobile
-    client's own `groupByStatus()`/`orderedStatusKeys()`
-    (`career_pipeline_logic.dart`) determine real display order and
-    grouping, so this is a reasoned default (insertion order), not a
-    claim about display order."""
+async def fetch_career_pipeline(pool: asyncpg.Pool, *, user_id: str) -> list[CareerApplicationRecord]:
+    """The real, live query backing `GET /career_pipeline`, real
+    per-user scoped as of `DEC-110`. Ordered by `created_at` for a
+    real, deterministic response -- the mobile client's own
+    `groupByStatus()`/`orderedStatusKeys()` (`career_pipeline_logic.
+    dart`) determine real display order and grouping, so this is a
+    reasoned default (insertion order), not a claim about display
+    order."""
     rows = await pool.fetch(
         """
         SELECT application_id, company, role, status, deadline
         FROM applications
+        WHERE user_id = $1
         ORDER BY created_at
-        """
+        """,
+        uuid.UUID(user_id),
     )
     return [_row_to_application(row) for row in rows]
