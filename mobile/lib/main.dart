@@ -113,10 +113,15 @@ class _QuorumAppState extends State<QuorumApp> {
   /// `LoginScreen`: `you_screen.dart`'s own real confirmation message
   /// (the actual `DeletionResult` counts) needs to stay on screen long
   /// enough for a person to read it, not be torn down the instant
-  /// deletion succeeds. Local tokens are cleared immediately regardless
-  /// -- this device must never keep holding onto credentials for a
-  /// session that was just permanently, server-side revoked as part of
-  /// the same real deletion call.
+  /// deletion succeeds. Local tokens are cleared only after the real
+  /// server call actually succeeds -- correcting an earlier, inaccurate
+  /// version of this comment that claimed tokens were cleared
+  /// "immediately regardless" of outcome. That was never what the code
+  /// below does, and it must never be "fixed" to match: on a thrown
+  /// `ApiException` this method never reaches the clear line, so a
+  /// failed deletion attempt correctly leaves the device's session
+  /// intact rather than stranding a user who was never actually
+  /// deleted server-side.
   Future<DeletionResultData> _handleAccountDeletion() async {
     final result = await createAccountDeletionConfirmer(
       getAccessToken: _authController.getValidAccessToken,

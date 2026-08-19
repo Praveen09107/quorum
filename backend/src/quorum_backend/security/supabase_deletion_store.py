@@ -41,6 +41,24 @@ here (confirmed directly against `auth/google_oauth.py`'s own
 docstring), so there is nothing real to revoke via a Google API call.
 Both real, disclosed gaps, not gaps this class silently hides behind a
 plausible-looking nonzero number.
+
+**A real, disclosed atomicity gap, found by CRITICAL-tier review
+(`DEC-113`), not silently left unexamined:** `purge_postgres_rows()`'s
+own transaction does NOT extend to `purge_vector_embeddings()` --
+`delete_account()` (`security/account_deletion.py`) calls these as two
+separate, independently-awaited store methods, each opening its own
+connection. In the narrow case where `purge_postgres_rows()` succeeds
+(the real `users` row is gone) but `purge_vector_embeddings()` then
+fails (a dropped connection, a transient DB error), a retry of
+`DELETE /account` 404s immediately -- `_resolve_internal_user_id_or_404`
+can no longer find the now-deleted `users` row -- permanently orphaning
+that user's `note_embeddings`. Deliberately not fixed by forcing the two
+methods into one shared transaction here: both are independently
+callable and independently tested (`test_supabase_deletion_store.py`)
+by design, matching `DeletionResult`'s own real four-store shape: this
+class's true minimum footprint. Tracked as a real, open, low-probability
+follow-up in `STATUS_INDEX.md` rather than an unexamined risk or an
+architecture change beyond what this session's real scope called for.
 """
 from __future__ import annotations
 
