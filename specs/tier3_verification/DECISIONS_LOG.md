@@ -2241,4 +2241,22 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
-*Next entry: DEC-108*
+## DEC-108: Track C item 3 — the real `GET /career_pipeline` endpoint, and the first Part C-2 item that unlocks a new screen outright
+
+`QUORUM_DATA_CONTRACTS.md` §5.10 (`GET /career_pipeline`) specified, not implemented -- a real, already-migrated `applications` table, and a real, already-tested mobile contract (`career_pipeline_logic.dart`) both already existed; only the backend query and the thin REST/mobile-API layers were missing, the same shape of gap as `/tasks`.
+
+**A real, disclosed scope check done before picking this item, not assumed:** Finance (`GET /finance/subscriptions`, §5.12) was the other candidate considered this round. Checked first, per this project's own spec-reading discipline: §5.12 wraps `detect_subscriptions()`, described in the spec as "real and tested since well before mobile work began" -- confirmed directly by search that no such function, nor `subscription_detective.py`, exists anywhere in this backend. This is the same stale-narrative pattern `STATUS_INDEX.md` already discloses for the `backend/features/*` table generally; Finance genuinely needs new detection logic built from scratch, not a thin wrapper, so it was set aside as a larger, separate item rather than started under a false "just wire it up" assumption. Career Pipeline was picked instead: fully specified, backed by a real table only, no missing logic.
+
+**Built, backend:** `features/career_pipeline.py` (new) -- `fetch_career_pipeline(pool)`, mirrors `tasks.py`'s real query pattern closely, including the same real `"Z"`-suffix deadline formatting. **The one real, deliberate contrast with `tasks.py`, confirmed directly against the real schema before writing a line of this file:** `applications.status` has no database `CHECK` constraint (unlike `tasks.status`) -- a genuinely open vocabulary. This module does zero status validation, passing the raw column value through unchanged, matching `career_pipeline_logic.dart`'s own already-tested defensive client-side handling (`statusLabel()`'s de-snaking fallback). `main.py` gains `GET /career_pipeline` (real Bearer-auth gate, same pattern as `/tasks`/`/trust_digest`, same disclosed per-user-scoping limitation -- `applications.user_id` is real but unmapped to any real identity, for the same reason as the other two). 7 new real tests: 4 live-DB tests in `test_career_pipeline_feature.py` (insert/query/delete, including a real proof a genuinely made-up status value round-trips unchanged -- the open-vocabulary counterpart to `tasks.py`'s closed-set proof), 3 in `test_main.py` (missing-auth 401, a real end-to-end round trip with a novel open-vocabulary status, a real 503-not-a-crash proof).
+
+**Built, mobile:** `api/career_pipeline_api.dart` (new) -- mirrors `tasks_api.dart`'s pattern, but `status` is a plain `String`, never parsed through a closed-set enum (the deliberate mobile-side mirror of the backend's own open-vocabulary handling). `main.dart` now constructs and wires `fetchCareerApplications` into `MainShell`.
+
+**The real, disclosed reason this item was picked over further Today-tab-gated work: it's the first Part C-2 item, besides Trust, that makes something genuinely new reachable in the real running app.** Confirmed directly against `you_screen.dart` before starting: the You tab's "More" section conditionally shows each link only when its own fetcher is non-null (`if (widget.fetchCareerApplications != null) ...`), but the You tab itself always renders regardless -- unlike Today, which the whole tab gates behind `fetchToday`. Wiring `fetchCareerApplications` therefore genuinely, immediately adds a real, reachable path: You → More → Career Pipeline, live-verified via the real merged test suite (`main_shell_navigation_test.dart`'s existing "You tab genuinely reaches Career Pipeline" tests, unmodified, now exercising real wiring instead of a test-only fetcher).
+
+**Verified live:** `ruff check backend` → clean. `pytest backend/tests -q` → **230 passed** (223 prior `DEC-107` + 7 new). `flutter analyze` → `No issues found!`. `flutter test` → **280 passed** (269 prior `DEC-107` + 11 new `career_pipeline_api_test.dart`).
+
+**Affects:** `backend/src/quorum_backend/features/career_pipeline.py` (new), `backend/src/quorum_backend/main.py` (real `GET /career_pipeline`), `backend/tests/test_career_pipeline_feature.py` (new), `backend/tests/test_main.py` (+3), `mobile/lib/api/career_pipeline_api.dart` (new), `mobile/test/career_pipeline_api_test.dart` (new), `mobile/lib/main.dart` (wires `fetchCareerApplications`), `STATUS_INDEX.md`, this log.
+
+---
+
+*Next entry: DEC-109*

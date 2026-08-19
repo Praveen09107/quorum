@@ -51,6 +51,7 @@ from quorum_backend.auth.refresh_token import (
 from quorum_backend.auth.revocation_store import SupabaseRevocationStore
 from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
+from quorum_backend.features.career_pipeline import fetch_career_pipeline
 from quorum_backend.features.self_test_harness import ScenarioResult, run_self_test, summarize
 from quorum_backend.features.tasks import fetch_tasks
 from quorum_backend.features.trust_digest import fetch_trust_digest
@@ -245,6 +246,41 @@ async def tasks(
             "estimated_hours": record.estimated_hours,
             "deadline": record.deadline,
             "status": record.status,
+        }
+        for record in records
+    ]
+
+
+@app.get("/career_pipeline")
+async def career_pipeline(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    _user_id: str = Depends(_require_auth),
+) -> list[dict]:
+    """Real, live -- queries the real `applications` table via
+    `fetch_career_pipeline()`, never mocked or pre-computed data.
+    Response shape matches `QUORUM_DATA_CONTRACTS.md` §5.10 exactly.
+
+    A real, deliberate CONTRAST with `/tasks`: `applications.status` has
+    no database `CHECK` constraint (confirmed against the real
+    migration) -- the real vocabulary is genuinely open, so this route
+    does no status validation, passing the raw column value through
+    unchanged. The mobile client's own `career_pipeline_logic.dart`
+    already handles this defensively (`statusLabel()`'s de-snaking
+    fallback for an unrecognized value).
+
+    Requires a real, valid access token (`_require_auth`), the same
+    real "you must be signed in" gate and the same disclosed
+    per-user-scoping limitation as `/trust_digest`/`/tasks` -- see
+    `features/career_pipeline.py`'s own docstring for the full account.
+    """
+    records = await fetch_career_pipeline(pool)
+    return [
+        {
+            "application_id": record.application_id,
+            "company": record.company,
+            "role": record.role,
+            "status": record.status,
+            "deadline": record.deadline,
         }
         for record in records
     ]

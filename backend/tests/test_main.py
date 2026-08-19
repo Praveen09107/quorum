@@ -286,6 +286,64 @@ def test_tasks_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
             app.state.db_pool = real_pool
 
 
+def test_career_pipeline_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.get("/career_pipeline")
+    assert response.status_code == 401
+
+
+async def test_career_pipeline_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool):
+    """Real, end-to-end: inserts a real row into the real, live
+    `applications` table, confirms `GET /career_pipeline` genuinely
+    round-trips through it with a real, valid access token, then cleans
+    up. Includes a genuinely open-vocabulary status value -- proving
+    this route never validates or rejects it, the deliberate opposite
+    of `/tasks`'s closed-set contract."""
+    application_id = uuid.uuid4()
+    await pool.execute(
+        """
+        INSERT INTO applications (application_id, user_id, company, role, status, deadline)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        application_id,
+        uuid.uuid4(),
+        "A real end-to-end test company",
+        "Backend Engineer",
+        "a_genuinely_novel_open_status",
+        None,
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/career_pipeline", headers=_auth_header())
+
+        assert response.status_code == 200
+        body = response.json()
+        assert isinstance(body, list)
+
+        match = next(a for a in body if a["application_id"] == str(application_id))
+        assert set(match.keys()) == {"application_id", "company", "role", "status", "deadline"}
+        assert match["company"] == "A real end-to-end test company"
+        assert match["role"] == "Backend Engineer"
+        assert match["status"] == "a_genuinely_novel_open_status"
+        assert match["deadline"] is None
+    finally:
+        await pool.execute("DELETE FROM applications WHERE application_id = $1", application_id)
+
+
+def test_career_pipeline_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
+    with TestClient(app) as client:
+        real_pool = app.state.db_pool
+        app.state.db_pool = None
+        try:
+            career_response = client.get("/career_pipeline", headers=_auth_header())
+            health_response = client.get("/health")
+            assert career_response.status_code == 503
+            assert health_response.status_code == 200
+        finally:
+            app.state.db_pool = real_pool
+
+
 def test_auth_callback_bridges_a_real_google_redirect_to_the_real_mobile_scheme():
     # The real, necessary bridge (DEC-105): Google's own current rules
     # require a real https:// redirect for a "Web application"-type
