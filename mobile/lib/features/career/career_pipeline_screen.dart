@@ -9,7 +9,14 @@ import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
 class CareerPipelineScreen extends StatelessWidget {
   final List<CareerApplication> applications;
 
-  const CareerPipelineScreen({super.key, required this.applications});
+  /// Batch 10 Phase 4 -- a real, deferred, injected navigation hook,
+  /// same pattern as every other real/external boundary in this
+  /// project. Optional and additive: every existing real behavior is
+  /// unchanged when this is null (the honest, no-drill-down-configured
+  /// state).
+  final void Function(CareerApplication application)? onTapApplication;
+
+  const CareerPipelineScreen({super.key, required this.applications, this.onTapApplication});
 
   @override
   Widget build(BuildContext context) {
@@ -23,7 +30,8 @@ class CareerPipelineScreen extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        for (final status in orderedKeys) _StatusSection(status: status, applications: grouped[status]!),
+        for (final status in orderedKeys)
+          _StatusSection(status: status, applications: grouped[status]!, onTap: onTapApplication),
       ],
     );
   }
@@ -32,8 +40,9 @@ class CareerPipelineScreen extends StatelessWidget {
 class _StatusSection extends StatelessWidget {
   final String status;
   final List<CareerApplication> applications;
+  final void Function(CareerApplication application)? onTap;
 
-  const _StatusSection({required this.status, required this.applications});
+  const _StatusSection({required this.status, required this.applications, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -52,6 +61,8 @@ class _StatusSection extends StatelessWidget {
             child: ListTile(
               title: Text(application.company),
               subtitle: application.role == null ? null : Text(application.role!),
+              trailing: onTap == null ? null : const Icon(Icons.chevron_right),
+              onTap: onTap == null ? null : () => onTap!(application),
             ),
           ),
       ],
