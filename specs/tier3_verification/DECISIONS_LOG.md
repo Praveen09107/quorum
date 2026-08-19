@@ -2375,4 +2375,28 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
-*Next entry: DEC-114*
+## DEC-114: Security remediation — real `JWT_SIGNING_KEY` rotated off the known public default, live deployment rebuilt and redeployed to catch up to `DEC-113`
+
+**Two real, independently-found gaps this entry closes, neither previously tracked as its own open item:**
+
+1. **The live, deployed Cloud Run service was nine real sessions stale.** Confirmed directly, not assumed: `GET /tasks` and `GET /trust` against the actual public URL both returned `404` before this entry — the last deploy (`quorum-backend-00003-7lb`) was `DEC-102`'s image, and everything real and tested since (`DEC-106` through `DEC-113`: Trust, Tasks, Career Pipeline, Finance/Subscriptions, real user provisioning, `DELETE /account`) had never actually been rebuilt or redeployed. A real device pointed at the real production URL could not have reached five of this project's real, tested screens.
+2. **`JWT_SIGNING_KEY` on the live deployment was genuinely still the known, public default** (`"change-me-in-real-deployment"`, visible directly in this repository's own public `main.py` and `.env.example`) — `DEC-098`'s own real, live confirmation that the insecure-default warning fired on that deployment was never followed by an entry closing it. Since `DEC-102` made this service `--allow-unauthenticated` at the network layer, the JWT check was the entire real security boundary — anyone reading this project's own public GitHub repository, independent of anything Claude-session-related, already knew the default value.
+
+**Real, live remediation, not a planned-but-undone fix:**
+- Rebuilt the backend image from current `main` source via `gcloud builds submit` (`quorum-backend:dec113-20260820`), confirmed `SUCCESS`.
+- Generated a real, fresh, cryptographically random `JWT_SIGNING_KEY` (`secrets.token_urlsafe(48)`, Python) directly inside the `gcloud run deploy` command's own subshell — the value was never printed to, or seen by, this session, the same "never reproduce a secret verbatim" discipline `DEC-100`'s own disclosed lapse established going forward. Deployed via `--update-env-vars`, touching only this one variable — every other real credential on the service (`SUPABASE_SERVICE_KEY`, `UPSTASH_REDIS_REST_TOKEN`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `TAVILY_API_KEY`, `GOOGLE_OAUTH_CLIENT_SECRET`, `LANGFUSE_SECRET_KEY`) was left untouched by this action, deliberately, since none of them are rotatable via any CLI or API available in this environment (no `supabase`/`upstash` CLI installed, no browser automation for their dashboards or Google Cloud Console's OAuth-credentials UI) — genuinely open, not silently treated as handled; see the standing open item this entry adds.
+- New revision `quorum-backend-00004-n98`, serving 100% of traffic, `--concurrency=1 --min-instances=0 --max-instances=2 --allow-unauthenticated` unchanged.
+
+**Both fixes proven live, not assumed from the deploy succeeding alone:**
+- Staleness: `GET /tasks`, `GET /trust`, `GET /career_pipeline`, `GET /finance/subscriptions`, `DELETE /account` all now return real `401`s (route exists, correctly demands auth) against the actual public URL, not `404`s. `GET /health` unaffected (`200`).
+- The key rotation: a real token was forged locally, signed with the old, known-public default value via this repository's own real `create_access_token()`, and sent to the live `/trust` endpoint — genuinely rejected (`401 Access token is invalid`), proof the deployed service is no longer verifying against that default. (One transient `502` on the very first request immediately after deploy, consistent with a genuine cold start on a fresh revision at `--min-instances=0`; two immediate retries both returned the correct `401`, not repeated — not a real regression.)
+
+**A real, disclosed, standing gap this entry does NOT close:** the other credentials `DEC-100` printed in plaintext (Supabase service key, Upstash REST token, Gemini/Groq/Tavily API keys, the Google OAuth client secret, Langfuse keys) remain unrotated — genuinely open, tracked in `STATUS_INDEX.md`, requiring manual action in each provider's own dashboard/console, not something this environment can do programmatically. No evidence exists, in this log or otherwise, that any of them have been misused; rotating them remains prudent hygiene, not a confirmed incident response.
+
+**Verified live:** `curl` against the real production URL, both before and after, per above — not a local or mocked check. `flutter analyze`/`pytest` were not re-run as part of this entry, since no application code changed (deployment/credential action only); the 271/297 counts from `DEC-113` stand unchanged.
+
+**Affects:** the live Cloud Run deployment (new revision, new image tag, rotated `JWT_SIGNING_KEY`), `STATUS_INDEX.md`, this log.
+
+---
+
+*Next entry: DEC-115*
