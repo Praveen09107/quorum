@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from quorum_backend.auth.access_token import create_access_token
 from quorum_backend.auth.refresh_token import TokenRevoked, issue_refresh_token, rotate_refresh_token
 from quorum_backend.auth.revocation_store import SupabaseRevocationStore
+from quorum_backend.auth.user_provisioning import get_or_create_user
 from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
 from quorum_backend.main import app
@@ -26,10 +27,38 @@ def _auth_header() -> dict[str, str]:
     create_access_token() -- bypasses the real Google login flow
     (which needs a live browser this environment doesn't have), while
     still exercising the real signing key and the real decode path on
-    the receiving end."""
+    the receiving end. Deliberately NOT real-provisioned -- correct for
+    tests that only need a syntactically valid session (missing-auth,
+    malformed-header, 503 cases). Any test exercising a real per-user
+    query needs `_provisioned_auth_header()` below instead, or this
+    real identity will correctly 404 (DEC-110)."""
     settings = get_settings()
     token = create_access_token("test-user-" + str(uuid.uuid4()), settings.jwt_signing_key)
     return {"Authorization": f"Bearer {token}"}
+
+
+async def _provisioned_auth_header(pool, provisioned_users: list[str]) -> tuple[dict[str, str], str]:
+    """Real end-to-end: provisions a real `users` row for a fresh, fake
+    Google identity (mirroring what `/auth/token` does for a real
+    sign-in), then mints a real access token for that same identity.
+    Returns both the header and the real internal UUID, so a test can
+    insert domain rows scoped to the exact same real user this token
+    resolves to (DEC-110).
+
+    A real, disclosed correction, found by fresh-context review before
+    merge: the original version of this helper provisioned a real row
+    and never cleaned it up -- confirmed live, this left 10 real
+    orphaned rows in the live `users` table from this session's own
+    test runs alone. `google_sub` is appended to `provisioned_users`
+    (the `provisioned_users` fixture below) so every real row this
+    helper creates is genuinely deleted on teardown, even if the test
+    itself fails midway."""
+    settings = get_settings()
+    google_sub = f"test-user-{uuid.uuid4()}"
+    internal_user_id = await get_or_create_user(pool, google_sub=google_sub, email=None)
+    provisioned_users.append(google_sub)
+    token = create_access_token(google_sub, settings.jwt_signing_key)
+    return {"Authorization": f"Bearer {token}"}, internal_user_id
 
 
 @pytest_asyncio.fixture
@@ -37,6 +66,20 @@ async def pool():
     real_pool = await db.create_pool()
     yield real_pool
     await real_pool.close()
+
+
+@pytest_asyncio.fixture
+async def provisioned_users(pool):
+    """Real, automatic cleanup for every real `users` row
+    `_provisioned_auth_header()` creates during a test -- collects each
+    real `google_sub` as it's provisioned, deletes them all in one real
+    pass on teardown, the same `finally`-guaranteed cleanup discipline
+    every other real fixture in this project's test suite already
+    holds itself to."""
+    created: list[str] = []
+    yield created
+    if created:
+        await pool.execute("DELETE FROM users WHERE google_sub = ANY($1::text[])", created)
 
 
 def test_health_endpoint_still_works():
@@ -230,14 +273,16 @@ def test_tasks_requires_real_auth_missing_header_is_401():
     assert response.status_code == 401
 
 
-async def test_tasks_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool):
-    """Real, end-to-end: inserts a real row into the real, live `tasks`
-    table, confirms `GET /tasks` genuinely round-trips through it with a
-    real, valid access token, then cleans up. Asserts shape and the
-    specific inserted row's own values, never a total count -- real
-    production rows may already exist, and asserting a count would be
-    the exact stale-restated-number drift pattern CLAUDE.md warns
-    against."""
+async def test_tasks_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
+    """Real, end-to-end: real-provisions a real user (DEC-110), inserts
+    a real row scoped to that exact user into the real, live `tasks`
+    table, confirms `GET /tasks` genuinely round-trips through it with
+    a real, valid access token for that same real identity, then cleans
+    up. Asserts shape and the specific inserted row's own values, never
+    a total count -- real production rows may already exist, and
+    asserting a count would be the exact stale-restated-number drift
+    pattern CLAUDE.md warns against."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
     task_id = uuid.uuid4()
     await pool.execute(
         """
@@ -245,7 +290,7 @@ async def test_tasks_endpoint_is_real_and_live_not_mocked_with_a_real_valid_toke
         VALUES ($1, $2, $3, $4, $5, $6)
         """,
         task_id,
-        uuid.uuid4(),
+        uuid.UUID(internal_user_id),
         "A real end-to-end test task",
         3.5,
         None,
@@ -254,7 +299,7 @@ async def test_tasks_endpoint_is_real_and_live_not_mocked_with_a_real_valid_toke
 
     try:
         with TestClient(app) as client:
-            response = client.get("/tasks", headers=_auth_header())
+            response = client.get("/tasks", headers=headers)
 
         assert response.status_code == 200
         body = response.json()
@@ -268,6 +313,45 @@ async def test_tasks_endpoint_is_real_and_live_not_mocked_with_a_real_valid_toke
         assert match["status"] == "open"
     finally:
         await pool.execute("DELETE FROM tasks WHERE task_id = $1", task_id)
+
+
+async def test_tasks_endpoint_never_leaks_another_real_users_rows(pool, provisioned_users):
+    """The real, load-bearing correctness property DEC-110 exists to
+    guarantee: two distinct real users, two distinct real tasks -- a
+    request as user A must see only user A's task, never user B's."""
+    headers_a, user_a = await _provisioned_auth_header(pool, provisioned_users)
+    _headers_b, user_b = await _provisioned_auth_header(pool, provisioned_users)
+    task_a, task_b = uuid.uuid4(), uuid.uuid4()
+
+    await pool.execute(
+        "INSERT INTO tasks (task_id, user_id, title, estimated_hours, deadline, status) VALUES ($1, $2, $3, $4, $5, $6)",
+        task_a,
+        uuid.UUID(user_a),
+        "User A's real, private task",
+        1.0,
+        None,
+        "open",
+    )
+    await pool.execute(
+        "INSERT INTO tasks (task_id, user_id, title, estimated_hours, deadline, status) VALUES ($1, $2, $3, $4, $5, $6)",
+        task_b,
+        uuid.UUID(user_b),
+        "User B's real, private task",
+        1.0,
+        None,
+        "open",
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/tasks", headers=headers_a)
+
+        body = response.json()
+        ids_seen = {t["task_id"] for t in body}
+        assert str(task_a) in ids_seen
+        assert str(task_b) not in ids_seen
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE task_id = ANY($1::uuid[])", [task_a, task_b])
 
 
 def test_tasks_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
@@ -292,13 +376,16 @@ def test_career_pipeline_requires_real_auth_missing_header_is_401():
     assert response.status_code == 401
 
 
-async def test_career_pipeline_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool):
-    """Real, end-to-end: inserts a real row into the real, live
+async def test_career_pipeline_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
+    """Real, end-to-end: real-provisions a real user (DEC-110), inserts
+    a real row scoped to that exact user into the real, live
     `applications` table, confirms `GET /career_pipeline` genuinely
-    round-trips through it with a real, valid access token, then cleans
-    up. Includes a genuinely open-vocabulary status value -- proving
-    this route never validates or rejects it, the deliberate opposite
-    of `/tasks`'s closed-set contract."""
+    round-trips through it with a real, valid access token for that
+    same real identity, then cleans up. Includes a genuinely
+    open-vocabulary status value -- proving this route never validates
+    or rejects it, the deliberate opposite of `/tasks`'s closed-set
+    contract."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
     application_id = uuid.uuid4()
     await pool.execute(
         """
@@ -306,7 +393,7 @@ async def test_career_pipeline_endpoint_is_real_and_live_not_mocked_with_a_real_
         VALUES ($1, $2, $3, $4, $5, $6)
         """,
         application_id,
-        uuid.uuid4(),
+        uuid.UUID(internal_user_id),
         "A real end-to-end test company",
         "Backend Engineer",
         "a_genuinely_novel_open_status",
@@ -315,7 +402,7 @@ async def test_career_pipeline_endpoint_is_real_and_live_not_mocked_with_a_real_
 
     try:
         with TestClient(app) as client:
-            response = client.get("/career_pipeline", headers=_auth_header())
+            response = client.get("/career_pipeline", headers=headers)
 
         assert response.status_code == 200
         body = response.json()
@@ -329,6 +416,46 @@ async def test_career_pipeline_endpoint_is_real_and_live_not_mocked_with_a_real_
         assert match["deadline"] is None
     finally:
         await pool.execute("DELETE FROM applications WHERE application_id = $1", application_id)
+
+
+async def test_career_pipeline_endpoint_never_leaks_another_real_users_rows(pool, provisioned_users):
+    """The real, load-bearing correctness property DEC-110 exists to
+    guarantee, proven here for the genuinely open-vocabulary status
+    field too: two distinct real users, two distinct real applications
+    -- a request as user A must see only user A's application."""
+    headers_a, user_a = await _provisioned_auth_header(pool, provisioned_users)
+    _headers_b, user_b = await _provisioned_auth_header(pool, provisioned_users)
+    app_a, app_b = uuid.uuid4(), uuid.uuid4()
+
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company, role, status, deadline) VALUES ($1, $2, $3, $4, $5, $6)",
+        app_a,
+        uuid.UUID(user_a),
+        "User A's real, private company",
+        None,
+        "applied",
+        None,
+    )
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company, role, status, deadline) VALUES ($1, $2, $3, $4, $5, $6)",
+        app_b,
+        uuid.UUID(user_b),
+        "User B's real, private company",
+        None,
+        "applied",
+        None,
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/career_pipeline", headers=headers_a)
+
+        body = response.json()
+        ids_seen = {a["application_id"] for a in body}
+        assert str(app_a) in ids_seen
+        assert str(app_b) not in ids_seen
+    finally:
+        await pool.execute("DELETE FROM applications WHERE application_id = ANY($1::uuid[])", [app_a, app_b])
 
 
 def test_career_pipeline_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
@@ -350,11 +477,23 @@ def test_finance_subscriptions_requires_real_auth_missing_header_is_401():
     assert response.status_code == 401
 
 
-async def test_finance_subscriptions_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool):
-    """Real, end-to-end: inserts two real, recurring charges to the same
-    real payee into the real, live `expenses` table, confirms
-    `GET /finance/subscriptions` genuinely detects and round-trips the
-    real pattern with a real, valid access token, then cleans up."""
+async def test_finance_subscriptions_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
+    """Real, end-to-end: real-provisions a real user (DEC-110), inserts
+    two real, recurring charges to the same real payee, both scoped to
+    that same exact real user, into the real, live `expenses` table,
+    confirms `GET /finance/subscriptions` genuinely detects and
+    round-trips the real pattern with a real, valid access token for
+    that same real identity, then cleans up.
+
+    A real, disclosed correction made while retrofitting this test for
+    DEC-110: the original version inserted the two charges under two
+    DIFFERENT random user_ids -- harmless before real per-user
+    filtering existed, but would have silently broken this test once it
+    did (two single-occurrence charges for two different users, never
+    detected as one real recurring payee). Fixed to use one real,
+    consistent user_id, matching what a real recurring charge actually
+    looks like."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
     payee = f"Real end-to-end test vendor {uuid.uuid4()}"
     ids = [uuid.uuid4(), uuid.uuid4()]
 
@@ -364,7 +503,7 @@ async def test_finance_subscriptions_endpoint_is_real_and_live_not_mocked_with_a
     await pool.execute(
         "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, $5, $6)",
         ids[0],
-        uuid.uuid4(),
+        uuid.UUID(internal_user_id),
         payee,
         299.00,
         first,
@@ -373,7 +512,7 @@ async def test_finance_subscriptions_endpoint_is_real_and_live_not_mocked_with_a
     await pool.execute(
         "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, $5, $6)",
         ids[1],
-        uuid.uuid4(),
+        uuid.UUID(internal_user_id),
         payee,
         299.00,
         second,
@@ -382,7 +521,7 @@ async def test_finance_subscriptions_endpoint_is_real_and_live_not_mocked_with_a
 
     try:
         with TestClient(app) as client:
-            response = client.get("/finance/subscriptions", headers=_auth_header())
+            response = client.get("/finance/subscriptions", headers=headers)
 
         assert response.status_code == 200
         body = response.json()
@@ -395,6 +534,50 @@ async def test_finance_subscriptions_endpoint_is_real_and_live_not_mocked_with_a
         assert match["average_interval_days"] == 30.0
     finally:
         await pool.execute("DELETE FROM expenses WHERE expense_id = ANY($1::uuid[])", ids)
+
+
+async def test_finance_subscriptions_endpoint_never_leaks_another_real_users_rows(pool, provisioned_users):
+    """The real, load-bearing correctness property DEC-110 exists to
+    guarantee: two distinct real users, each with their own real
+    recurring charge to the SAME real payee name -- a request as user A
+    must only ever see user A's own real pattern, never user B's."""
+    headers_a, user_a = await _provisioned_auth_header(pool, provisioned_users)
+    _headers_b, user_b = await _provisioned_auth_header(pool, provisioned_users)
+    payee = f"Shared real payee name {uuid.uuid4()}"
+    ids_a = [uuid.uuid4(), uuid.uuid4()]
+    ids_b = [uuid.uuid4(), uuid.uuid4()]
+    first = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    second = datetime(2026, 1, 31, 12, 0, tzinfo=timezone.utc)
+
+    for expense_id, occurred_at, user in [
+        (ids_a[0], first, user_a),
+        (ids_a[1], second, user_a),
+        (ids_b[0], first, user_b),
+        (ids_b[1], second, user_b),
+    ]:
+        await pool.execute(
+            "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, $5, $6)",
+            expense_id,
+            uuid.UUID(user),
+            payee,
+            50.00,
+            occurred_at,
+            "manual",
+        )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/finance/subscriptions", headers=headers_a)
+
+        body = response.json()
+        matches = [s for s in body if s["payee"] == payee]
+        # Exactly one real entry for this payee, from user A's own two
+        # charges -- never user B's, and never merged into a false
+        # occurrences=4 across both real users.
+        assert len(matches) == 1
+        assert matches[0]["occurrences"] == 2
+    finally:
+        await pool.execute("DELETE FROM expenses WHERE expense_id = ANY($1::uuid[])", ids_a + ids_b)
 
 
 def test_finance_subscriptions_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
