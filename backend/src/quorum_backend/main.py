@@ -51,6 +51,7 @@ from quorum_backend.auth.refresh_token import (
 from quorum_backend.auth.revocation_store import SupabaseRevocationStore
 from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
+from quorum_backend.features.self_test_harness import ScenarioResult, run_self_test, summarize
 from quorum_backend.features.trust_digest import fetch_trust_digest
 
 logger = logging.getLogger("quorum_backend")
@@ -153,6 +154,41 @@ class TokenPairResponse(BaseModel):
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _serialize_scenario_result(result: ScenarioResult) -> dict:
+    # Deliberately excludes the real `verdict` field (a full GateVerdict)
+    # -- QUORUM_DATA_CONTRACTS.md §5.14's own example shows exactly four
+    # fields per scenario, never the full verdict. Serializing it would
+    # be extra, unspecified surface no client here asks for.
+    return {
+        "scenario_id": result.scenario_id,
+        "expected": result.expected,
+        "actual": result.actual,
+        "passed": result.passed,
+    }
+
+
+@app.get("/trust")
+async def trust(
+    _user_id: str = Depends(_require_auth),
+) -> dict:
+    """Real, live -- runs the real adversarial scenario suite directly
+    against the real `gate.review()` (`self_test_harness.py`, `DEC-099`),
+    never a stub (this repository never built one -- see `CLAUDE.md`'s
+    own corrected note on this). Response shape matches
+    `QUORUM_DATA_CONTRACTS.md` §5.14 exactly, including the real,
+    load-bearing `target` field, always `"real_gate"` here.
+    """
+    results = await run_self_test()
+    summary = summarize(results, target="real_gate")
+    return {
+        "total": summary.total,
+        "caught": summary.caught,
+        "missed": [_serialize_scenario_result(r) for r in summary.missed],
+        "results": [_serialize_scenario_result(r) for r in summary.results],
+        "target": summary.target,
+    }
 
 
 @app.get("/trust_digest")

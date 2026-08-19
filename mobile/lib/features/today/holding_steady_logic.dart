@@ -30,12 +30,24 @@ DayTouchpoint classifyTouchpoint(int hour) {
 /// question was already answered this morning) nor "how did today go"
 /// (that question isn't answerable yet) -- a real third state, not a
 /// forced fit into either framing.
+///
+/// A real, disclosed bug found and fixed live (not a design choice):
+/// midday's headline originally returned the literal string "Holding
+/// steady" -- the exact same text `today_screen.dart`'s `_ZoneSection`
+/// already uses as this card's own containing section title. Confirmed
+/// directly: between 12:00 and 17:59 local time, the real, running app
+/// showed "Holding steady" twice, stacked directly on top of itself
+/// (the section title, then this card's own headline) -- a genuine,
+/// user-visible content collision, not just a test artifact, caught by
+/// `main_shell_composition_test.dart` failing specifically at midday.
+/// "Where things stand" preserves the exact same neutral-third-state
+/// meaning without repeating the section's own name.
 String touchpointHeadline(DayTouchpoint touchpoint) {
   switch (touchpoint) {
     case DayTouchpoint.morning:
       return 'What does today look like';
     case DayTouchpoint.midday:
-      return 'Holding steady';
+      return 'Where things stand';
     case DayTouchpoint.evening:
       return 'How did today go';
   }
