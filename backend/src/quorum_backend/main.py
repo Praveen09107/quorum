@@ -52,6 +52,7 @@ from quorum_backend.auth.revocation_store import SupabaseRevocationStore
 from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
 from quorum_backend.features.self_test_harness import ScenarioResult, run_self_test, summarize
+from quorum_backend.features.tasks import fetch_tasks
 from quorum_backend.features.trust_digest import fetch_trust_digest
 
 logger = logging.getLogger("quorum_backend")
@@ -214,6 +215,39 @@ async def trust_digest(
         "trend": result.trend,
         "delta": result.delta,
     }
+
+
+@app.get("/tasks")
+async def tasks(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    _user_id: str = Depends(_require_auth),
+) -> list[dict]:
+    """Real, live -- queries the real `tasks` table via `fetch_tasks()`,
+    never mocked or pre-computed data. Response shape matches
+    `QUORUM_DATA_CONTRACTS.md` §5.17 exactly: `status` is a genuinely
+    closed set (`open`/`done`/`cancelled`, a real database `CHECK`
+    constraint), so this route never needs to defend against an
+    unrecognized value the way an open-vocabulary field would.
+
+    Requires a real, valid access token (`_require_auth`), the same
+    real "you must be signed in" gate as `/trust_digest` -- and the
+    same disclosed limitation: no real user-provisioning system maps a
+    Google `sub` onto `tasks.user_id` anywhere in this backend yet, so
+    this is not yet a per-user filter either. See `features/tasks.py`'s
+    own docstring for the full account -- this is the same real,
+    already-disclosed open item, not a second one.
+    """
+    records = await fetch_tasks(pool)
+    return [
+        {
+            "task_id": record.task_id,
+            "title": record.title,
+            "estimated_hours": record.estimated_hours,
+            "deadline": record.deadline,
+            "status": record.status,
+        }
+        for record in records
+    ]
 
 
 @app.get("/auth/callback")

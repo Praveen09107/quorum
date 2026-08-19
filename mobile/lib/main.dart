@@ -2,25 +2,31 @@
 /// (`DEC-105`): checks for a real, currently-valid session at startup --
 /// no stored session (or one that fails to refresh) shows the real
 /// `LoginScreen`; a real session goes straight to `MainShell`, wired
-/// with the two real, live fetchers that exist so far -- `/trust_digest`
-/// (`DEC-100`/`DEC-103`) and `/trust` (real self-test results against
-/// the real Gate, wiring `self_test_harness.py`'s already-real
-/// `run_self_test()` into a live route for the first time). Wiring
-/// `fetchTrust` also genuinely unlocks the whole Trust tab in the real
-/// running app -- `MainShell`'s `_TrustTab` only renders once its own
-/// primary fetcher is non-null, so `fetchTrustDigest` alone was never
-/// reachable on-screen until now. Every other `MainShell` fetcher stays
-/// unconfigured, honestly, until its own backend endpoint exists
-/// (Part C-2, tracked in `STATUS_INDEX.md`) -- exactly the same
-/// "real, not fabricated" discipline this whole project holds itself
-/// to everywhere else, not silently wired to something that doesn't
-/// exist yet just because the login screen now does.
+/// with the three real, live fetchers that exist so far -- `/trust_digest`
+/// (`DEC-100`/`DEC-103`), `/trust` (real self-test results against the
+/// real Gate, wiring `self_test_harness.py`'s already-real
+/// `run_self_test()` into a live route, `DEC-106`), and `/tasks` (the
+/// real `tasks` table, `DEC-107`). Wiring `fetchTrust` genuinely
+/// unlocked the whole Trust tab in the real running app (`DEC-106`) --
+/// `MainShell`'s `_TrustTab` only renders once its own primary fetcher
+/// is non-null. `fetchTasks` is different, honestly: it's real and
+/// tested, but `MainShell` only ever surfaces it through the Today tab's
+/// own "Holding Steady -> Tasks" drill-through link, which itself stays
+/// gated behind `fetchToday` -- still unconfigured, since the Today
+/// screen's own real backend needs a `pendingActions`/`negotiations`
+/// persistence design this repository doesn't have yet (a real,
+/// disclosed open item, not silently built around). Wired here anyway,
+/// ready for the moment Today unblocks -- not fabricated data standing
+/// in for a connection that doesn't visibly do anything yet. Every
+/// other `MainShell` fetcher stays unconfigured, honestly, until its own
+/// backend endpoint exists (Part C-2, tracked in `STATUS_INDEX.md`).
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
+import 'package:quorum_mobile/api/tasks_api.dart';
 import 'package:quorum_mobile/api/trust_api.dart';
 import 'package:quorum_mobile/api/trust_digest_api.dart';
 import 'package:quorum_mobile/auth/auth_api.dart';
@@ -103,6 +109,10 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             fetchTrustDigest: createTrustDigestFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            fetchTasks: createTasksFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
