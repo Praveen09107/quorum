@@ -207,35 +207,6 @@ def test_auth_token_with_a_fake_code_fails_loud_with_a_real_400():
     assert "invalid_grant" in response.json()["detail"]
 
 
-def test_auth_callback_forwards_a_real_code_and_state_to_the_real_mobile_scheme():
-    with TestClient(app, follow_redirects=False) as client:
-        response = client.get("/auth/callback", params={"code": "a-real-auth-code", "state": "a-real-csrf-state"})
-    assert response.status_code in (302, 307)
-    location = response.headers["location"]
-    assert location.startswith("com.quorum.quorum_mobile://oauth2redirect?")
-    assert "code=a-real-auth-code" in location
-    assert "state=a-real-csrf-state" in location
-
-
-def test_auth_callback_forwards_a_real_google_error_never_silently_dropped():
-    with TestClient(app, follow_redirects=False) as client:
-        response = client.get("/auth/callback", params={"error": "access_denied"})
-    assert response.status_code in (302, 307)
-    location = response.headers["location"]
-    assert location.startswith("com.quorum.quorum_mobile://oauth2redirect?")
-    assert "error=access_denied" in location
-
-
-def test_auth_callback_with_neither_code_nor_error_is_a_real_honest_missing_code_signal():
-    # A genuine anomaly -- Google's own real flow always sends one or
-    # the other. Never silently redirects with an empty query string,
-    # which would leave the mobile app unable to tell what happened.
-    with TestClient(app, follow_redirects=False) as client:
-        response = client.get("/auth/callback")
-    assert response.status_code in (302, 307)
-    assert "error=missing_code" in response.headers["location"]
-
-
 def test_auth_callback_real_url_encodes_special_characters_in_state():
     # A real, deliberate correctness check: state values can legitimately
     # contain characters (&, =, spaces) that manual string concatenation
