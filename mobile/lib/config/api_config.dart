@@ -15,4 +15,12 @@ class ApiConfig {
   /// login (`Authorization: Bearer <token>`) is what actually protects
   /// this now, not Cloud Run's network layer.
   static const String baseUrl = 'https://quorum-backend-649581407643.asia-south1.run.app';
+
+  /// The real, live Google OAuth Client ID (`DEC-105`) -- safe to embed
+  /// in real app source: OAuth client IDs are not secrets (they appear
+  /// in every real authorization request URL already); only the paired
+  /// client SECRET is sensitive, and that correctly stays backend-only
+  /// (`backend/src/quorum_backend/auth/google_oauth.py`), never sent to
+  /// or stored on a real device.
+  static const String googleOAuthClientId = '649581407643-6n9j78sares4si1smds7rto7h5lomv8k.apps.googleusercontent.com';
 }

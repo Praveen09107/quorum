@@ -6,24 +6,29 @@
 ///
 /// Calls the real, live `GET /trust_digest` (`DEC-100`, `DEC-102`) --
 /// backed by the real, live Supabase database, real auth-gated as of
-/// `DEC-101`/`DEC-102`. `accessToken` is injected, never read from
-/// storage here -- real secure token storage and the real Google
-/// sign-in flow that produces it are separate, later, disclosed work
-/// (no browser automation exists in this environment to build and
-/// verify that end to end); this file's real job stops at "given a
-/// valid token, make the real call and parse the real response."
+/// `DEC-101`/`DEC-102`.
 ///
 /// A real, disclosed correction from fresh-context review before this
 /// merged: an earlier version created its own default `http.Client()`
 /// when none was injected, silently owning a resource this module had
 /// no way to ever close -- harmless while dormant (nothing called it
 /// yet), but a real leak once actually wired up. `client` is now
-/// required, never defaulted -- whoever wires this up for real (once a
-/// login screen exists) owns that client's lifecycle explicitly, the
-/// same "no hidden singleton, every dependency injected" discipline
-/// this project's backend already holds itself to (`core/db.py`'s pool
-/// is owned by `main.py`'s lifespan, never created by a feature module
-/// for itself).
+/// required, never defaulted -- whoever wires this up for real owns
+/// that client's lifecycle explicitly, the same "no hidden singleton,
+/// every dependency injected" discipline this project's backend already
+/// holds itself to (`core/db.py`'s pool is owned by `main.py`'s
+/// lifespan, never created by a feature module for itself).
+///
+/// A second real correction, made when the real login screen
+/// (`auth/auth_controller.dart`) landed: `accessToken` was originally a
+/// fixed `String`, baked in once at fetcher-creation time. A real
+/// access token is only valid for 15 minutes
+/// (`ACCESS_TOKEN_TTL_MINUTES`) -- a fixed string would silently go
+/// stale for any real session that outlives one fetch. `getAccessToken`
+/// is now a real, injected async function, called fresh on every
+/// single request; the real, live implementation
+/// (`AuthController.getValidAccessToken()`) refreshes proactively
+/// before the token actually expires.
 library;
 
 import 'dart:convert';
@@ -41,11 +46,16 @@ import 'package:quorum_mobile/features/trust_digest/trust_digest_logic.dart';
 /// and a private typedef in a public API's signature is exactly what
 /// `flutter analyze` flags as `library_private_types_in_public_api`.
 Future<TrustDigestData> Function() createTrustDigestFetcher({
-  required String accessToken,
+  required Future<String?> Function() getAccessToken,
   required http.Client client,
   String baseUrl = ApiConfig.baseUrl,
 }) {
   return () async {
+    final accessToken = await getAccessToken();
+    if (accessToken == null) {
+      throw const ApiException('Your session has expired -- please sign in again.', statusCode: 401);
+    }
+
     final http.Response response;
     try {
       response = await client.get(

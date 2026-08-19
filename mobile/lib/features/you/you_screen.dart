@@ -53,6 +53,12 @@ class YouScreen extends StatefulWidget {
   final Future<List<WaitingOnItem>> Function()? fetchWaitingOn;
   final Future<List<SearchResultItem>> Function(String query)? fetchSearch;
 
+  /// The real, live "sign out" action (`DEC-105`) -- genuinely distinct
+  /// stakes from `onConfirmDelete` below: this ends the current session
+  /// only, real local storage cleared and the real server-side session
+  /// revoked, but no real data is ever touched.
+  final VoidCallback? onSignOut;
+
   const YouScreen({
     super.key,
     required this.onConfirmDelete,
@@ -62,6 +68,7 @@ class YouScreen extends StatefulWidget {
     this.fetchFinance,
     this.fetchWaitingOn,
     this.fetchSearch,
+    this.onSignOut,
   });
 
   @override
@@ -165,6 +172,14 @@ class _YouScreenState extends State<YouScreen> {
               widget.fetchWaitingOn != null ||
               widget.fetchSearch != null)
             const Divider(height: 32),
+          if (widget.onSignOut != null) ...[
+            OutlinedButton.icon(
+              onPressed: widget.onSignOut,
+              icon: const Icon(Icons.logout),
+              label: const Text('Sign out'),
+            ),
+            const Divider(height: 32),
+          ],
           const Text('This permanently deletes your account and all associated data. This cannot be undone.'),
           const SizedBox(height: 16),
           const Text('Type $requiredDeletionConfirmationText to confirm.'),
