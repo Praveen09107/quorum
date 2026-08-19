@@ -53,6 +53,7 @@ from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
 from quorum_backend.features.career_pipeline import fetch_career_pipeline
 from quorum_backend.features.self_test_harness import ScenarioResult, run_self_test, summarize
+from quorum_backend.features.subscription_detective import fetch_detected_subscriptions
 from quorum_backend.features.tasks import fetch_tasks
 from quorum_backend.features.trust_digest import fetch_trust_digest
 
@@ -281,6 +282,42 @@ async def career_pipeline(
             "role": record.role,
             "status": record.status,
             "deadline": record.deadline,
+        }
+        for record in records
+    ]
+
+
+@app.get("/finance/subscriptions")
+async def finance_subscriptions(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    _user_id: str = Depends(_require_auth),
+) -> list[dict]:
+    """Real, live -- queries the real `expenses` table and applies the
+    real, deliberately simple detection rule in
+    `subscription_detective.py` (a payee charged at least twice, exact
+    match only -- no fuzzy matching, no ML). Response shape matches
+    `QUORUM_DATA_CONTRACTS.md` §5.12 exactly.
+
+    A real, disclosed gap this route closes, not just a missing REST
+    layer: `detect_subscriptions()` did not exist anywhere in this
+    backend before this session, despite the spec corpus's own claim
+    that it was "real and tested since well before mobile work began"
+    -- confirmed absent by direct search. See
+    `features/subscription_detective.py`'s own docstring for the full
+    account.
+
+    Requires a real, valid access token (`_require_auth`), the same
+    real "you must be signed in" gate and the same disclosed
+    per-user-scoping limitation as `/trust_digest`/`/tasks`/
+    `/career_pipeline`.
+    """
+    records = await fetch_detected_subscriptions(pool)
+    return [
+        {
+            "payee": record.payee,
+            "average_amount": record.average_amount,
+            "occurrences": record.occurrences,
+            "average_interval_days": record.average_interval_days,
         }
         for record in records
     ]

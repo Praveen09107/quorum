@@ -344,6 +344,72 @@ def test_career_pipeline_returns_503_not_a_crash_when_the_real_pool_is_unavailab
             app.state.db_pool = real_pool
 
 
+def test_finance_subscriptions_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.get("/finance/subscriptions")
+    assert response.status_code == 401
+
+
+async def test_finance_subscriptions_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool):
+    """Real, end-to-end: inserts two real, recurring charges to the same
+    real payee into the real, live `expenses` table, confirms
+    `GET /finance/subscriptions` genuinely detects and round-trips the
+    real pattern with a real, valid access token, then cleans up."""
+    payee = f"Real end-to-end test vendor {uuid.uuid4()}"
+    ids = [uuid.uuid4(), uuid.uuid4()]
+
+    first = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    second = datetime(2026, 1, 31, 12, 0, tzinfo=timezone.utc)
+
+    await pool.execute(
+        "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, $5, $6)",
+        ids[0],
+        uuid.uuid4(),
+        payee,
+        299.00,
+        first,
+        "manual",
+    )
+    await pool.execute(
+        "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, $5, $6)",
+        ids[1],
+        uuid.uuid4(),
+        payee,
+        299.00,
+        second,
+        "manual",
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/finance/subscriptions", headers=_auth_header())
+
+        assert response.status_code == 200
+        body = response.json()
+        assert isinstance(body, list)
+
+        match = next(s for s in body if s["payee"] == payee)
+        assert set(match.keys()) == {"payee", "average_amount", "occurrences", "average_interval_days"}
+        assert match["average_amount"] == 299.0
+        assert match["occurrences"] == 2
+        assert match["average_interval_days"] == 30.0
+    finally:
+        await pool.execute("DELETE FROM expenses WHERE expense_id = ANY($1::uuid[])", ids)
+
+
+def test_finance_subscriptions_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
+    with TestClient(app) as client:
+        real_pool = app.state.db_pool
+        app.state.db_pool = None
+        try:
+            finance_response = client.get("/finance/subscriptions", headers=_auth_header())
+            health_response = client.get("/health")
+            assert finance_response.status_code == 503
+            assert health_response.status_code == 200
+        finally:
+            app.state.db_pool = real_pool
+
+
 def test_auth_callback_bridges_a_real_google_redirect_to_the_real_mobile_scheme():
     # The real, necessary bridge (DEC-105): Google's own current rules
     # require a real https:// redirect for a "Web application"-type
