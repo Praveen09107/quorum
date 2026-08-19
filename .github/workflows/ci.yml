@@ -10,18 +10,21 @@ name: CI
 #   service container (the same real image DEC-010 first proved this
 #   migration against locally), never the live Supabase project -- a real
 #   PR must never be able to touch live, production-adjacent data.
-# - `test_auth_google_oauth.py` is deliberately excluded from this CI run.
-#   Its own real, load-bearing test genuinely needs the real, live
-#   GOOGLE_OAUTH_CLIENT_ID/SECRET to distinguish a real `invalid_grant`
-#   from `invalid_client` (see DEC-101) -- this environment's own
-#   permission boundary blocked programmatically provisioning those as
-#   real GitHub Actions secrets during this session (DEC-115), so rather
-#   than silently skip it with no record, or work around that denial,
-#   this exclusion is disclosed here, in this file, in plain text.
-#   Genuinely still open in STATUS_INDEX.md -- if GOOGLE_OAUTH_CLIENT_ID
-#   and GOOGLE_OAUTH_CLIENT_SECRET are ever added as real repo secrets,
-#   remove the --ignore line below and this file's own JWT_SIGNING_KEY
-#   stays a CI-only dummy value regardless (never the real, deployed one).
+# - `test_auth_google_oauth.py` (whole file) and one further real test in
+#   `test_main.py` (`test_auth_token_with_a_fake_code_fails_loud_with_a_real_400`
+#   -- found live, on this workflow's own first real CI run, not assumed
+#   in advance) are deliberately excluded from this CI run. Each needs
+#   the real, live GOOGLE_OAUTH_CLIENT_ID/SECRET to distinguish a real
+#   `invalid_grant`/`400` from `invalid_client`/`503` (see DEC-101) --
+#   this environment's own permission boundary blocked programmatically
+#   provisioning those as real GitHub Actions secrets during this session
+#   (DEC-115), so rather than silently skip them with no record, or work
+#   around that denial, both exclusions are disclosed here, in this
+#   file, in plain text. Genuinely still open in STATUS_INDEX.md -- if
+#   GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET are ever added
+#   as real repo secrets, remove both exclusions below. This file's own
+#   JWT_SIGNING_KEY stays a CI-only dummy value regardless, always
+#   distinct from the real, deployed one (DEC-114).
 
 on:
   pull_request:
@@ -73,9 +76,12 @@ jobs:
         working-directory: backend
         run: ruff check .
 
-      - name: pytest (excludes the one real test needing a live Google OAuth secret -- see this file's own header comment)
+      - name: pytest (excludes the two real tests needing a live Google OAuth secret -- see this file's own header comment)
         working-directory: backend
-        run: PYTHONPATH=src pytest tests -q --ignore=tests/test_auth_google_oauth.py
+        run: |
+          PYTHONPATH=src pytest tests -q \
+            --ignore=tests/test_auth_google_oauth.py \
+            --deselect=tests/test_main.py::test_auth_token_with_a_fake_code_fails_loud_with_a_real_400
 
   mobile:
     runs-on: ubuntu-latest
