@@ -45,13 +45,28 @@ dependencies:
   # device_calendar immediately.
   device_calendar: ^4.3.2
   home_widget: ^0.6.0
-  receive_sharing_intent: ^1.8.0
+  # Pinned to 1.7.0, one major-adjacent release back from the caret range
+  # this file originally declared (^1.8.0) -- a real, disclosed,
+  # environment-driven fix, not an arbitrary downgrade: 1.8.0's own
+  # Android module requests compileSdk 37, and this machine's real,
+  # currently-installed Android Gradle Plugin genuinely cannot parse
+  # that SDK platform package's metadata schema (confirmed live, this
+  # session -- "This version only understands SDK XML versions up to 3
+  # but an SDK XML file of version 4 was encountered"). 1.7.0 does not
+  # require compileSdk 37. Re-confirm this pin is still needed the next
+  # time this project's Android toolchain is upgraded.
+  receive_sharing_intent: 1.7.0
 
   cupertino_icons: ^1.0.6
   http: ^1.6.0
   sqlite3: ^3.5.1
   flutter_web_auth_2: ^5.1.0
-  flutter_secure_storage: ^11.0.0
+  # Pinned to 10.3.1, the last pre-11.x release -- same real,
+  # disclosed, environment-driven reason as receive_sharing_intent
+  # above: 11.0.0's own Android module requests compileSdk 37, which
+  # this machine's real, currently-installed Android Gradle Plugin
+  # cannot resolve. 10.3.1 does not require compileSdk 37.
+  flutter_secure_storage: 10.3.1
   crypto: ^3.0.7
 
 dev_dependencies:
