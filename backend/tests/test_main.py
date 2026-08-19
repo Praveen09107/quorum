@@ -479,45 +479,38 @@ def test_finance_subscriptions_requires_real_auth_missing_header_is_401():
 
 async def test_finance_subscriptions_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
     """Real, end-to-end: real-provisions a real user (DEC-110), inserts
-    two real, recurring charges to the same real payee, both scoped to
-    that same exact real user, into the real, live `expenses` table,
-    confirms `GET /finance/subscriptions` genuinely detects and
-    round-trips the real pattern with a real, valid access token for
-    that same real identity, then cleans up.
+    three real, monthly-spaced charges to the same real payee (the
+    real, specified minimum -- `DEC-112`), all scoped to that same
+    exact real user, into the real, live `expenses` table, confirms
+    `GET /finance/subscriptions` genuinely detects and round-trips the
+    real pattern with a real, valid access token for that same real
+    identity, then cleans up.
 
     A real, disclosed correction made while retrofitting this test for
-    DEC-110: the original version inserted the two charges under two
-    DIFFERENT random user_ids -- harmless before real per-user
-    filtering existed, but would have silently broken this test once it
-    did (two single-occurrence charges for two different users, never
-    detected as one real recurring payee). Fixed to use one real,
-    consistent user_id, matching what a real recurring charge actually
-    looks like."""
+    DEC-110: the original version inserted the charges under DIFFERENT
+    random user_ids -- harmless before real per-user filtering existed,
+    but would have silently broken this test once it did. Fixed to use
+    one real, consistent user_id, matching what a real recurring charge
+    actually looks like."""
     headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
     payee = f"Real end-to-end test vendor {uuid.uuid4()}"
-    ids = [uuid.uuid4(), uuid.uuid4()]
+    ids = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
+    occurrences = [
+        datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        datetime(2026, 1, 31, 12, 0, tzinfo=timezone.utc),
+        datetime(2026, 3, 2, 12, 0, tzinfo=timezone.utc),
+    ]
 
-    first = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
-    second = datetime(2026, 1, 31, 12, 0, tzinfo=timezone.utc)
-
-    await pool.execute(
-        "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, $5, $6)",
-        ids[0],
-        uuid.UUID(internal_user_id),
-        payee,
-        299.00,
-        first,
-        "manual",
-    )
-    await pool.execute(
-        "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, $5, $6)",
-        ids[1],
-        uuid.UUID(internal_user_id),
-        payee,
-        299.00,
-        second,
-        "manual",
-    )
+    for expense_id, occurred_at in zip(ids, occurrences):
+        await pool.execute(
+            "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, $5, $6)",
+            expense_id,
+            uuid.UUID(internal_user_id),
+            payee,
+            299.00,
+            occurred_at,
+            "manual",
+        )
 
     try:
         with TestClient(app) as client:
@@ -530,7 +523,7 @@ async def test_finance_subscriptions_endpoint_is_real_and_live_not_mocked_with_a
         match = next(s for s in body if s["payee"] == payee)
         assert set(match.keys()) == {"payee", "average_amount", "occurrences", "average_interval_days"}
         assert match["average_amount"] == 299.0
-        assert match["occurrences"] == 2
+        assert match["occurrences"] == 3
         assert match["average_interval_days"] == 30.0
     finally:
         await pool.execute("DELETE FROM expenses WHERE expense_id = ANY($1::uuid[])", ids)
@@ -544,17 +537,18 @@ async def test_finance_subscriptions_endpoint_never_leaks_another_real_users_row
     headers_a, user_a = await _provisioned_auth_header(pool, provisioned_users)
     _headers_b, user_b = await _provisioned_auth_header(pool, provisioned_users)
     payee = f"Shared real payee name {uuid.uuid4()}"
-    ids_a = [uuid.uuid4(), uuid.uuid4()]
-    ids_b = [uuid.uuid4(), uuid.uuid4()]
-    first = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
-    second = datetime(2026, 1, 31, 12, 0, tzinfo=timezone.utc)
+    ids_a = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
+    ids_b = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
+    occurrences = [
+        datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        datetime(2026, 1, 31, 12, 0, tzinfo=timezone.utc),
+        datetime(2026, 3, 2, 12, 0, tzinfo=timezone.utc),
+    ]
 
-    for expense_id, occurred_at, user in [
-        (ids_a[0], first, user_a),
-        (ids_a[1], second, user_a),
-        (ids_b[0], first, user_b),
-        (ids_b[1], second, user_b),
-    ]:
+    for expense_id, occurred_at, user in (
+        [(eid, at, user_a) for eid, at in zip(ids_a, occurrences)]
+        + [(eid, at, user_b) for eid, at in zip(ids_b, occurrences)]
+    ):
         await pool.execute(
             "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, $5, $6)",
             expense_id,
@@ -571,11 +565,11 @@ async def test_finance_subscriptions_endpoint_never_leaks_another_real_users_row
 
         body = response.json()
         matches = [s for s in body if s["payee"] == payee]
-        # Exactly one real entry for this payee, from user A's own two
-        # charges -- never user B's, and never merged into a false
-        # occurrences=4 across both real users.
+        # Exactly one real entry for this payee, from user A's own
+        # three charges -- never user B's, and never merged into a
+        # false occurrences=6 across both real users.
         assert len(matches) == 1
-        assert matches[0]["occurrences"] == 2
+        assert matches[0]["occurrences"] == 3
     finally:
         await pool.execute("DELETE FROM expenses WHERE expense_id = ANY($1::uuid[])", ids_a + ids_b)
 

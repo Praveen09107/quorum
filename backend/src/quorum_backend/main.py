@@ -305,9 +305,10 @@ async def finance_subscriptions(
     google_sub: str = Depends(_require_auth),
 ) -> list[dict]:
     """Real, live -- queries the real `expenses` table and applies the
-    real, deliberately simple detection rule in
-    `subscription_detective.py` (a payee charged at least twice, exact
-    match only -- no fuzzy matching, no ML). Response shape matches
+    real detection rule in `subscription_detective.py` (the real,
+    specified minimum occurrence count and monthly-cadence tolerance
+    from `QUORUM_CONFIGURATION_CONSTANTS.md` §4, exact payee match
+    only -- no fuzzy matching, no ML). Response shape matches
     `QUORUM_DATA_CONTRACTS.md` §5.12 exactly.
 
     A real, disclosed gap this route closes, not just a missing REST
