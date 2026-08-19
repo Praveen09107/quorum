@@ -109,3 +109,18 @@ StageBSummary summarizeStageB(List<ObjectionSummary> objections) {
   final signedOff = objections.any((o) => o.signedOff);
   return StageBSummary(realObjections: realObjections, signedOff: signedOff);
 }
+
+/// Batch 10 Phase 4 -- a real, disclosed bundling type, the same
+/// construction-not-copy pattern this project applies to every schema
+/// without a literal source (e.g. `today_screen.dart`'s
+/// `TodayScreenData`). No document in this project's spec corpus ever
+/// gave "everything one real Gate Reveal navigation needs" a name; this
+/// groups `GateRevealScreen`'s own two required constructor params so
+/// a single fetcher (`GateRevealFetcher`, `shell/main_shell.dart`) can
+/// return both together for a given real proposal.
+class GateRevealBundle {
+  final List<FindingSummary> findings;
+  final List<ObjectionSummary> objections;
+
+  const GateRevealBundle({required this.findings, required this.objections});
+}

@@ -33,24 +33,54 @@
 // pendingShareProvider, and this widget shows a real, BOUNDED SnackBar
 // reaction.
 //
-// Out of scope, explicitly, not silently: wiring Career pipeline,
-// Company Digest, Finance, Search, Waiting On, the Gate reveal, and the
-// negotiation screen into navigable app flow. These need a real,
-// considered information-architecture decision, genuinely deferred as a
-// real, honestly-scoped follow-up -- not silently implied resolved here.
+// Batch 10 Phase 4: the real information-architecture decision this
+// header used to defer, made and disclosed here, not silently resolved.
+// Two real, established patterns already existed in this codebase
+// (Trust -> Trust Digest, You -> Memory Transparency, Holding Steady ->
+// Tasks) -- contextual drill-through from a screen the data is genuinely
+// related to. Extended, not replaced: the Gate reveal drills through
+// from a Needs You Now action (the real question it answers is "why is
+// the Gate asking about THIS"), the negotiation screen drills through
+// from an In Motion card (same reasoning), and Company Digest drills
+// through from Career Pipeline (a specific application). Career
+// Pipeline, Finance, Waiting On, and Search have no single obviously
+// "closely related" existing zone, so they're reached via a new, real
+// "More" section on the You tab -- the same well-established real
+// mobile pattern (a settings-style tab hosting links to less-frequent
+// sections) already extended once for Memory Transparency, not a novel
+// invented pattern.
+//
+// A second, real, pre-existing gap found and closed in the same pass:
+// TodayScreen has always supported `fetchTasks`/`onTapAction`/
+// `onTapNegotiation` (DEC-096's Holding Steady -> Tasks link among
+// them), but this shell never actually threaded any of the three
+// through -- confirmed directly (`grep` for all three names in this
+// file returned nothing before this session). Closed here, not
+// silently left as a second, undiscovered version of the same gap this
+// whole phase exists to fix.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
+import 'package:quorum_mobile/features/career_digest/career_digest_logic.dart';
+import 'package:quorum_mobile/features/finance/finance_logic.dart';
+import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
+import 'package:quorum_mobile/features/gate_reveal/gate_reveal_screen.dart';
 import 'package:quorum_mobile/features/honesty_log/honesty_log_logic.dart';
 import 'package:quorum_mobile/features/honesty_log/honesty_log_screen.dart';
 import 'package:quorum_mobile/features/memory_transparency/memory_transparency_logic.dart';
+import 'package:quorum_mobile/features/negotiation/negotiation_logic.dart';
+import 'package:quorum_mobile/features/negotiation/negotiation_screen.dart';
 import 'package:quorum_mobile/features/pending_share_provider.dart';
+import 'package:quorum_mobile/features/search/search_logic.dart';
 import 'package:quorum_mobile/features/share_intent_handler.dart';
+import 'package:quorum_mobile/features/tasks/tasks_logic.dart';
 import 'package:quorum_mobile/features/today_screen.dart';
 import 'package:quorum_mobile/features/trust/trust_logic.dart';
 import 'package:quorum_mobile/features/trust/trust_screen.dart';
 import 'package:quorum_mobile/features/trust_digest/trust_digest_logic.dart';
+import 'package:quorum_mobile/features/waiting_on/waiting_on_logic.dart';
 import 'package:quorum_mobile/features/you/you_logic.dart';
 import 'package:quorum_mobile/features/you/you_screen.dart';
 
@@ -60,6 +90,14 @@ typedef TrustFetcher = Future<TrustData> Function();
 typedef TrustDigestFetcher = Future<TrustDigestData> Function();
 typedef MemoriesFetcher = Future<List<MemoryData>> Function();
 typedef DeletionConfirmer = Future<DeletionResultData> Function();
+typedef TaskListFetcher = Future<List<TaskData>> Function();
+typedef GateRevealFetcher = Future<GateRevealBundle> Function(String proposalId);
+typedef NegotiationFetcher = Future<NegotiationBundle> Function(String negotiationId);
+typedef CareerFetcher = Future<List<CareerApplication>> Function();
+typedef CareerDigestFetcher = Future<CompanyDigestData> Function(String applicationId);
+typedef FinanceFetcher = Future<List<DetectedSubscriptionData>> Function();
+typedef WaitingOnFetcher = Future<List<WaitingOnItem>> Function();
+typedef SearchFetcher = Future<List<SearchResultItem>> Function(String query);
 
 class MainShell extends ConsumerStatefulWidget {
   final TodayDataFetcher? fetchToday;
@@ -68,6 +106,14 @@ class MainShell extends ConsumerStatefulWidget {
   final TrustDigestFetcher? fetchTrustDigest;
   final MemoriesFetcher? fetchMemories;
   final DeletionConfirmer? confirmDelete;
+  final TaskListFetcher? fetchTasks;
+  final GateRevealFetcher? fetchGateReveal;
+  final NegotiationFetcher? fetchNegotiation;
+  final CareerFetcher? fetchCareerApplications;
+  final CareerDigestFetcher? fetchCareerDigest;
+  final FinanceFetcher? fetchFinance;
+  final WaitingOnFetcher? fetchWaitingOn;
+  final SearchFetcher? fetchSearch;
 
   const MainShell({
     super.key,
@@ -77,6 +123,14 @@ class MainShell extends ConsumerStatefulWidget {
     this.fetchTrustDigest,
     this.fetchMemories,
     this.confirmDelete,
+    this.fetchTasks,
+    this.fetchGateReveal,
+    this.fetchNegotiation,
+    this.fetchCareerApplications,
+    this.fetchCareerDigest,
+    this.fetchFinance,
+    this.fetchWaitingOn,
+    this.fetchSearch,
   });
 
   @override
@@ -121,7 +175,12 @@ class _MainShellState extends ConsumerState<MainShell> {
   Widget _bodyForIndex(int index) {
     switch (index) {
       case 0:
-        return _TodayTab(fetch: widget.fetchToday);
+        return _TodayTab(
+          fetch: widget.fetchToday,
+          fetchTasks: widget.fetchTasks,
+          fetchGateReveal: widget.fetchGateReveal,
+          fetchNegotiation: widget.fetchNegotiation,
+        );
       case 1:
         return _HonestyLogTab(fetch: widget.fetchHonestyFeed);
       case 2:
@@ -130,6 +189,11 @@ class _MainShellState extends ConsumerState<MainShell> {
         return YouScreen(
           onConfirmDelete: widget.confirmDelete ?? _unconfiguredDeletion,
           onOpenMemories: widget.fetchMemories,
+          fetchCareerApplications: widget.fetchCareerApplications,
+          fetchCareerDigest: widget.fetchCareerDigest,
+          fetchFinance: widget.fetchFinance,
+          fetchWaitingOn: widget.fetchWaitingOn,
+          fetchSearch: widget.fetchSearch,
         );
       default:
         return const SizedBox.shrink();
@@ -207,8 +271,11 @@ class _NotConnectedState extends StatelessWidget {
 
 class _TodayTab extends StatelessWidget {
   final TodayDataFetcher? fetch;
+  final TaskListFetcher? fetchTasks;
+  final GateRevealFetcher? fetchGateReveal;
+  final NegotiationFetcher? fetchNegotiation;
 
-  const _TodayTab({this.fetch});
+  const _TodayTab({this.fetch, this.fetchTasks, this.fetchGateReveal, this.fetchNegotiation});
 
   @override
   Widget build(BuildContext context) {
@@ -224,8 +291,88 @@ class _TodayTab extends StatelessWidget {
         if (snapshot.hasError) {
           return Center(child: Text("Couldn't load Today: ${snapshot.error}"));
         }
-        return TodayScreen(data: snapshot.data!, now: DateTime.now());
+        final gateReveal = fetchGateReveal;
+        final negotiation = fetchNegotiation;
+        return TodayScreen(
+          data: snapshot.data!,
+          now: DateTime.now(),
+          fetchTasks: fetchTasks,
+          onTapAction: gateReveal == null
+              ? null
+              : (action) => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => _GateRevealLoader(fetch: () => gateReveal(action.proposalId)),
+                    ),
+                  ),
+          onTapNegotiation: negotiation == null
+              ? null
+              : (negotiationId) => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => _NegotiationLoader(fetch: () => negotiation(negotiationId)),
+                    ),
+                  ),
+        );
       },
+    );
+  }
+}
+
+/// The Gate reveal's real drill-through: "why is the Gate asking about
+/// THIS" for a specific pending action, triggered from Needs You Now.
+class _GateRevealLoader extends StatelessWidget {
+  final Future<GateRevealBundle> Function() fetch;
+
+  const _GateRevealLoader({required this.fetch});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Gate reveal')),
+      body: FutureBuilder<GateRevealBundle>(
+        future: fetch(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text("Couldn't load the Gate reveal: ${snapshot.error}"));
+          }
+          final bundle = snapshot.data!;
+          return GateRevealScreen(findings: bundle.findings, objections: bundle.objections);
+        },
+      ),
+    );
+  }
+}
+
+/// The negotiation screen's real drill-through, triggered from an In
+/// Motion card. `onChoose` is deliberately left unwired -- the real
+/// `POST /negotiations/{id}/choose` endpoint doesn't exist yet
+/// (`QUORUM_DATA_CONTRACTS.md` §5.6 remains specified, not implemented);
+/// this screen shows real data honestly without pretending a choice can
+/// be submitted yet.
+class _NegotiationLoader extends StatelessWidget {
+  final Future<NegotiationBundle> Function() fetch;
+
+  const _NegotiationLoader({required this.fetch});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Negotiation')),
+      body: FutureBuilder<NegotiationBundle>(
+        future: fetch(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text("Couldn't load the negotiation: ${snapshot.error}"));
+          }
+          final bundle = snapshot.data!;
+          return NegotiationScreen(positions: bundle.positions, options: bundle.options);
+        },
+      ),
     );
   }
 }

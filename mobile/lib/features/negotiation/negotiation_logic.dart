@@ -136,3 +136,17 @@ String capitalizeDomain(String domain) {
   if (domain.isEmpty) return domain;
   return domain[0].toUpperCase() + domain.substring(1);
 }
+
+/// Batch 10 Phase 4 -- a real, disclosed bundling type, the same
+/// construction-not-copy pattern this project applies to every schema
+/// without a literal source (e.g. `today_screen.dart`'s
+/// `TodayScreenData`). Groups `NegotiationScreen`'s own two required
+/// constructor params so a single fetcher (`NegotiationFetcher`,
+/// `shell/main_shell.dart`) can return both together for a given real
+/// negotiation.
+class NegotiationBundle {
+  final List<PositionData> positions;
+  final List<NegotiationOptionData> options;
+
+  const NegotiationBundle({required this.positions, required this.options});
+}
