@@ -8,21 +8,43 @@ has been real and tested since well before mobile work began"), does
 not exist anywhere in this repository -- the same disclosure
 `finance_logic.dart`'s own file header already makes on the mobile
 side, confirmed independently here rather than assumed from that
-file's own claim. No real detection algorithm is specified anywhere in
-this project's real corpus for this repository to copy -- §5.12 only
-specifies the response *shape*, not how to compute it.
+file's own claim. `QUORUM_DATA_CONTRACTS.md` §5.12 only specifies the
+response *shape*, not how to compute it.
 
-A real, deliberately simple, disclosed detection rule, not invented
-beyond what's needed -- the same "deliberately simple and
-explainable... never a trained model" philosophy `trust_digest.py`'s
-own `STABLE_THRESHOLD` already establishes for this backend: a real
-payee counts as recurring once it has been charged at least twice,
-exact string match only (no fuzzy payee matching -- "Netflix" and
+**A real, disclosed correction, found live during a later session
+(`DEC-112`), not caught before this file's first real version merged:**
+the first version of this module was built checking only
+`DATA_CONTRACTS.md` §5.12 and concluded no real detection algorithm
+was specified -- but never checked `QUORUM_CONFIGURATION_CONSTANTS.md`
+§4, which genuinely does specify real parameters for this exact
+module: `Subscription min occurrences: 3`, `Subscription interval
+tolerance: ±5.0 days around a 30-day target`. That table's own header
+claims these were "pulled directly from real, tested code" -- the same
+stale-spec-corpus-narrative pattern this project's own history
+disclosed repeatedly elsewhere (describing a module that, per the
+direct search above, never actually existed in this repository) -- but
+the *parameters themselves* are real, specific, intentional design
+values worth honoring, not a spec to second-guess. This session's
+first version used `MIN_OCCURRENCES_TO_COUNT_AS_RECURRING = 2` and no
+interval-regularity filtering at all -- a real, more permissive rule
+than the actual spec, found and corrected here. Confirmed against
+`DATA_CONTRACTS.md` §5.12's own JSON example too, consistent with
+this fix: `"occurrences": 4`, `"average_interval_days": 30.2` -- both
+values a genuinely monthly-cadence, 3+-occurrence detector would
+produce, not the simpler rule's own hypothetical 2-occurrence,
+any-spacing output.
+
+The real, corrected rule: a payee counts as recurring only once
+charged at least `MIN_OCCURRENCES_TO_COUNT_AS_RECURRING` times, exact
+string match only (no fuzzy payee matching -- "Netflix" and
 "NETFLIX.COM" are two different real payees here, a real, disclosed
-limitation, not a silent gap). No amount clustering, no
-interval-regularity scoring, no ML -- a person deciding whether to
-cancel something benefits from seeing every real, recurring payee, not
-a "subscription-like enough" pre-filter guessing at their intent.
+limitation, not a silent gap), **and** every real consecutive gap
+between charges falls within `INTERVAL_TOLERANCE_DAYS` of
+`INTERVAL_TARGET_DAYS` -- a charge sequence with any one wildly
+irregular gap is a real, genuine sign it isn't an actual monthly
+subscription, whatever its raw occurrence count. No amount clustering,
+no ML beyond this.
+
 **RESOLVED, `DEC-110`:** this module's real query previously read
 every real `expenses` row regardless of owner, the same disclosed
 per-user-scoping limitation `trust_digest.py`/`tasks.py`/
@@ -41,10 +63,12 @@ from datetime import datetime
 
 import asyncpg
 
-# The one real, named threshold this module needs -- can't compute a
-# real interval from a single charge, so two is the genuine minimum,
-# not an arbitrary tuning knob.
-MIN_OCCURRENCES_TO_COUNT_AS_RECURRING = 2
+# The two real, named parameters this module needs, pulled directly
+# from QUORUM_CONFIGURATION_CONSTANTS.md §4 -- not arbitrary tuning
+# knobs invented for this repository.
+MIN_OCCURRENCES_TO_COUNT_AS_RECURRING = 3
+INTERVAL_TARGET_DAYS = 30.0
+INTERVAL_TOLERANCE_DAYS = 5.0
 
 
 @dataclass(frozen=True)
@@ -60,8 +84,11 @@ def detect_subscriptions(rows: list[tuple[str, float, datetime]]) -> list[Detect
     `(payee, amount, occurred_at)` tuples (real DB access lives in
     `fetch_detected_subscriptions()` below, mirroring `trust_digest.py`'s
     own real split between pure computation and live querying). Groups
-    by exact payee match, computes each real recurring payee's average
-    amount and average interval between consecutive real charges.
+    by exact payee match, requires the real, specified minimum
+    occurrence count AND a real, specified monthly-cadence tolerance on
+    every consecutive gap (see this module's own top-of-file docstring
+    for the real, disclosed correction this rule represents), computes
+    each real recurring payee's average amount and average interval.
     """
     grouped: dict[str, list[tuple[float, datetime]]] = {}
     for payee, amount, occurred_at in rows:
@@ -77,6 +104,14 @@ def detect_subscriptions(rows: list[tuple[str, float, datetime]]) -> list[Detect
         gaps_days = [
             (timestamps[i] - timestamps[i - 1]).total_seconds() / 86400 for i in range(1, len(timestamps))
         ]
+
+        # The real, specified cadence filter: every consecutive gap
+        # must sit within the real tolerance window around the real
+        # monthly target. Any single irregular gap disqualifies the
+        # whole real sequence -- a genuine sign it isn't an actual
+        # monthly subscription, not a value to average away.
+        if any(abs(gap - INTERVAL_TARGET_DAYS) > INTERVAL_TOLERANCE_DAYS for gap in gaps_days):
+            continue
 
         results.append(
             DetectedSubscription(
