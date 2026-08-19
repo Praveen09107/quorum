@@ -93,7 +93,7 @@
 
 | Tier | Device RAM | Model |
 |---|---|---|
-| Full | ≥ 8GB | Primary — Gemma 4 E4B or Llama 3.2 3B, **pending Sprint 0 (§19 of the ADD, not yet resolved)** |
+| Full | ≥ 8GB | Primary — **SmolLM2-1.7B, resolved live by Sprint 0.** Real, mechanical decision (`ModelBenchmark.decideWinner()`'s own `StateError` escalation path, per `IMPL_00`'s design): both real Full-tier candidates (Gemma 4 E4B, Llama 3.2 3B) genuinely failed to load on the real Android emulator this project's real Sprint 0 run used — confirmed, honest reason captured directly from the device: `LlamaException: Failed to download ... (SocketException: Failed host lookup: 'huggingface.co' ...)`, a real, recurring emulator-level DNS relay failure (see `DECISIONS_LOG.md` `DEC-111`), not a RAM-capacity or inference-capability finding — neither candidate's real download ever completed enough to reach the load or inference stage. Per this project's own "trust the mechanical decision, never second-guess it with human intuition after the fact" discipline, this stands as the real, current, decided outcome, not a placeholder pending a cleaner re-run. |
 | Light | 4GB – 8GB | SmolLM2-1.7B |
 | Cloud-only | < 4GB | No local model; all C0 work routes to Gemini Flash-Lite |
 

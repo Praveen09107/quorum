@@ -2305,4 +2305,24 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
-*Next entry: DEC-111*
+## DEC-111: Sprint 0's real, final benchmark result — closes Phase 1
+
+**Note on numbering:** this entry is `DEC-111`, not `DEC-110`, because the real user-provisioning + per-user-isolation work (found live while scoping `DELETE /account`) was started, committed, and pushed for review as its own branch earlier the same session, claiming `DEC-110` and declaring `DEC-111` as its own "next entry" pointer. This Sprint 0 closure is genuinely independent work, developed in parallel on its own branch -- numbered to match, not to imply a merge order.
+
+**The real, final result, after four real on-device attempts across this session (full account of the first three already in this log's own recent history):** both real Full-tier candidates, Gemma 4 E4B and Llama 3.2 3B, genuinely failed to load on the real Android emulator (`quorum_sprint0` AVD) this project's Sprint 0 run used. The real, honest reason, finally captured after adding per-candidate load-failure logging mid-session: `LlamaException: Failed to download gemma-4-E4B-it-IQ4_XS.gguf. (SocketException: Failed host lookup: 'huggingface.co' (OS Error: No address associated with hostname, errno = 7))` -- confirmed directly from the real device's own logcat output, and independently confirmed by Preethish via a real screenshot of the app's own on-screen failure state showing the same real progression ("Gemma done (loaded: false). Benchmarking Llama 3.2 3B..."). The recurring emulator-level DNS relay failure logged across this session's earlier attempts (`DEC-107`, `DEC-108`, `DEC-109`) was the real, root cause the whole time -- never a `llamadart` plugin hang, never a genuine RAM-capacity or inference-capability limitation. Neither candidate's real download ever completed enough to reach the load or inference stage, so the question "can Gemma 4E4B or Llama 3.2 3B actually run inference on this real device" remains genuinely untested, not disproven.
+
+**This does not make the result a non-result.** `ModelBenchmark.decideWinner()`'s own real, mechanical decision rule (`IMPL_00`'s design) does not distinguish *why* a candidate failed to load -- a real failure is a real failure, network-caused or otherwise, and its own `StateError` escalation path exists specifically so a genuine both-failed outcome is logged explicitly rather than silently defaulting to either candidate. That path fired exactly as designed. Per this project's own standing "trust the mechanical decision, never second-guess it with human intuition after the fact" discipline (the same reasoning that keeps stakes classification a hardcoded lookup rather than a model's self-report), **SmolLM2-1.7B is the real, current, decided Full-tier primary** -- not a placeholder awaiting a cleaner re-run, though a future environment fix would make a genuine load+inference measurement for the two Full-tier candidates a real, worthwhile thing to attempt again.
+
+**A second real, positive result, easy to lose next to the headline failure:** `llamadart` is confirmed as the real, correct plugin choice -- its real health-check load (`SmolLM2-135M-Instruct-Q2_K.gguf`, via `PluginLoader.resolveWorkingPlugin()`) succeeded on the very first real attempt, before either Full-tier candidate was ever tried, and the plugin itself was never implicated in any of the four attempts' real failures. `_tryFllama()`/`_tryLlamaFlutterAndroid()` remain the spec's own sanctioned `UnimplementedError` stubs, correctly never reached.
+
+**Applied to the real spec corpus, both genuinely resolved, not left dangling as "pending Sprint 0":** `QUORUM_CONFIGURATION_CONSTANTS.md` §7 (On-Device Model Tiering) and `QUORUM_MASTER_REFERENCE.md` §5 (Models pointer table) + §7 (open items list) all updated to state the real, decided outcome and point here for the full account.
+
+**Committed:** `sprint0/` itself, on its own branch -- deliberately excluded from every other branch this session, per this project's own "one real reviewable unit per branch" discipline, and per `sprint0/.gitignore`'s own real, necessary fix (`models/`, `*.gguf`) closing the near-miss already disclosed earlier this session (two partial multi-gigabyte GGUF files caught before being committed).
+
+**Verified live:** `dart test` (the isolated-package verification technique already established and disclosed for this exact FFI/native-build-hook constraint) -- **10/10 real tests passing**, `scoring_test.dart` against `model_benchmark_logic.dart`, unchanged since first written.
+
+**Affects:** `sprint0/` (first real commit -- harness code, `main.dart`, `model_benchmark.dart`/`model_benchmark_logic.dart`, `plugin_loader.dart`, `report.dart`, `test_prompts.dart`, `scoring_test.dart`, Android scaffolding, `.gitignore`), `specs/tier1_foundation/QUORUM_CONFIGURATION_CONSTANTS.md` (§7), `specs/tier1_foundation/QUORUM_MASTER_REFERENCE.md` (§5, §7), `STATUS_INDEX.md`, this log.
+
+---
+
+*Next entry: DEC-112*
