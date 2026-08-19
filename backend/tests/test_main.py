@@ -715,3 +715,115 @@ async def test_auth_revoke_genuinely_signs_out_every_real_session_for_that_user(
             await rotate_refresh_token(raw_refresh, store)
     finally:
         await pool.execute("DELETE FROM refresh_tokens WHERE user_id = $1", user_id)
+
+
+def test_delete_account_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.delete("/account")
+    assert response.status_code == 401
+
+
+async def test_delete_account_genuinely_purges_real_data_and_revokes_real_sessions(pool):
+    """Real, end-to-end, irreversible: real-provisions a real user
+    (mirroring what `/auth/token` does at real sign-in), issues a real
+    refresh token for that same identity (mirroring a real, live
+    session), inserts one real task, calls `DELETE /account` with a
+    real, valid access token, then confirms -- against the real, live
+    database, not just the response body -- that the real task is
+    gone, the real `users` row is gone, and the real session can no
+    longer rotate. Nothing left to clean up in `finally`: a correct
+    real deletion IS the cleanup."""
+    google_sub = f"test-deletion-e2e-{uuid.uuid4()}"
+    internal_user_id = await get_or_create_user(pool, google_sub=google_sub, email=None)
+    revocation_store = SupabaseRevocationStore(pool)
+    raw_refresh = await issue_refresh_token(google_sub, revocation_store)
+    settings = get_settings()
+    access_token = create_access_token(google_sub, settings.jwt_signing_key)
+
+    task_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO tasks (task_id, user_id, title, estimated_hours, deadline, status) VALUES ($1, $2, $3, $4, $5, $6)",
+        task_id,
+        uuid.UUID(internal_user_id),
+        "A real task, about to be really, permanently deleted",
+        1.0,
+        None,
+        "open",
+    )
+
+    with TestClient(app) as client:
+        response = client.delete("/account", headers={"Authorization": f"Bearer {access_token}"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["user_id"] == internal_user_id
+    assert body["sessions_revoked"] is True
+    # 1 real task + 1 real users row -- the real, honest count, not a
+    # placeholder.
+    assert body["postgres_rows_deleted"] == 2
+    assert body["vector_embeddings_deleted"] == 0
+    assert body["memories_deleted"] == 0
+    assert body["oauth_tokens_revoked"] == 0
+
+    # Real, live confirmation against the real database, not just a
+    # trusted response body.
+    assert await pool.fetchrow("SELECT 1 FROM tasks WHERE task_id = $1", task_id) is None
+    assert await pool.fetchrow("SELECT 1 FROM users WHERE user_id = $1", uuid.UUID(internal_user_id)) is None
+    with pytest.raises(TokenRevoked):
+        await rotate_refresh_token(raw_refresh, revocation_store)
+
+
+async def test_delete_account_never_touches_a_different_real_users_data(pool):
+    victim_sub = f"test-deletion-victim-{uuid.uuid4()}"
+    bystander_sub = f"test-deletion-bystander-{uuid.uuid4()}"
+    victim_id = await get_or_create_user(pool, google_sub=victim_sub, email=None)
+    bystander_id = await get_or_create_user(pool, google_sub=bystander_sub, email=None)
+    revocation_store = SupabaseRevocationStore(pool)
+    bystander_refresh = await issue_refresh_token(bystander_sub, revocation_store)
+    settings = get_settings()
+    victim_access_token = create_access_token(victim_sub, settings.jwt_signing_key)
+
+    bystander_task = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO tasks (task_id, user_id, title, estimated_hours, deadline, status) VALUES ($1, $2, $3, $4, $5, $6)",
+        bystander_task,
+        uuid.UUID(bystander_id),
+        "Bystander's real, untouched task",
+        1.0,
+        None,
+        "open",
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.delete("/account", headers={"Authorization": f"Bearer {victim_access_token}"})
+        assert response.status_code == 200
+        # The real, deleted identity really is the victim's own internal
+        # UUID -- never the bystander's, confirming the route resolved
+        # and acted on the correct real account.
+        assert response.json()["user_id"] == victim_id
+
+        # The bystander's real task, real users row, and real session
+        # all survive completely untouched.
+        assert await pool.fetchrow("SELECT 1 FROM tasks WHERE task_id = $1", bystander_task) is not None
+        assert await pool.fetchrow("SELECT 1 FROM users WHERE user_id = $1", uuid.UUID(bystander_id)) is not None
+        # A real, live proof the bystander's own session still rotates
+        # -- never revoked by someone else's account deletion.
+        await rotate_refresh_token(bystander_refresh, revocation_store)
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE task_id = $1", bystander_task)
+        await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(bystander_id))
+        await pool.execute("DELETE FROM refresh_tokens WHERE user_id = $1", bystander_sub)
+
+
+def test_delete_account_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
+    with TestClient(app) as client:
+        real_pool = app.state.db_pool
+        app.state.db_pool = None
+        try:
+            response = client.delete("/account", headers=_auth_header())
+            health_response = client.get("/health")
+            assert response.status_code == 503
+            assert health_response.status_code == 200
+        finally:
+            app.state.db_pool = real_pool

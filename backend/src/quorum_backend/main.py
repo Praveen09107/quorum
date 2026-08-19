@@ -57,6 +57,8 @@ from quorum_backend.features.self_test_harness import ScenarioResult, run_self_t
 from quorum_backend.features.subscription_detective import fetch_detected_subscriptions
 from quorum_backend.features.tasks import fetch_tasks
 from quorum_backend.features.trust_digest import fetch_trust_digest
+from quorum_backend.security.account_deletion import delete_account
+from quorum_backend.security.supabase_deletion_store import SupabaseDeletionStore
 
 logger = logging.getLogger("quorum_backend")
 
@@ -462,3 +464,49 @@ async def auth_revoke(
     WHOSE sessions to revoke -- never a bare user_id in the request
     body, which would let any caller sign out any other user."""
     await revoke_all_for_user(user_id, store)
+
+
+@app.delete("/account")
+async def delete_account_route(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+    revocation_store: SupabaseRevocationStore = Depends(_get_revocation_store),
+) -> dict:
+    """Real, live, irreversible -- `QUORUM_DATA_CONTRACTS.md` §5.8.
+    S3-equivalent per that section's own real, explicit requirement;
+    the mobile client's own real, type-to-confirm ceremony
+    (`you_logic.dart`'s `isValidDeletionConfirmation`) is the real gate
+    that must run before this route is ever called -- this route itself
+    performs no additional confirmation step of its own, trusting the
+    real access token as sufficient proof of the request (the same
+    real security boundary every other route in this file already
+    relies on).
+
+    Resolves the real internal UUID first (`DEC-110`'s bridge), then
+    calls the real, CRITICAL-tier `delete_account()` with both real
+    identifiers it now genuinely needs (`DEC-113`): `google_sub` for
+    real session revocation, the resolved internal UUID for the real
+    `SupabaseDeletionStore` purge. Two of the four real store counts
+    are honest, disclosed zeros regardless of what this account
+    actually contains -- see `SupabaseDeletionStore`'s own docstring
+    for the full account of why `purge_memories`/`revoke_oauth_tokens`
+    can never be anything else in this backend today.
+    """
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    deletion_store = SupabaseDeletionStore(pool)
+
+    result = await delete_account(
+        google_sub=google_sub,
+        internal_user_id=internal_user_id,
+        deletion_store=deletion_store,
+        revocation_store=revocation_store,
+    )
+
+    return {
+        "user_id": result.user_id,
+        "sessions_revoked": result.sessions_revoked,
+        "postgres_rows_deleted": result.postgres_rows_deleted,
+        "vector_embeddings_deleted": result.vector_embeddings_deleted,
+        "memories_deleted": result.memories_deleted,
+        "oauth_tokens_revoked": result.oauth_tokens_revoked,
+    }
