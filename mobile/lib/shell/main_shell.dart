@@ -115,6 +115,12 @@ class MainShell extends ConsumerStatefulWidget {
   final WaitingOnFetcher? fetchWaitingOn;
   final SearchFetcher? fetchSearch;
 
+  /// The real, live "sign out" action (`DEC-105`) -- distinct from
+  /// `confirmDelete` above: signing out ends the current real session
+  /// only, never touches any real stored data, the opposite stakes
+  /// level from account deletion.
+  final VoidCallback? onSignOut;
+
   const MainShell({
     super.key,
     this.fetchToday,
@@ -131,6 +137,7 @@ class MainShell extends ConsumerStatefulWidget {
     this.fetchFinance,
     this.fetchWaitingOn,
     this.fetchSearch,
+    this.onSignOut,
   });
 
   @override
@@ -194,6 +201,7 @@ class _MainShellState extends ConsumerState<MainShell> {
           fetchFinance: widget.fetchFinance,
           fetchWaitingOn: widget.fetchWaitingOn,
           fetchSearch: widget.fetchSearch,
+          onSignOut: widget.onSignOut,
         );
       default:
         return const SizedBox.shrink();

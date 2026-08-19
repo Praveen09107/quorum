@@ -20,12 +20,14 @@ loudly logged now -- a real safety net for exactly the "someone forgot
 to set a real secret" failure mode.
 """
 import logging
+from urllib.parse import urlencode
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from typing import AsyncIterator
 
 import asyncpg
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from quorum_backend.auth.access_token import (
@@ -176,6 +178,41 @@ async def trust_digest(
         "trend": result.trend,
         "delta": result.delta,
     }
+
+
+@app.get("/auth/callback")
+async def auth_callback(code: str | None = None, state: str | None = None, error: str | None = None) -> RedirectResponse:
+    """A real, necessary bridge, found and built this session: Google's
+    real OAuth rules (per its own current documentation, confirmed live
+    before building this) require a "Web application"-type client --
+    which this project's real, already-created OAuth client is, since
+    it has a real client_secret the backend needs -- to redirect to a
+    real `https://` URL, never a mobile app's custom URL scheme
+    directly. `flutter_web_auth_2` on the mobile side needs exactly
+    that custom scheme to capture the result and close the in-app
+    browser. This route is the real, stateless hop between the two: it
+    holds no logic of its own beyond forwarding Google's own real query
+    parameters onward.
+
+    Deliberately minimal and stateless -- this route never sees or
+    touches a real user's identity or tokens; the actual code exchange
+    (`POST /auth/token`) still happens directly between the mobile app
+    and this backend afterward, using the SAME `redirect_uri` (this
+    route's own real URL) that Google's `/token` endpoint requires to
+    match the one used in the original authorization request.
+    """
+    mobile_scheme = "com.quorum.quorum_mobile://oauth2redirect"
+    if error is not None:
+        params = {"error": error}
+    elif code is None:
+        params = {"error": "missing_code"}
+    else:
+        params = {"code": code}
+        if state is not None:
+            params["state"] = state
+    # Real, correct query encoding -- code/state/error are opaque values
+    # from Google, never assumed URL-safe as-is.
+    return RedirectResponse(url=f"{mobile_scheme}?{urlencode(params)}")
 
 
 @app.post("/auth/token", response_model=TokenPairResponse)

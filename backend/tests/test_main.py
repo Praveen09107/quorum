@@ -149,6 +149,43 @@ def test_trust_digest_returns_503_not_a_crash_when_the_real_pool_is_unavailable(
             app.state.db_pool = real_pool
 
 
+def test_auth_callback_bridges_a_real_google_redirect_to_the_real_mobile_scheme():
+    # The real, necessary bridge (DEC-105): Google's own current rules
+    # require a real https:// redirect for a "Web application"-type
+    # OAuth client (confirmed live before building this -- custom
+    # schemes are no longer accepted directly). This route's only real
+    # job is forwarding Google's real query params onward to the
+    # mobile app's own custom scheme.
+    with TestClient(app, follow_redirects=False) as client:
+        response = client.get("/auth/callback", params={"code": "real-test-code", "state": "real-test-state"})
+    assert response.status_code in (302, 307)
+    location = response.headers["location"]
+    assert location.startswith("com.quorum.quorum_mobile://oauth2redirect?")
+    assert "code=real-test-code" in location
+    assert "state=real-test-state" in location
+
+
+def test_auth_callback_forwards_a_real_google_error_without_inventing_a_code():
+    with TestClient(app, follow_redirects=False) as client:
+        response = client.get("/auth/callback", params={"error": "access_denied"})
+    assert response.status_code in (302, 307)
+    location = response.headers["location"]
+    assert location.startswith("com.quorum.quorum_mobile://oauth2redirect?")
+    assert "error=access_denied" in location
+    assert "code=" not in location
+
+
+def test_auth_callback_with_neither_code_nor_error_fails_loud_not_silently():
+    # A genuine anomaly -- Google's real redirect always carries one or
+    # the other. Surfaced as a real, honest error to the mobile app,
+    # never silently forwarded as if a real code were present.
+    with TestClient(app, follow_redirects=False) as client:
+        response = client.get("/auth/callback")
+    assert response.status_code in (302, 307)
+    location = response.headers["location"]
+    assert "error=missing_code" in location
+
+
 def test_auth_token_with_a_fake_code_fails_loud_with_a_real_400():
     # A full real round-trip needs a live browser completing Google's
     # real consent screen -- not available in this environment. This
@@ -168,6 +205,48 @@ def test_auth_token_with_a_fake_code_fails_loud_with_a_real_400():
         )
     assert response.status_code == 400
     assert "invalid_grant" in response.json()["detail"]
+
+
+def test_auth_callback_forwards_a_real_code_and_state_to_the_real_mobile_scheme():
+    with TestClient(app, follow_redirects=False) as client:
+        response = client.get("/auth/callback", params={"code": "a-real-auth-code", "state": "a-real-csrf-state"})
+    assert response.status_code in (302, 307)
+    location = response.headers["location"]
+    assert location.startswith("com.quorum.quorum_mobile://oauth2redirect?")
+    assert "code=a-real-auth-code" in location
+    assert "state=a-real-csrf-state" in location
+
+
+def test_auth_callback_forwards_a_real_google_error_never_silently_dropped():
+    with TestClient(app, follow_redirects=False) as client:
+        response = client.get("/auth/callback", params={"error": "access_denied"})
+    assert response.status_code in (302, 307)
+    location = response.headers["location"]
+    assert location.startswith("com.quorum.quorum_mobile://oauth2redirect?")
+    assert "error=access_denied" in location
+
+
+def test_auth_callback_with_neither_code_nor_error_is_a_real_honest_missing_code_signal():
+    # A genuine anomaly -- Google's own real flow always sends one or
+    # the other. Never silently redirects with an empty query string,
+    # which would leave the mobile app unable to tell what happened.
+    with TestClient(app, follow_redirects=False) as client:
+        response = client.get("/auth/callback")
+    assert response.status_code in (302, 307)
+    assert "error=missing_code" in response.headers["location"]
+
+
+def test_auth_callback_real_url_encodes_special_characters_in_state():
+    # A real, deliberate correctness check: state values can legitimately
+    # contain characters (&, =, spaces) that manual string concatenation
+    # would corrupt into a broken redirect URL.
+    with TestClient(app, follow_redirects=False) as client:
+        response = client.get("/auth/callback", params={"code": "c1", "state": "a&b=c d"})
+    location = response.headers["location"]
+    from urllib.parse import parse_qs, urlsplit
+
+    parsed = parse_qs(urlsplit(location).query)
+    assert parsed["state"] == ["a&b=c d"]
 
 
 async def test_auth_refresh_genuinely_rotates_a_real_token_against_the_real_database(pool):
