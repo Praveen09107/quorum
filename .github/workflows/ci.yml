@@ -1,0 +1,110 @@
+name: CI
+
+# Real, PR-gating CI -- Batch 10 Phase 6 (partial), DEC-115. Runs the same
+# four commands this project's own CLAUDE.md has always asked a human to
+# run by hand before every commit (ruff, pytest, flutter analyze, flutter
+# test), automatically, on every real PR and every push to main.
+#
+# A real, disclosed, deliberate scope decision, not an oversight:
+# - Backend tests run against a real, disposable Postgres 16 + pgvector
+#   service container (the same real image DEC-010 first proved this
+#   migration against locally), never the live Supabase project -- a real
+#   PR must never be able to touch live, production-adjacent data.
+# - `test_auth_google_oauth.py` (whole file) and one further real test in
+#   `test_main.py` (`test_auth_token_with_a_fake_code_fails_loud_with_a_real_400`
+#   -- found live, on this workflow's own first real CI run, not assumed
+#   in advance) are deliberately excluded from this CI run. Each needs
+#   the real, live GOOGLE_OAUTH_CLIENT_ID/SECRET to distinguish a real
+#   `invalid_grant`/`400` from `invalid_client`/`503` (see DEC-101) --
+#   this environment's own permission boundary blocked programmatically
+#   provisioning those as real GitHub Actions secrets during this session
+#   (DEC-115), so rather than silently skip them with no record, or work
+#   around that denial, both exclusions are disclosed here, in this
+#   file, in plain text. Genuinely still open in STATUS_INDEX.md -- if
+#   GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET are ever added
+#   as real repo secrets, remove both exclusions below. This file's own
+#   JWT_SIGNING_KEY stays a CI-only dummy value regardless, always
+#   distinct from the real, deployed one (DEC-114).
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # A real, disposable, CI-only database -- never the live Supabase
+      # project. A real, disposable, CI-only signing key -- never the
+      # real, deployed JWT_SIGNING_KEY (DEC-114).
+      SUPABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      JWT_SIGNING_KEY: ci-only-dummy-signing-key-never-used-in-any-real-deployment
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install backend (editable, dev extras)
+        working-directory: backend
+        run: pip install -e ".[dev]"
+
+      - name: Apply real migrations to the disposable CI database
+        working-directory: backend
+        run: |
+          psql "$SUPABASE_URL" -f migrations/0001_initial_schema/up.sql
+          psql "$SUPABASE_URL" -f migrations/0002_refresh_tokens/up.sql
+          psql "$SUPABASE_URL" -f migrations/0003_users/up.sql
+
+      - name: ruff
+        working-directory: backend
+        run: ruff check .
+
+      - name: pytest (excludes the two real tests needing a live Google OAuth secret -- see this file's own header comment)
+        working-directory: backend
+        run: |
+          PYTHONPATH=src pytest tests -q \
+            --ignore=tests/test_auth_google_oauth.py \
+            --deselect=tests/test_main.py::test_auth_token_with_a_fake_code_fails_loud_with_a_real_400
+
+  mobile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.0"
+          channel: stable
+
+      - name: flutter pub get
+        working-directory: mobile
+        run: flutter pub get
+
+      - name: Generate Drift code (real, required -- gitignored, never committed; see CLAUDE.md Common Commands)
+        working-directory: mobile
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: flutter analyze
+        working-directory: mobile
+        run: flutter analyze
+
+      - name: flutter test
+        working-directory: mobile
+        run: flutter test
