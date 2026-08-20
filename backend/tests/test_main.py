@@ -3,6 +3,7 @@ consumed at real app startup, not just an unreferenced file, and (Batch
 10 Phase 3) that the real auth routes and the real Bearer-auth gate on
 /trust_digest genuinely work end to end against the real, live database.
 """
+import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -365,6 +366,130 @@ def test_tasks_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
             tasks_response = client.get("/tasks", headers=_auth_header())
             health_response = client.get("/health")
             assert tasks_response.status_code == 503
+            assert health_response.status_code == 200
+        finally:
+            app.state.db_pool = real_pool
+
+
+async def test_today_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
+    """Real, end-to-end: real-provisions a real user, inserts a real,
+    unresolved `action_events` row and a real, unresolved `negotiations`
+    row scoped to that exact user, confirms `GET /today` genuinely
+    round-trips through both real tables with a real, valid access
+    token, then cleans up. Real per-user scoped from this endpoint's
+    first line (`DEC-119`) -- no retrofit needed, unlike `/tasks`."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_id = uuid.uuid4()
+    negotiation_id = uuid.uuid4()
+
+    await pool.execute(
+        """
+        INSERT INTO action_events (proposal_id, action_type, stakes, payload, trace_id, resolved_at, user_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        """,
+        proposal_id,
+        "send_email",
+        "S3",
+        json.dumps({"to": "priya@x.com"}),
+        f"trace-{proposal_id}",
+        None,
+        uuid.UUID(internal_user_id),
+    )
+    await pool.execute(
+        """
+        INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at, resolved_at)
+        VALUES ($1, $2, $3, $4, $5)
+        """,
+        negotiation_id,
+        uuid.UUID(internal_user_id),
+        ["calendar", "finance"],
+        datetime.now(timezone.utc),
+        None,
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/today", headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body.keys()) == {"capacity", "budget", "needs_you_now", "in_motion"}
+        assert set(body["capacity"].keys()) == {"hours_remaining_today", "remaining_fraction", "source"}
+        assert body["capacity"]["source"] == "live_backend"
+        assert set(body["budget"].keys()) == {"amount_remaining", "remaining_fraction", "source"}
+        assert body["budget"]["source"] == "live_backend"
+
+        action_match = next(a for a in body["needs_you_now"] if a["proposal_id"] == str(proposal_id))
+        assert action_match["action_type"] == "send_email"
+        assert action_match["stakes"] == "S3"
+        assert action_match["payload"] == {"to": "priya@x.com"}
+
+        negotiation_match = next(n for n in body["in_motion"] if n["negotiation_id"] == str(negotiation_id))
+        assert negotiation_match["conflicted_domains"] == ["calendar", "finance"]
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = $1", proposal_id)
+        await pool.execute("DELETE FROM negotiations WHERE negotiation_id = $1", negotiation_id)
+
+
+async def test_today_endpoint_never_leaks_another_real_users_rows(pool, provisioned_users):
+    """The same real, load-bearing cross-user-isolation property every
+    other per-user endpoint in this backend proves, applied to both of
+    `/today`'s real tables at once."""
+    headers_a, user_a = await _provisioned_auth_header(pool, provisioned_users)
+    _headers_b, user_b = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_a, proposal_b = uuid.uuid4(), uuid.uuid4()
+    negotiation_a, negotiation_b = uuid.uuid4(), uuid.uuid4()
+
+    for proposal_id, user_id in ((proposal_a, user_a), (proposal_b, user_b)):
+        await pool.execute(
+            """
+            INSERT INTO action_events (proposal_id, action_type, stakes, payload, trace_id, resolved_at, user_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            """,
+            proposal_id, "send_email", "S2", json.dumps({}), f"trace-{proposal_id}", None, uuid.UUID(user_id),
+        )
+    for negotiation_id, user_id in ((negotiation_a, user_a), (negotiation_b, user_b)):
+        await pool.execute(
+            """
+            INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at, resolved_at)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            negotiation_id, uuid.UUID(user_id), ["tasks"], datetime.now(timezone.utc), None,
+        )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/today", headers=headers_a)
+
+        body = response.json()
+        action_ids_seen = {a["proposal_id"] for a in body["needs_you_now"]}
+        negotiation_ids_seen = {n["negotiation_id"] for n in body["in_motion"]}
+        assert str(proposal_a) in action_ids_seen
+        assert str(proposal_b) not in action_ids_seen
+        assert str(negotiation_a) in negotiation_ids_seen
+        assert str(negotiation_b) not in negotiation_ids_seen
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = ANY($1::uuid[])", [proposal_a, proposal_b])
+        await pool.execute("DELETE FROM negotiations WHERE negotiation_id = ANY($1::uuid[])", [negotiation_a, negotiation_b])
+
+
+def test_today_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.get("/today")
+    assert response.status_code == 401
+
+
+def test_today_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
+    """Same real, honest failure mode as every other real per-user
+    endpoint's own equivalent test -- /health stays unaffected, /today
+    fails loud with a real 503 rather than a raw exception."""
+    with TestClient(app) as client:
+        real_pool = app.state.db_pool
+        app.state.db_pool = None
+        try:
+            today_response = client.get("/today", headers=_auth_header())
+            health_response = client.get("/health")
+            assert today_response.status_code == 503
             assert health_response.status_code == 200
         finally:
             app.state.db_pool = real_pool
