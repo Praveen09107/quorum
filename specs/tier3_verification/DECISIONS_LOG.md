@@ -2669,4 +2669,24 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
-*Next entry: DEC-126*
+## DEC-126: Cleanup pass — one stale claim corrected, one real gap closed, one real scope-widening found and disclosed rather than built around
+
+**STANDARD tier** — no Gate/security/auth/secrets/real-external-action code touched; a live-DB delete against real, already-empty test fixtures via the existing, already-CRITICAL-tier-reviewed `delete_account()` path, plus documentation corrections.
+
+**Requested as a "quick cleanup pass"** covering three items from `STATUS_INDEX.md`'s open list: retry the still-listed-failing `test_negotiation_gemini_calls.py` tests, delete the four orphaned `test-`-prefixed `users` rows, and wire `fetchGateReveal` in `main.dart`.
+
+**1. Retried the negotiation-Gemini tests — found `DEC-125`'s own "RESOLVED" claim about the Gemini quota was wrong, corrected it.** `DEC-125` observed its own new live Judge test pass once, late in its session, and generalized that single success to "the quota is resolved." Retried `test_negotiation_gemini_calls.py`'s three live tests directly this session: all three still fail with the same live `429`, in a session where a *different* live Gemini call (the Judge test, re-run) can be observed to succeed. This proves the real behavior isn't a simple on/off daily gate — different calls against the same key, close together in real time, land on opposite sides of it, for a reason still not understood client-side. `STATUS_INDEX.md` open item #21 corrected to state this plainly rather than repeat the overgeneralization; only one retry attempt made this session, per the standing "repeated retries may be counterproductive" discipline (`DEC-123`).
+
+**2. Deleted the four orphaned `test-`-prefixed `users` rows (`STATUS_INDEX.md` open item #25) — via the real, already-tested `delete_account()` path, not raw SQL.** Confirmed the exact four rows directly first (`google_sub LIKE 'test-%'`, all with `email IS NULL`, consistent with interrupted test fixtures, none matching any real signed-in account). Reused `SupabaseDeletionStore`/`SupabaseRevocationStore`/`delete_account()` exactly as `main.py`'s own real `DELETE /account` route constructs them, one call per real `google_sub` — the same CRITICAL-tier-reviewed code path, not a new one-off script. Each deleted exactly 1 real Postgres row (itself) and 0 vector embeddings, consistent with these being empty test fixtures. Verified live: zero `test-`-prefixed rows remain.
+
+**3. `fetchGateReveal` — found genuinely bigger than "wiring," stopped and disclosed rather than built around or faked.** Confirmed directly against the real schema (`migrations/0001_initial_schema/up.sql`) before writing any mobile code: `action_events` has `gate_decision`/`outcome` summary columns only — no `findings`/`objections` persistence exists anywhere in this database, for any row. Confirmed via `grep` against `main.py`: no backend route for this exists either. `main_shell.dart`'s own `GateRevealFetcher`/navigation/`_GateRevealLoader` are already real and complete (`DEC-104`) — genuinely only the fetcher itself is missing, but supplying it honestly needs a schema change, a real code path to populate it (itself blocked on the same "no production Gate-review trigger" gap `DEC-119`/`120`/`121`/`125` each separately found), and a new endpoint, before any mobile fetcher could return real, non-fabricated data. Not built this session. This is Rule 4 territory (a "quick" item whose real scope didn't match what was asked) — surfaced directly rather than silently expanded into a multi-part feature or faked with placeholder findings (Rule 1).
+
+**Verified live:** the two completed items were each independently confirmed live (test retry output, before/after row counts) rather than assumed from the actions taken. No `ruff`/`pytest`/`flutter` re-verification needed — no application code changed, only `STATUS_INDEX.md`/this log and one real, live database state change via already-tested code.
+
+**Genuinely still open, not resolved by this entry:** items #21 (Gemini quota, now understood as genuinely fluctuating rather than resolved or reliably exhausted) and #24 (`fetchGateReveal`, now understood as needing real backend persistence + an endpoint before any mobile wiring is honest) — both corrected/clarified, neither closed. The `retry_queue` drainer (#26) remains the largest real open item.
+
+**Affects:** `STATUS_INDEX.md`, this log, the live Supabase `users`/associated per-user tables (four real rows deleted).
+
+---
+
+*Next entry: DEC-127*
