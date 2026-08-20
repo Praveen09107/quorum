@@ -1,6 +1,7 @@
 """Real tests for features/negotiation_choice.py -- real INSERTs/UPDATEs,
 real queries, real DELETEs in a `finally` block, per `CLAUDE.md` Rule 5.
 """
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -134,6 +135,51 @@ async def test_choose_negotiation_option_raises_already_resolved_and_never_doubl
         )
         assert job_count == 0
     finally:
+        await pool.execute("DELETE FROM negotiations WHERE negotiation_id = $1", uuid.UUID(negotiation_id))
+
+
+async def test_choose_negotiation_option_a_real_concurrent_race_lets_exactly_one_winner_choose(pool, user_id):
+    """A real, live race against real Postgres row-level locking, not a
+    simulated one -- the same real-concurrency discipline `DEC-101`'s
+    own `claim_and_rotate()` race test already established for this
+    project, applied here to `SELECT ... FOR UPDATE` specifically.
+    `asyncio.gather` fires two genuinely concurrent calls through the
+    real connection pool at the exact same negotiation; Postgres's own
+    real row lock -- not application code, not a mock -- forces the
+    loser to block until the winner's transaction commits, then see
+    `resolved_at` already set. A CRITICAL-tier review flagged the
+    absence of this test as a real gap (code-trace confidence isn't the
+    same standard as a genuinely concurrent proof) -- closed here."""
+    negotiation_id = await _insert_negotiation(pool, user_id=user_id)
+    try:
+        results = await asyncio.gather(
+            choose_negotiation_option(pool, user_id=user_id, negotiation_id=negotiation_id, chosen_option="option_a"),
+            choose_negotiation_option(pool, user_id=user_id, negotiation_id=negotiation_id, chosen_option="option_b"),
+            return_exceptions=True,
+        )
+
+        successes = [r for r in results if not isinstance(r, BaseException)]
+        failures = [r for r in results if isinstance(r, BaseException)]
+        assert len(successes) == 1, "exactly one of two genuinely concurrent racers must win the real row lock"
+        assert len(failures) == 1
+        assert isinstance(failures[0], NegotiationAlreadyResolved)
+
+        # The real, durable outcome matches whichever real racer won --
+        # never a corrupted mix of both, never left unresolved.
+        row = await pool.fetchrow(
+            "SELECT resolved_at, chosen_option_id FROM negotiations WHERE negotiation_id = $1", uuid.UUID(negotiation_id)
+        )
+        assert row["resolved_at"] is not None
+        assert row["chosen_option_id"] == successes[0].option_id
+
+        # Exactly one real retry_queue job -- the loser's rejected
+        # attempt never enqueued a second, orphaned job.
+        job_count = await pool.fetchval(
+            "SELECT COUNT(*) FROM retry_queue WHERE payload->>'negotiation_id' = $1", negotiation_id
+        )
+        assert job_count == 1
+    finally:
+        await pool.execute("DELETE FROM retry_queue WHERE payload->>'negotiation_id' = $1", negotiation_id)
         await pool.execute("DELETE FROM negotiations WHERE negotiation_id = $1", uuid.UUID(negotiation_id))
 
 

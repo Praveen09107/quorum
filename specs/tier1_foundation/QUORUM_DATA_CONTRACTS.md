@@ -332,7 +332,7 @@ A real, honest distinction, not glossed over: `positions`/`options` can each leg
 
 Each `options[].impact` entry is `ImpactDelta` (§1.8) exactly — every field code-computed by `negotiation/impact_simulator.py`'s real arithmetic, never a model call, the same "the model narrates, the code computes" guarantee that governs every other real `ImpactDelta` in this system.
 
-### 5.6 `POST /negotiations/{negotiation_id}/choose` (specified — absent until now)
+### 5.6 `POST /negotiations/{negotiation_id}/choose` (real and live as of `DEC-123`)
 
 Request: `{"chosen_option": "option_a" | "option_b" | "do_nothing"}`. Response: `202 Accepted` — downstream actions from the chosen option are enqueued, each re-entering the Gate at its own stakes level (§8.3 of the ADD).
 
