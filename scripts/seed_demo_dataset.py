@@ -313,13 +313,38 @@ async def main() -> None:
             print("done.")
             return
 
-        await seed_tasks(pool, user_id=user_id)
-        await seed_expenses(pool, user_id=user_id)
-        applications = await seed_applications(pool, user_id=user_id)
-        interview_scheduled_id = next(app_id for app_id, status in applications if status == "interview_scheduled")
-        await seed_interviews(pool, application_id=interview_scheduled_id)
-        await seed_action_events(pool, user_id=user_id)
-        negotiation_id = await seed_negotiation_row(pool, user_id=user_id)
+        # A real, disclosed hardening, made after a real review flagged
+        # it rather than waiting to hit it again: everything below runs
+        # inside ONE real transaction, on one held connection -- a
+        # crash partway through (the same real asyncpg.TimeoutError
+        # class this project's own test suite has hit more than once
+        # under Supabase free-tier connection load) now rolls back
+        # cleanly instead of leaving a partial seed that a later
+        # `--force` would duplicate on top of, reproducing the exact
+        # incident this file's own docstring already discloses.
+        # Deliberately does NOT include `seed_negotiation_detail` below
+        # -- that step makes a real, slow, live Gemini network call,
+        # and holding a database transaction open across a slow
+        # external call is its own real anti-pattern, worth avoiding
+        # even though `seed_negotiation_detail`'s own write is a single
+        # statement either way.
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await seed_tasks(conn, user_id=user_id)
+                await seed_expenses(conn, user_id=user_id)
+                applications = await seed_applications(conn, user_id=user_id)
+                interview_scheduled_id = next(
+                    (app_id for app_id, status in applications if status == "interview_scheduled"), None
+                )
+                if interview_scheduled_id is None:
+                    raise RuntimeError(
+                        "No 'interview_scheduled' application in the seed list above -- "
+                        "seed_interviews() needs one to attach a real interview to. "
+                        "Fix the applications list, don't silently skip seeding an interview."
+                    )
+                await seed_interviews(conn, application_id=interview_scheduled_id)
+                await seed_action_events(conn, user_id=user_id)
+                negotiation_id = await seed_negotiation_row(conn, user_id=user_id)
 
         if args.with_negotiation_detail:
             settings = get_settings()
