@@ -1181,9 +1181,12 @@ async def test_delete_account_genuinely_purges_real_data_and_revokes_real_sessio
     """Real, end-to-end, irreversible: real-provisions a real user
     (mirroring what `/auth/token` does at real sign-in), issues a real
     refresh token for that same identity (mirroring a real, live
-    session), inserts one real task, calls `DELETE /account` with a
+    session), inserts one real task PLUS one real `action_events` row
+    and one real `negotiations` row (`DEC-124` -- the real gap this
+    session closed; this test would have caught the original gap had
+    it existed before this session), calls `DELETE /account` with a
     real, valid access token, then confirms -- against the real, live
-    database, not just the response body -- that the real task is
+    database, not just the response body -- that every real row is
     gone, the real `users` row is gone, and the real session can no
     longer rotate. Nothing left to clean up in `finally`: a correct
     real deletion IS the cleanup."""
@@ -1195,6 +1198,8 @@ async def test_delete_account_genuinely_purges_real_data_and_revokes_real_sessio
     access_token = create_access_token(google_sub, settings.jwt_signing_key)
 
     task_id = uuid.uuid4()
+    proposal_id = uuid.uuid4()
+    negotiation_id = uuid.uuid4()
     await pool.execute(
         "INSERT INTO tasks (task_id, user_id, title, estimated_hours, deadline, status) VALUES ($1, $2, $3, $4, $5, $6)",
         task_id,
@@ -1204,6 +1209,14 @@ async def test_delete_account_genuinely_purges_real_data_and_revokes_real_sessio
         None,
         "open",
     )
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, trace_id, user_id) VALUES ($1, $2, $3, $4::jsonb, $5, $6)",
+        proposal_id, "create_note", "S0", "{}", f"test-deletion-e2e-{proposal_id}", uuid.UUID(internal_user_id),
+    )
+    await pool.execute(
+        "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at) VALUES ($1, $2, $3, $4)",
+        negotiation_id, uuid.UUID(internal_user_id), ["finance"], datetime.now(timezone.utc),
+    )
 
     with TestClient(app) as client:
         response = client.delete("/account", headers={"Authorization": f"Bearer {access_token}"})
@@ -1212,9 +1225,9 @@ async def test_delete_account_genuinely_purges_real_data_and_revokes_real_sessio
     body = response.json()
     assert body["user_id"] == internal_user_id
     assert body["sessions_revoked"] is True
-    # 1 real task + 1 real users row -- the real, honest count, not a
-    # placeholder.
-    assert body["postgres_rows_deleted"] == 2
+    # 1 real task + 1 real action_event + 1 real negotiation + 1 real
+    # users row -- the real, honest count, not a placeholder.
+    assert body["postgres_rows_deleted"] == 4
     assert body["vector_embeddings_deleted"] == 0
     assert body["memories_deleted"] == 0
     assert body["oauth_tokens_revoked"] == 0
@@ -1222,6 +1235,8 @@ async def test_delete_account_genuinely_purges_real_data_and_revokes_real_sessio
     # Real, live confirmation against the real database, not just a
     # trusted response body.
     assert await pool.fetchrow("SELECT 1 FROM tasks WHERE task_id = $1", task_id) is None
+    assert await pool.fetchrow("SELECT 1 FROM action_events WHERE proposal_id = $1", proposal_id) is None
+    assert await pool.fetchrow("SELECT 1 FROM negotiations WHERE negotiation_id = $1", negotiation_id) is None
     assert await pool.fetchrow("SELECT 1 FROM users WHERE user_id = $1", uuid.UUID(internal_user_id)) is None
     with pytest.raises(TokenRevoked):
         await rotate_refresh_token(raw_refresh, revocation_store)

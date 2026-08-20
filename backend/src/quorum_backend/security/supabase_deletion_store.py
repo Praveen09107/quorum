@@ -20,32 +20,32 @@ user's own applications are deleted first, via a real subquery, before
 **A real, deliberate scope split, matching `DeletionResult`'s own
 four-store shape:** `purge_postgres_rows()` covers the real relational
 tables this account genuinely owns data in -- `tasks`, `expenses`,
-`applications` (+ their `interviews`), and the real `users` row itself
-(so a future re-signup with the same Google identity gets a genuinely
-fresh internal UUID, never silently resurrecting deleted history).
-`purge_vector_embeddings()` covers `note_embeddings` specifically --
-the one real table with a pgvector column, a genuine conceptual
-distinct from the other tables even though it lives in the same real
-Postgres database. `action_events` and `negotiations` (and, inside
-`negotiations`, the real `positions`/`options` `DEC-121` added) are
-NOT touched here -- a real, disclosed, STILL-OPEN gap, not a
-deliberate design choice this comment previously claimed it was: this
-comment used to state `action_events` "has no `user_id` column at
-all," which was true when it was written but stopped being true the
-moment `DEC-119`'s migration `0004` added one. Corrected here, found
-while working on unrelated negotiation-choice code, not by auditing
-this file directly -- a real account deletion today genuinely leaves
-that user's `action_events`/`negotiations` rows behind, orphaned.
-Tracked as a real, open item (`STATUS_INDEX.md`) rather than
-silently fixed as a side effect of the session that happened to find
-it -- `DELETE /account`'s own purge completeness is CRITICAL-tier,
-irreversible-action-adjacent work and deserves its own explicit scope,
-not an incidental patch. `retry_queue` remains genuinely, permanently
-out of scope for per-user purging: it is a real, generic, system-level
-job queue with no per-user ownership *column* at all (a user's own
-`user_id` may appear inside an individual job's `payload` JSONB, but
-that is not a queryable, indexed relationship this store can safely
-scope a bulk delete against).
+`applications` (+ their `interviews`), `action_events`, `negotiations`,
+and the real `users` row itself (so a future re-signup with the same
+Google identity gets a genuinely fresh internal UUID, never silently
+resurrecting deleted history). `purge_vector_embeddings()` covers
+`note_embeddings` specifically -- the one real table with a pgvector
+column, a genuine conceptual distinct from the other tables even
+though it lives in the same real Postgres database.
+
+**`action_events`/`negotiations` purging: RESOLVED, `DEC-124`, real,
+disclosed gap found and closed, not left open.** A stale comment here
+previously claimed `action_events` "has no `user_id` column at all,"
+true when originally written but false since `DEC-119`'s migration
+`0004` added one -- corrected first as a disclosed, still-open gap
+(`DEC-123`, found while working on unrelated negotiation-choice code),
+then actually closed here, as its own explicit CRITICAL-tier session
+rather than an incidental patch. Deleting a `negotiations` row also
+removes any real `positions`/`options` `DEC-121` persisted to it --
+genuinely part of this account's own data, not a separate concern.
+`retry_queue` remains genuinely, permanently out of scope for per-user
+purging: it is a real, generic, system-level job queue with no
+per-user ownership *column* at all (a user's own `user_id` may appear
+inside an individual job's `payload` JSONB, but that is not a
+queryable, indexed relationship this store can safely scope a bulk
+delete against) -- a real, disclosed, permanent limitation, not
+something a future session should expect to close the way this one
+closed `action_events`/`negotiations`.
 
 **Two real, honest, disclosed zeros, not silently faked:**
 `purge_memories()` -- no real `mem0` integration exists anywhere in this
@@ -122,6 +122,19 @@ class SupabaseDeletionStore:
                 total += _parse_deleted_count(await conn.execute("DELETE FROM tasks WHERE user_id = $1", user_uuid))
                 total += _parse_deleted_count(
                     await conn.execute("DELETE FROM expenses WHERE user_id = $1", user_uuid)
+                )
+                # DEC-124: real, previously-missing purges. No FK
+                # references either table (confirmed by grepping every
+                # real migration for "REFERENCES action_events"/
+                # "REFERENCES negotiations" before writing this --
+                # neither table is ever the target of a foreign key),
+                # so ordering relative to the other four deletes in
+                # this transaction genuinely doesn't matter.
+                total += _parse_deleted_count(
+                    await conn.execute("DELETE FROM action_events WHERE user_id = $1", user_uuid)
+                )
+                total += _parse_deleted_count(
+                    await conn.execute("DELETE FROM negotiations WHERE user_id = $1", user_uuid)
                 )
                 # The real users row itself, last -- no other real table
                 # has a database-enforced FK against it (confirmed
