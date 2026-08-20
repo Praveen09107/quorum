@@ -300,9 +300,41 @@ Client polls at 1–2s intervals while a run is in progress (§9 of the product 
 `POST /auth/refresh` — rotates the refresh token, issues a new 15-minute access token.
 `POST /auth/revoke` — the "sign out everywhere" control (§14.1 of the ADD); invalidates the server-side revocation list entry for the current user's refresh tokens.
 
+### 5.5a `GET /negotiations/{negotiation_id}` (specified — a real gap found while scoping the demo dataset, absent until now)
+
+**A genuine, previously-unnoticed gap, found by direct search before writing this section:** `mobile/lib/shell/main_shell.dart`'s `NegotiationBundle` (`positions`, `options`) has existed as a real, tested type since `MOBILE_09` — the negotiation screen (`negotiation_logic.dart`/`negotiation_screen.dart`) has always expected to receive it via an injected `fetchNegotiation` — but no REST contract for it was ever written anywhere in this document. §5.6 below covers only *acting* on a negotiation already known; nothing ever specified how the client *views* one's real positions and options in the first place.
+
+Real per-user scoped, same discipline as every other per-user route since `DEC-110`. A real `404` if `negotiation_id` doesn't resolve to a negotiation owned by the caller — never a `200` with another user's data, and never a `200` with empty arrays standing in for "not found" (that would be indistinguishable from a genuinely still-in-progress negotiation with no detail computed yet — see below).
+
+```json
+{
+  "positions": [
+    {
+      "domain": "finance",
+      "concern": "92% of this month's budget is already spent with 8 days remaining.",
+      "proposed_resolution": "Halt non-critical discretionary spending for the remaining days."
+    }
+  ],
+  "options": [
+    {
+      "option_id": "option_a",
+      "description": "Halt non-critical spending and delay the subscription renewal by one week.",
+      "source_domains": ["finance"],
+      "impact": [
+        {"metric": "budget_remaining_fraction", "before": 0.08, "after": 0.18, "direction": "improves"}
+      ]
+    }
+  ]
+}
+```
+
+A real, honest distinction, not glossed over: `positions`/`options` can each legitimately be `null` (rendered as an empty array to the client) for a negotiation whose row exists (flagged real by `scan_for_conflicts()`) but whose position/synthesis/impact-simulation stages haven't completed or been persisted yet — a genuinely different state from "this negotiation doesn't exist," which is the real `404` case above.
+
+Each `options[].impact` entry is `ImpactDelta` (§1.8) exactly — every field code-computed by `negotiation/impact_simulator.py`'s real arithmetic, never a model call, the same "the model narrates, the code computes" guarantee that governs every other real `ImpactDelta` in this system.
+
 ### 5.6 `POST /negotiations/{negotiation_id}/choose` (specified — absent until now)
 
-Request: `{"chosen_option": "option_a" | "option_b" | "do_nothing"}`. Response: `202 Accepted` — downstream actions from the chosen option are enqueued, each re-entering the Gate at its own stakes level (§8.3 of the ADD).
+Request: `{"chosen_option": "option_a" | "option_b" | "do_nothing"}`. Response: `202 Accepted` — downstream actions from the chosen option are enqueued, each re-entering the Gate at its own stakes level (§8.3 of the ADD). **Still genuinely unbuilt as of this document's own current revision** — `GET /negotiations/{negotiation_id}` above closes the *view* gap; a person can see a real negotiation's real positions and options but still cannot act on it through this endpoint yet.
 
 ### 5.7 `GET /search?q=...` (specified — improved here, not a missing-endpoint gap this time)
 
