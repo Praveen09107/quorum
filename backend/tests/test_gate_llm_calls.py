@@ -99,6 +99,38 @@ async def test_groq_critic_call_returns_the_code_assigned_fallback_when_the_mode
     assert objections[0].signed_off is True
 
 
+async def test_groq_critic_call_raises_gate_llm_call_error_on_a_malformed_objection_shape(monkeypatch):
+    """A real, self-caught gap (found during this session's own second-pass
+    self-review after both automated review subagents stalled): a
+    malformed category value -- outside the real Objection enum -- despite
+    Groq's own strict json_schema constraint must still raise
+    GateLlmCallError, never a raw, differently-typed pydantic
+    ValidationError this module's own contract doesn't promise."""
+
+    async def fake_post(self, url, headers=None, json=None):
+        body = '{"objections": [{"category": "not_a_real_category", "severity": "high", "description": "x", "suggested_fix": null, "signed_off": false}]}'
+        return _FakeResponse(200, {"choices": [{"message": {"content": body}}]})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    critic_call = make_groq_critic_call(api_key="fake-key")
+    with pytest.raises(GateLlmCallError):
+        await critic_call(_proposal(), _findings())
+
+
+async def test_judge_call_raises_gate_llm_call_error_on_a_malformed_decision_value(monkeypatch):
+    """Same real class of gap as the Critic test above, for the Judge's
+    own `decision` field."""
+
+    async def fake_post(self, url, headers=None, json=None):
+        body = '{"decision": "not_a_real_decision", "revised_payload_json": null}'
+        return _FakeResponse(200, {"candidates": [{"content": {"parts": [{"text": body}]}}]})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    judge_call = make_gemini_judge_call(api_key="fake-key")
+    with pytest.raises(GateLlmCallError):
+        await judge_call(_proposal(), _findings(), [])
+
+
 async def test_judge_call_raises_when_decision_is_revise_but_no_real_revised_payload_is_given(monkeypatch):
     async def fake_post(self, url, headers=None, json=None):
         return _FakeResponse(

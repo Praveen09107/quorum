@@ -72,6 +72,7 @@ import json
 from typing import Awaitable, Callable
 
 import httpx
+from pydantic import ValidationError
 
 from quorum_backend.gate.anonymization import randomize_objection_order
 from quorum_backend.gate.prompts import build_critic_prompt, build_judge_prompt
@@ -222,16 +223,26 @@ def make_groq_critic_call(*, api_key: str) -> Callable[[ActionProposal, list[Fin
             # the same "code decides structure" principle already applied
             # to negotiation/gemini_calls.py's deterministic option IDs.
             return [_NO_OBJECTIONS_FALLBACK]
-        return [
-            Objection(
-                category=o["category"],
-                severity=o["severity"],
-                description=o["description"],
-                suggested_fix=o.get("suggested_fix"),
-                signed_off=o["signed_off"],
-            )
-            for o in raw_objections
-        ]
+        try:
+            return [
+                Objection(
+                    category=o["category"],
+                    severity=o["severity"],
+                    description=o["description"],
+                    suggested_fix=o.get("suggested_fix"),
+                    signed_off=o["signed_off"],
+                )
+                for o in raw_objections
+            ]
+        except (ValidationError, KeyError) as exc:
+            # A malformed category/severity value (outside the real
+            # Objection enum) despite Groq's own strict json_schema
+            # constraint is still "a shape this module cannot safely
+            # trust" -- the same real failure class build_judge_prompt's
+            # own revised_payload check below raises GateLlmCallError
+            # for, not a raw, differently-typed exception this module's
+            # own callers wouldn't expect.
+            raise GateLlmCallError(f"Groq Critic returned an objection shape this module cannot trust: {exc}") from exc
 
     return critic_call
 
@@ -262,14 +273,29 @@ def make_gemini_judge_call(
             # exhausted retries, never a fabricated verdict.
             if not revised_payload_json:
                 raise GateLlmCallError("Gemini Judge returned decision='revise' with no real revised_payload_json")
-            revised_payload = json.loads(revised_payload_json)
+            try:
+                revised_payload = json.loads(revised_payload_json)
+            except ValueError as exc:
+                raise GateLlmCallError(f"Gemini Judge's revised_payload_json is not valid JSON: {exc}") from exc
 
-        return GateVerdict(
-            decision=decision,
-            revised_payload=revised_payload,
-            findings=findings,
-            objections=anonymized_objections,
-            trace_id=str(proposal.proposal_id),
-        )
+        try:
+            return GateVerdict(
+                decision=decision,
+                revised_payload=revised_payload,
+                findings=findings,
+                objections=anonymized_objections,
+                trace_id=str(proposal.proposal_id),
+            )
+        except ValidationError as exc:
+            # A malformed `decision` value (outside GateVerdict's real
+            # Literal enum) despite Gemini's own responseSchema constraint
+            # is still "a shape this module cannot safely trust" -- the
+            # same real failure class the revised_payload check above
+            # raises GateLlmCallError for, not a raw pydantic exception
+            # this module's own callers (orchestration.py's
+            # _call_with_retry) wouldn't expect from this function
+            # specifically, even though that retry wrapper's own broad
+            # `except Exception` would still catch it either way.
+            raise GateLlmCallError(f"Gemini Judge returned a verdict shape this module cannot trust: {exc}") from exc
 
     return judge_call
