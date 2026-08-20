@@ -55,6 +55,13 @@ from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
 from quorum_backend.core.embeddings import EmbeddingError
 from quorum_backend.features.career_pipeline import fetch_career_pipeline
+from quorum_backend.features.negotiation_choice import (
+    InvalidChosenOption,
+    NegotiationAlreadyResolved,
+    NegotiationNotFound,
+    NegotiationNotReadyToChoose,
+    choose_negotiation_option,
+)
 from quorum_backend.features.negotiation_detail import fetch_negotiation_detail
 from quorum_backend.features.search import search as run_search
 from quorum_backend.features.self_test_harness import ScenarioResult, run_self_test, summarize
@@ -110,6 +117,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Quorum Backend", lifespan=_lifespan)
+
+# Shared across GET /negotiations/{id} and POST /negotiations/{id}/choose --
+# both real 404 cases (a real nonexistent id, or one owned by another
+# real user) are deliberately indistinguishable, so both routes use the
+# exact same real detail text, not two independently-drifting copies.
+_NEGOTIATION_NOT_FOUND_DETAIL = "No negotiation found with that id."
 
 
 def _get_db_pool(request: Request) -> asyncpg.Pool:
@@ -172,6 +185,15 @@ class TokenExchangeRequest(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+
+class ChooseNegotiationOptionRequest(BaseModel):
+    """Real request shape, `QUORUM_DATA_CONTRACTS.md` §5.6's own literal
+    example (`{"chosen_option": "option_a" | "option_b" | "do_nothing"}`)
+    -- the one real request shape in this file with a literal spec
+    example to match exactly, not a reasoned construction."""
+
+    chosen_option: str
 
 
 class TokenPairResponse(BaseModel):
@@ -353,12 +375,53 @@ async def negotiation_detail_endpoint(
     try:
         negotiation_uuid = uuid.UUID(negotiation_id)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail="No negotiation found with that id.") from exc
+        raise HTTPException(status_code=404, detail=_NEGOTIATION_NOT_FOUND_DETAIL) from exc
     internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
     detail = await fetch_negotiation_detail(pool, user_id=internal_user_id, negotiation_id=str(negotiation_uuid))
     if detail is None:
-        raise HTTPException(status_code=404, detail="No negotiation found with that id.")
+        raise HTTPException(status_code=404, detail=_NEGOTIATION_NOT_FOUND_DETAIL)
     return {"positions": detail.positions, "options": detail.options}
+
+
+@app.post("/negotiations/{negotiation_id}/choose", status_code=202)
+async def choose_negotiation_option_endpoint(
+    negotiation_id: str,
+    body: ChooseNegotiationOptionRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live -- `QUORUM_DATA_CONTRACTS.md` §5.6, genuinely unbuilt
+    since it was first specified, closing the gap `DEC-104`/`DEC-121`
+    both disclosed: a person could see a real negotiation's real
+    positions/options but never act on one. Real per-user scoped from
+    this route's first line.
+
+    A real, disclosed, honest scope boundary, not silently glossed
+    over: this endpoint enqueues a real row in `retry_queue` describing
+    the real chosen option -- it does NOT itself call the Gate again.
+    No drainer that reads `retry_queue` and calls `gate.review()`
+    exists anywhere in this backend yet (`features/negotiation_choice.py`'s
+    own docstring has the full account). `202 Accepted` reflects that
+    honestly: the choice is real and durably recorded, the downstream
+    action is real and genuinely queued, but not yet processed."""
+    try:
+        negotiation_uuid = uuid.UUID(negotiation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=_NEGOTIATION_NOT_FOUND_DETAIL) from exc
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    try:
+        await choose_negotiation_option(
+            pool, user_id=internal_user_id, negotiation_id=str(negotiation_uuid), chosen_option=body.chosen_option
+        )
+    except NegotiationNotFound as exc:
+        raise HTTPException(status_code=404, detail=_NEGOTIATION_NOT_FOUND_DETAIL) from exc
+    except NegotiationNotReadyToChoose as exc:
+        raise HTTPException(status_code=409, detail="This negotiation's options haven't been computed yet -- nothing to choose from.") from exc
+    except NegotiationAlreadyResolved as exc:
+        raise HTTPException(status_code=409, detail="This negotiation already has a chosen option -- it cannot be chosen again.") from exc
+    except InvalidChosenOption as exc:
+        raise HTTPException(status_code=400, detail=f"'{body.chosen_option}' is not one of this negotiation's real options.") from exc
+    return {"status": "accepted"}
 
 
 @app.get("/search")

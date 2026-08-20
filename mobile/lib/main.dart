@@ -193,6 +193,10 @@ class _QuorumAppState extends State<QuorumApp> {
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
+            chooseNegotiation: createChooseNegotiationFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
             confirmDelete: _handleAccountDeletion,
             onSignOut: _handleSignOut,
           ),

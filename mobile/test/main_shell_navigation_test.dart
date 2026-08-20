@@ -60,6 +60,12 @@ Future<NegotiationBundle> _fakeFetchNegotiation(String negotiationId) async {
   );
 }
 
+final List<(String, String)> chosenNegotiationCalls = [];
+
+Future<void> _fakeChooseNegotiation(String negotiationId, String optionId) async {
+  chosenNegotiationCalls.add((negotiationId, optionId));
+}
+
 Future<List<CareerApplication>> _fakeFetchCareerApplications() async {
   return const [
     CareerApplication(applicationId: 'app1', company: 'Real Test Company', status: 'applied'),
@@ -99,6 +105,7 @@ Widget _harness() {
         fetchToday: _fakeFetchToday,
         fetchGateReveal: _fakeFetchGateReveal,
         fetchNegotiation: _fakeFetchNegotiation,
+        chooseNegotiation: _fakeChooseNegotiation,
         fetchCareerApplications: _fakeFetchCareerApplications,
         fetchCareerDigest: _fakeFetchCareerDigest,
         fetchFinance: _fakeFetchFinance,
@@ -134,6 +141,28 @@ void main() {
     expect(find.text('What each domain is saying'), findsOneWidget);
     expect(find.textContaining('Real budget concern'), findsOneWidget);
     expect(find.textContaining('A real option'), findsOneWidget);
+  });
+
+  testWidgets('choosing a real negotiation option calls the real chooseNegotiation callback and shows a real, honest confirmation', (tester) async {
+    chosenNegotiationCalls.clear();
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.byType(ListView).first, const Offset(0, -1000));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Calendar vs. Finance'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Choose this option'));
+    await tester.pumpAndSettle();
+
+    expect(chosenNegotiationCalls, [('n1', 'opt1')]);
+    // A real, honest terminal state matching the backend's own real
+    // 202 Accepted semantics -- never claims more happened than that.
+    expect(find.text('Choice accepted -- this action is now queued.'), findsOneWidget);
+    // The real positions/options view is genuinely replaced, not just
+    // overlaid -- confirms this is a real terminal state, not a toast.
+    expect(find.text('What each domain is saying'), findsNothing);
   });
 
   testWidgets('the You tab genuinely reaches Career Pipeline, and tapping an application opens its real Company Digest', (tester) async {

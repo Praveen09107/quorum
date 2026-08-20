@@ -334,7 +334,11 @@ Each `options[].impact` entry is `ImpactDelta` (§1.8) exactly — every field c
 
 ### 5.6 `POST /negotiations/{negotiation_id}/choose` (specified — absent until now)
 
-Request: `{"chosen_option": "option_a" | "option_b" | "do_nothing"}`. Response: `202 Accepted` — downstream actions from the chosen option are enqueued, each re-entering the Gate at its own stakes level (§8.3 of the ADD). **Still genuinely unbuilt as of this document's own current revision** — `GET /negotiations/{negotiation_id}` above closes the *view* gap; a person can see a real negotiation's real positions and options but still cannot act on it through this endpoint yet.
+Request: `{"chosen_option": "option_a" | "option_b" | "do_nothing"}`. Response: `202 Accepted` — downstream actions from the chosen option are enqueued, each re-entering the Gate at its own stakes level (§8.3 of the ADD).
+
+**Real and live as of `DEC-123`.** "Enqueued" is literal, not figurative: `chosen_option` is validated against this negotiation's own real, persisted `options` (`InvalidChosenOption` → `400` if it isn't one of them), the negotiation is marked resolved (`resolved_at`, `chosen_option_id`), and a real row is written to `retry_queue` (`migrations/0001_initial_schema`'s own "lightweight Postgres table, drained on a schedule") — real per-user scoped, real transactional atomicity (`SELECT ... FOR UPDATE` inside one transaction, so a crash between resolving and enqueuing can never happen). `409` if the negotiation is already resolved or its options haven't been computed yet; `404` if it doesn't exist or belongs to someone else — the two cases deliberately indistinguishable, matching every other real per-user route.
+
+**A real, disclosed, honest scope boundary, not resolved by this closing note:** "re-entering the Gate at its own stakes level" describes what a future `retry_queue` *drainer* does — no such drainer exists anywhere in this backend yet, the same "no real production trigger" gap already disclosed for `action_events`/`negotiations` (`DEC-119`), `note_embeddings` (`DEC-120`), and negotiation content itself (`DEC-121`). This endpoint's own real job is done once the choice is durably recorded and the downstream work is genuinely queued — building the consumer that actually processes that queue is separate, later work.
 
 ### 5.7 `GET /search?q=...` (specified — improved here, not a missing-endpoint gap this time)
 
