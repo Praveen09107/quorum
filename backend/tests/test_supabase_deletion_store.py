@@ -118,9 +118,13 @@ async def test_purge_vector_embeddings_deletes_real_note_embeddings_and_returns_
     store = SupabaseDeletionStore(pool)
 
     embedding_id = uuid.uuid4()
+    # source_type/source_id are required as of migration 0005 (Roadmap
+    # Phase 4a, Search) -- any real, valid value satisfies the column
+    # constraints here; this test is about deletion, not search.
     await pool.execute(
-        "INSERT INTO note_embeddings (embedding_id, user_id, content, embedding) VALUES ($1, $2, $3, $4)",
-        embedding_id, uuid.UUID(user_id), "A real note to be purged", None,
+        "INSERT INTO note_embeddings (embedding_id, user_id, content, embedding, source_type, source_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
+        embedding_id, uuid.UUID(user_id), "A real note to be purged", None, "task", uuid.uuid4(),
     )
 
     try:
@@ -139,13 +143,19 @@ async def test_purge_vector_embeddings_never_touches_another_real_users_rows(poo
     victim_embedding = uuid.uuid4()
     bystander_embedding = uuid.uuid4()
 
+    # source_type/source_id are required as of migration 0005 (Roadmap
+    # Phase 4a, Search) -- any real, valid value satisfies the column
+    # constraints here; this test is about cross-user isolation, not
+    # search.
     await pool.execute(
-        "INSERT INTO note_embeddings (embedding_id, user_id, content, embedding) VALUES ($1, $2, $3, $4)",
-        victim_embedding, uuid.UUID(victim_id), "Victim's real note", None,
+        "INSERT INTO note_embeddings (embedding_id, user_id, content, embedding, source_type, source_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
+        victim_embedding, uuid.UUID(victim_id), "Victim's real note", None, "task", uuid.uuid4(),
     )
     await pool.execute(
-        "INSERT INTO note_embeddings (embedding_id, user_id, content, embedding) VALUES ($1, $2, $3, $4)",
-        bystander_embedding, uuid.UUID(bystander_id), "Bystander's real, untouched note", None,
+        "INSERT INTO note_embeddings (embedding_id, user_id, content, embedding, source_type, source_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
+        bystander_embedding, uuid.UUID(bystander_id), "Bystander's real, untouched note", None, "task", uuid.uuid4(),
     )
 
     try:

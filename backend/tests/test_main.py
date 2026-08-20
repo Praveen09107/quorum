@@ -495,6 +495,151 @@ def test_today_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
             app.state.db_pool = real_pool
 
 
+@pytest.mark.skipif(get_settings().gemini_api_key is None, reason="no real GEMINI_API_KEY configured in this environment")
+async def test_search_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
+    """Real, end-to-end: real-provisions a real user, inserts a real
+    task, confirms `GET /search?q=...` genuinely round-trips through a
+    real Gemini embedding call and a real pgvector similarity query
+    with a real, valid access token, then cleans up."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    task_id = uuid.uuid4()
+
+    await pool.execute(
+        "INSERT INTO tasks (task_id, user_id, title, estimated_hours) VALUES ($1, $2, $3, $4)",
+        task_id, uuid.UUID(internal_user_id), "A real, distinctive end-to-end search test task", 1.0,
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/search", params={"q": "end-to-end search test"}, headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert isinstance(body, list)
+        match = next(item for item in body if item["item_id"] == str(task_id))
+        assert match["item_type"] == "task"
+        assert match["text"] == "A real, distinctive end-to-end search test task"
+        assert set(match.keys()) == {"item_id", "item_type", "text", "timestamp"}
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE task_id = $1", task_id)
+        await pool.execute("DELETE FROM note_embeddings WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
+@pytest.mark.skipif(get_settings().gemini_api_key is None, reason="no real GEMINI_API_KEY configured in this environment")
+async def test_search_endpoint_never_leaks_another_real_users_rows(pool, provisioned_users):
+    headers_a, user_a = await _provisioned_auth_header(pool, provisioned_users)
+    _headers_b, user_b = await _provisioned_auth_header(pool, provisioned_users)
+    task_a, task_b = uuid.uuid4(), uuid.uuid4()
+
+    await pool.execute(
+        "INSERT INTO tasks (task_id, user_id, title, estimated_hours) VALUES ($1, $2, $3, $4)",
+        task_a, uuid.UUID(user_a), "A real cross-user isolation search test task", 1.0,
+    )
+    await pool.execute(
+        "INSERT INTO tasks (task_id, user_id, title, estimated_hours) VALUES ($1, $2, $3, $4)",
+        task_b, uuid.UUID(user_b), "A real cross-user isolation search test task", 1.0,
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/search", params={"q": "cross-user isolation search test"}, headers=headers_a)
+
+        body = response.json()
+        returned_ids = {item["item_id"] for item in body}
+        assert str(task_a) in returned_ids
+        assert str(task_b) not in returned_ids
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE task_id = ANY($1::uuid[])", [task_a, task_b])
+        await pool.execute("DELETE FROM note_embeddings WHERE user_id = ANY($1::uuid[])", [uuid.UUID(user_a), uuid.UUID(user_b)])
+
+
+def test_search_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.get("/search", params={"q": "anything"})
+    assert response.status_code == 401
+
+
+def test_search_requires_a_real_nonempty_query_missing_q_is_422():
+    with TestClient(app) as client:
+        response = client.get("/search", headers=_auth_header())
+    assert response.status_code == 422
+
+
+def test_search_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
+    with TestClient(app) as client:
+        real_pool = app.state.db_pool
+        app.state.db_pool = None
+        try:
+            search_response = client.get("/search", params={"q": "anything"}, headers=_auth_header())
+            health_response = client.get("/health")
+            assert search_response.status_code == 503
+            assert health_response.status_code == 200
+        finally:
+            app.state.db_pool = real_pool
+
+
+async def test_search_502_body_never_leaks_the_real_api_key_or_upstream_internals(pool, provisioned_users, monkeypatch):
+    """A real, permanent security regression test, added because
+    `DEC-120`'s CRITICAL-tier review specifically probed this path.
+
+    The concern was concrete, not theoretical: an earlier version of
+    the `/search` route interpolated `EmbeddingError`'s own message --
+    which then carried Gemini's raw `response.text` -- straight into
+    the 502 response body. The key itself was never actually in there
+    (the review confirmed that live against real Gemini error bodies),
+    but the shape of that code was one refactor away from leaking, and
+    it echoed the upstream's internals to any authenticated caller for
+    no good reason. This test pins the fixed behavior down: whatever
+    goes wrong upstream, the caller sees a generic message."""
+    from quorum_backend import main as main_module
+
+    headers, _internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    sentinel_key = "SENTINEL-FAKE-KEY-abc123-must-never-appear-in-any-response"
+
+    async def _exploding_search(*args, **kwargs):
+        from quorum_backend.core.embeddings import EmbeddingError
+
+        # Deliberately stuffs the key into the error, the worst case.
+        raise EmbeddingError(f"upstream blew up, url=https://x/?key={sentinel_key}")
+
+    fake_settings = get_settings().model_copy(update={"gemini_api_key": sentinel_key})
+    monkeypatch.setattr(main_module, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(main_module, "run_search", _exploding_search)
+
+    with TestClient(app) as client:
+        response = client.get("/search", params={"q": "anything"}, headers=headers)
+
+    assert response.status_code == 502
+    assert sentinel_key not in response.text
+    assert "url=" not in response.text
+
+
+def test_search_returns_503_when_the_embedding_provider_is_not_configured(monkeypatch):
+    """A fresh clone/CI environment with no real GEMINI_API_KEY must
+    fail loud and honest, never crash with a raw exception reaching the
+    embedding call with `api_key=None`.
+
+    A real, disclosed test-authoring gotcha, found running this test
+    for real rather than assumed to work, twice over: (1) `GEMINI_API_
+    KEY` lives in `backend/.env` as a *file* entry, not an exported OS
+    environment variable in this shell -- `monkeypatch.delenv` only
+    touches `os.environ` and had no effect at all, since pydantic-
+    settings' `env_file=".env"` reads the file directly; (2) a
+    hand-rolled fake settings object with only `gemini_api_key`/
+    `jwt_signing_key` broke the app's own real startup lifespan (`main.
+    py`'s `_lifespan` also calls `get_settings()`, and needs the real
+    `is_using_insecure_default_jwt_signing_key` property). Fixed with
+    `model_copy()` on the real settings instead -- every real field and
+    computed property stays intact except the one being overridden."""
+    from quorum_backend import main as main_module
+
+    fake_settings = get_settings().model_copy(update={"gemini_api_key": None})
+    monkeypatch.setattr(main_module, "get_settings", lambda: fake_settings)
+    with TestClient(app) as client:
+        response = client.get("/search", params={"q": "anything"}, headers=_auth_header())
+    assert response.status_code == 503
+
+
 def test_career_pipeline_requires_real_auth_missing_header_is_401():
     with TestClient(app) as client:
         response = client.get("/career_pipeline")

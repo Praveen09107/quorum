@@ -26,7 +26,7 @@ from dataclasses import asdict
 from typing import AsyncIterator
 
 import asyncpg
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
@@ -52,7 +52,9 @@ from quorum_backend.auth.revocation_store import SupabaseRevocationStore
 from quorum_backend.auth.user_provisioning import get_or_create_user, resolve_internal_user_id
 from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
+from quorum_backend.core.embeddings import EmbeddingError
 from quorum_backend.features.career_pipeline import fetch_career_pipeline
+from quorum_backend.features.search import search as run_search
 from quorum_backend.features.self_test_harness import ScenarioResult, run_self_test, summarize
 from quorum_backend.features.subscription_detective import fetch_detected_subscriptions
 from quorum_backend.features.tasks import fetch_tasks
@@ -326,6 +328,51 @@ async def today(
             for record in active_negotiations
         ],
     }
+
+
+@app.get("/search")
+async def search_endpoint(
+    q: str = Query(..., min_length=1),
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> list[dict]:
+    """Real, live -- `QUORUM_DATA_CONTRACTS.md` §5.7's already-specified
+    contract, implemented for the first time (Roadmap Phase 4a,
+    `DEC-120`). Real per-user scoped from this route's first line.
+
+    A real, disclosed architecture note, not silently glossed over:
+    this backend has no write path that ever creates a task/expense/
+    application, so there's no "on creation" moment to embed against --
+    `features/search.py`'s own `search()` lazily backfills any of this
+    user's still-unembedded content on every call before ranking. A
+    real, honest cost of that choice: the first `/search` call after
+    new content exists is slower than a normal one. `email` is never a
+    real `item_type` here -- no Gmail integration exists in this
+    backend.
+
+    A real, honest `503` if the embedding provider isn't configured
+    (e.g. a fresh clone/CI environment with no real `GEMINI_API_KEY`)
+    -- never a bare, unhandled exception. A real, honest `502` if a
+    live Gemini call itself fails mid-request."""
+    settings = get_settings()
+    if settings.gemini_api_key is None:
+        raise HTTPException(status_code=503, detail="Search is not currently available -- the embedding provider isn't configured.")
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    try:
+        results = await run_search(pool, user_id=internal_user_id, query=q, api_key=settings.gemini_api_key)
+    except EmbeddingError as exc:
+        # The real detail is logged server-side, never echoed to the
+        # caller. `DEC-120`'s review confirmed live that Gemini's own
+        # error bodies carry no credential -- but they do carry the
+        # upstream's internal error structure, which no authenticated
+        # caller of THIS API has any reason to see. A generic message
+        # out, the real diagnostic detail into Cloud Logging.
+        logger.exception("Real Gemini embedding failure while serving /search")
+        raise HTTPException(status_code=502, detail="Search is temporarily unavailable -- please try again shortly.") from exc
+    return [
+        {"item_id": item.item_id, "item_type": item.item_type, "text": item.text, "timestamp": item.timestamp}
+        for item in results
+    ]
 
 
 @app.get("/career_pipeline")

@@ -26,13 +26,17 @@
 /// and `fetchFinance` are different again, and genuinely live: the You
 /// tab always renders regardless of which "More" section fetchers are
 /// configured, so wiring either one alone makes a real, new screen
-/// reachable in the running app (`DEC-108`, `DEC-109`). `confirmDelete`
-/// is real and live too, as of `DEC-113` -- the real, irreversible
-/// `DELETE /account`, unblocked only once real user provisioning
-/// existed (`DEC-110`) to make a correctly per-user-scoped deletion
-/// possible at all. Every other `MainShell` fetcher stays unconfigured,
-/// honestly, until its own backend endpoint exists (Part C-2, tracked
-/// in `STATUS_INDEX.md`).
+/// reachable in the running app (`DEC-108`, `DEC-109`). `fetchSearch`
+/// joins them as of Roadmap Phase 4a -- real, live, per-user-scoped
+/// `GET /search?q=...`, backed by a real Gemini embedding call and a
+/// real pgvector similarity query (`features/search.py`), reaching the
+/// You tab's already-built Search screen for the first time.
+/// `confirmDelete` is real and live too, as of `DEC-113` -- the real,
+/// irreversible `DELETE /account`, unblocked only once real user
+/// provisioning existed (`DEC-110`) to make a correctly per-user-scoped
+/// deletion possible at all. Every other `MainShell` fetcher stays
+/// unconfigured, honestly, until its own backend endpoint exists (Part
+/// C-2, tracked in `STATUS_INDEX.md`).
 library;
 
 import 'package:flutter/material.dart';
@@ -42,6 +46,7 @@ import 'package:http/http.dart' as http;
 import 'package:quorum_mobile/api/account_api.dart';
 import 'package:quorum_mobile/api/career_pipeline_api.dart';
 import 'package:quorum_mobile/api/finance_api.dart';
+import 'package:quorum_mobile/api/search_api.dart';
 import 'package:quorum_mobile/api/tasks_api.dart';
 import 'package:quorum_mobile/api/today_api.dart';
 import 'package:quorum_mobile/api/trust_api.dart';
@@ -166,6 +171,10 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             fetchFinance: createFinanceFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            fetchSearch: createSearchFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),

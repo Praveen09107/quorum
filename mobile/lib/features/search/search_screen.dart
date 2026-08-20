@@ -47,6 +47,8 @@ class SearchScreen extends StatelessWidget {
         return const Icon(Icons.check_box_outlined);
       case SearchItemType.expense:
         return const Icon(Icons.payments_outlined);
+      case SearchItemType.application:
+        return const Icon(Icons.work_outline);
       case SearchItemType.decision:
         return const Icon(Icons.gavel_outlined);
       case SearchItemType.unknown:
