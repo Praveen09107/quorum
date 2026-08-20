@@ -1253,6 +1253,8 @@ async def test_delete_account_never_touches_a_different_real_users_data(pool):
     victim_access_token = create_access_token(victim_sub, settings.jwt_signing_key)
 
     bystander_task = uuid.uuid4()
+    bystander_proposal = uuid.uuid4()
+    bystander_negotiation = uuid.uuid4()
     await pool.execute(
         "INSERT INTO tasks (task_id, user_id, title, estimated_hours, deadline, status) VALUES ($1, $2, $3, $4, $5, $6)",
         bystander_task,
@@ -1261,6 +1263,21 @@ async def test_delete_account_never_touches_a_different_real_users_data(pool):
         1.0,
         None,
         "open",
+    )
+    # DEC-124: the same real cross-user proof, extended to
+    # action_events/negotiations at the full HTTP layer too -- the
+    # store-layer test already proved this property directly against
+    # purge_postgres_rows(), but a CRITICAL-tier review correctly
+    # flagged that this route-level test hadn't been extended to
+    # match, an inconsistency in how thoroughly the two layers were
+    # covered, not a real gap in confidence -- closed here anyway.
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, trace_id, user_id) VALUES ($1, $2, $3, $4::jsonb, $5, $6)",
+        bystander_proposal, "create_note", "S0", "{}", f"test-deletion-{bystander_proposal}", uuid.UUID(bystander_id),
+    )
+    await pool.execute(
+        "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at) VALUES ($1, $2, $3, $4)",
+        bystander_negotiation, uuid.UUID(bystander_id), ["finance"], datetime.now(timezone.utc),
     )
 
     try:
@@ -1272,15 +1289,19 @@ async def test_delete_account_never_touches_a_different_real_users_data(pool):
         # and acted on the correct real account.
         assert response.json()["user_id"] == victim_id
 
-        # The bystander's real task, real users row, and real session
-        # all survive completely untouched.
+        # The bystander's real task, action_event, negotiation, real
+        # users row, and real session all survive completely untouched.
         assert await pool.fetchrow("SELECT 1 FROM tasks WHERE task_id = $1", bystander_task) is not None
+        assert await pool.fetchrow("SELECT 1 FROM action_events WHERE proposal_id = $1", bystander_proposal) is not None
+        assert await pool.fetchrow("SELECT 1 FROM negotiations WHERE negotiation_id = $1", bystander_negotiation) is not None
         assert await pool.fetchrow("SELECT 1 FROM users WHERE user_id = $1", uuid.UUID(bystander_id)) is not None
         # A real, live proof the bystander's own session still rotates
         # -- never revoked by someone else's account deletion.
         await rotate_refresh_token(bystander_refresh, revocation_store)
     finally:
         await pool.execute("DELETE FROM tasks WHERE task_id = $1", bystander_task)
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = $1", bystander_proposal)
+        await pool.execute("DELETE FROM negotiations WHERE negotiation_id = $1", bystander_negotiation)
         await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(bystander_id))
         await pool.execute("DELETE FROM refresh_tokens WHERE user_id = $1", bystander_sub)
 
