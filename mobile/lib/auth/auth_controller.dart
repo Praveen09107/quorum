@@ -19,10 +19,18 @@ import 'pkce.dart';
 /// hands off to the mobile app's own custom scheme below.
 const _oauthRedirectBridge = 'https://quorum-backend-649581407643.asia-south1.run.app/auth/callback';
 
-/// Must match the real, installed Android app's applicationId
-/// (`com.quorum.quorum_mobile`) and the real intent-filter registered
-/// in `AndroidManifest.xml` for `flutter_web_auth_2`'s callback activity.
-const _mobileCallbackScheme = 'com.quorum.quorum_mobile';
+/// A real, dedicated URL scheme -- deliberately NOT the real Android
+/// applicationId (`com.quorum.quorum_mobile`) despite looking similar,
+/// per a real, disclosed bug found live on a real device (`DEC-118`):
+/// the applicationId's underscore is not a valid URL-scheme character
+/// (RFC 3986 permits only letters, digits, "+", "-", "."), and
+/// flutter_web_auth_2 rejected it immediately, every time, on every
+/// real device -- silently, since the resulting exception was always
+/// caught and converted to a bare cancellation. Must match the real
+/// intent-filter registered in `AndroidManifest.xml` for
+/// `flutter_web_auth_2`'s callback activity, and the real, live
+/// backend's own `/auth/callback` redirect target (`main.py`).
+const _mobileCallbackScheme = 'com.quorum.quorummobile';
 
 const _googleAuthEndpoint = 'https://accounts.google.com/o/oauth2/v2/auth';
 

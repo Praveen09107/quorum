@@ -598,7 +598,7 @@ def test_auth_callback_bridges_a_real_google_redirect_to_the_real_mobile_scheme(
         response = client.get("/auth/callback", params={"code": "real-test-code", "state": "real-test-state"})
     assert response.status_code in (302, 307)
     location = response.headers["location"]
-    assert location.startswith("com.quorum.quorum_mobile://oauth2redirect?")
+    assert location.startswith("com.quorum.quorummobile://oauth2redirect?")
     assert "code=real-test-code" in location
     assert "state=real-test-state" in location
 
@@ -608,7 +608,7 @@ def test_auth_callback_forwards_a_real_google_error_without_inventing_a_code():
         response = client.get("/auth/callback", params={"error": "access_denied"})
     assert response.status_code in (302, 307)
     location = response.headers["location"]
-    assert location.startswith("com.quorum.quorum_mobile://oauth2redirect?")
+    assert location.startswith("com.quorum.quorummobile://oauth2redirect?")
     assert "error=access_denied" in location
     assert "code=" not in location
 

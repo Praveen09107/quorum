@@ -358,7 +358,15 @@ async def auth_callback(code: str | None = None, state: str | None = None, error
     route's own real URL) that Google's `/token` endpoint requires to
     match the one used in the original authorization request.
     """
-    mobile_scheme = "com.quorum.quorum_mobile://oauth2redirect"
+    # DEC-118: "com.quorum.quorum_mobile" is this app's real Android
+    # applicationId, but it is NOT a valid URL scheme -- RFC 3986 permits
+    # only letters, digits, "+", "-", and "." in a scheme, and the
+    # underscore here made flutter_web_auth_2 reject it immediately on
+    # every real device this was ever actually tested against (found
+    # live, this session -- no real device/browser test had ever been
+    # run before). The real Android intent-filter scheme and this
+    # backend's own redirect target must always match exactly.
+    mobile_scheme = "com.quorum.quorummobile://oauth2redirect"
     if error is not None:
         params = {"error": error}
     elif code is None:
