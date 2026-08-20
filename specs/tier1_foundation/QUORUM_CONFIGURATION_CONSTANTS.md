@@ -64,6 +64,8 @@
 | Career digest summary cap | 5 points (a brief, not a report) | `career_digest.py` |
 | Style-reply max style examples | 3 | `style_reply.py` |
 | Trust Digest stability threshold | 0.01 (1 percentage point — a week-over-week success-rate change smaller than this reports as "stable," not noise misread as a real trend) | `trust_digest.py` — added during a full staleness audit; genuinely missing despite this document's own stated purpose |
+| Today capacity working hours/day | 8.0 hours (default) — the same real constant `meeting_load.py` already defines above, reused directly rather than duplicated, per this document's own single-source-of-truth discipline | `today.py` (`DEC-119`) |
+| Today budget monthly limit | ₹50,000 (default) — a real, disclosed, reasoned placeholder: no per-user budget-configuration feature exists anywhere in this app yet, so this is a genuinely global default until one does, the same real, disclosed-choice pattern already established for `REFRESH_TOKEN_TTL_DAYS` | `today.py` (`DEC-119`) |
 
 ---
 

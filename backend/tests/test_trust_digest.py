@@ -91,11 +91,16 @@ async def pool():
 
 
 async def _insert_test_event(pool, proposal_id, outcome, resolved_at, *, has_resolved_at=True):
+    # A real, generated user_id -- required as of migration 0004
+    # (DEC-119), added for GET /today's real per-user scoping needs.
+    # /trust_digest's own real query still doesn't filter by it (the
+    # same disclosed, unchanged limitation since DEC-101) -- any real,
+    # valid UUID satisfies the column's NOT NULL constraint here.
     await pool.execute(
         """
         INSERT INTO action_events
-            (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, created_at, resolved_at)
-        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)
+            (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, created_at, resolved_at, user_id)
+        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10)
         """,
         proposal_id,
         "create_note",
@@ -106,6 +111,7 @@ async def _insert_test_event(pool, proposal_id, outcome, resolved_at, *, has_res
         f"test-trust-digest-{proposal_id}",
         resolved_at,
         resolved_at if has_resolved_at else None,
+        uuid.uuid4(),
     )
 
 

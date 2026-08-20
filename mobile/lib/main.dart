@@ -2,37 +2,37 @@
 /// (`DEC-105`): checks for a real, currently-valid session at startup --
 /// no stored session (or one that fails to refresh) shows the real
 /// `LoginScreen`; a real session goes straight to `MainShell`, wired
-/// with the five real, live fetchers that exist so far -- `/trust_digest`
+/// with every real, live fetcher that exists so far -- `/trust_digest`
 /// (`DEC-100`/`DEC-103`), `/trust` (real self-test results against the
 /// real Gate, wiring `self_test_harness.py`'s already-real
 /// `run_self_test()` into a live route, `DEC-106`), `/tasks` (the real
 /// `tasks` table, `DEC-107`), `/career_pipeline` (the real
-/// `applications` table, `DEC-108`), and `/finance/subscriptions` (a
+/// `applications` table, `DEC-108`), `/finance/subscriptions` (a
 /// real, disclosed, deliberately simple detection rule over the real
 /// `expenses` table -- no `subscription_detective.py` ever existed in
 /// this backend despite the spec corpus's own claim otherwise,
-/// `DEC-109`). Wiring `fetchTrust` genuinely unlocked the whole Trust
-/// tab in the real running app (`DEC-106`) -- `MainShell`'s `_TrustTab`
-/// only renders once its own primary fetcher is non-null. `fetchTasks`
-/// is different, honestly: it's real and tested, but `MainShell` only
-/// ever surfaces it through the Today tab's own "Holding Steady ->
-/// Tasks" drill-through link, which itself stays gated behind
-/// `fetchToday` -- still unconfigured, since the Today screen's own
-/// real backend needs a `pendingActions`/`negotiations` persistence
-/// design this repository doesn't have yet (a real, disclosed open
-/// item, not silently built around). Wired here anyway, ready for the
-/// moment Today unblocks -- not fabricated data standing in for a
-/// connection that doesn't visibly do anything yet.
-/// `fetchCareerApplications` and `fetchFinance` are different again,
-/// and genuinely live: the You tab always renders regardless of which
-/// "More" section fetchers are configured, so wiring either one alone
-/// makes a real, new screen reachable in the running app (`DEC-108`,
-/// `DEC-109`). `confirmDelete` is real and live too, as of `DEC-113`
-/// -- the real, irreversible `DELETE /account`, unblocked only once
-/// real user provisioning existed (`DEC-110`) to make a correctly
-/// per-user-scoped deletion possible at all. Every other `MainShell`
-/// fetcher stays unconfigured, honestly, until its own backend
-/// endpoint exists (Part C-2, tracked in `STATUS_INDEX.md`).
+/// `DEC-109`), and -- as of `DEC-119` -- `/today`. Wiring `fetchTrust`
+/// genuinely unlocked the whole Trust tab in the real running app
+/// (`DEC-106`) -- `MainShell`'s `_TrustTab` only renders once its own
+/// primary fetcher is non-null. `fetchToday` does the same for the
+/// Today tab, which also genuinely unlocks the already-built,
+/// already-tested Holding Steady -> Tasks drill-through link
+/// (`DEC-096`), gated behind `fetchToday` since `MOBILE_23`. A real,
+/// disclosed, honest fact, not a bug: Today's own `needs_you_now`/
+/// `in_motion` zones will genuinely, correctly render empty right now
+/// -- nothing in this backend yet invokes the Gate against a real,
+/// live user action to ever produce a row for either real table in the
+/// first place (`DEC-119`'s own full account). `fetchCareerApplications`
+/// and `fetchFinance` are different again, and genuinely live: the You
+/// tab always renders regardless of which "More" section fetchers are
+/// configured, so wiring either one alone makes a real, new screen
+/// reachable in the running app (`DEC-108`, `DEC-109`). `confirmDelete`
+/// is real and live too, as of `DEC-113` -- the real, irreversible
+/// `DELETE /account`, unblocked only once real user provisioning
+/// existed (`DEC-110`) to make a correctly per-user-scoped deletion
+/// possible at all. Every other `MainShell` fetcher stays unconfigured,
+/// honestly, until its own backend endpoint exists (Part C-2, tracked
+/// in `STATUS_INDEX.md`).
 library;
 
 import 'package:flutter/material.dart';
@@ -43,6 +43,7 @@ import 'package:quorum_mobile/api/account_api.dart';
 import 'package:quorum_mobile/api/career_pipeline_api.dart';
 import 'package:quorum_mobile/api/finance_api.dart';
 import 'package:quorum_mobile/api/tasks_api.dart';
+import 'package:quorum_mobile/api/today_api.dart';
 import 'package:quorum_mobile/api/trust_api.dart';
 import 'package:quorum_mobile/api/trust_digest_api.dart';
 import 'package:quorum_mobile/auth/auth_api.dart';
@@ -144,6 +145,10 @@ class _QuorumAppState extends State<QuorumApp> {
             onSignedIn: () => setState(() => _sessionState = _SessionState.signedIn),
           ),
         _SessionState.signedIn => MainShell(
+            fetchToday: createTodayFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
             fetchTrust: createTrustFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,

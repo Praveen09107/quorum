@@ -56,6 +56,12 @@ from quorum_backend.features.career_pipeline import fetch_career_pipeline
 from quorum_backend.features.self_test_harness import ScenarioResult, run_self_test, summarize
 from quorum_backend.features.subscription_detective import fetch_detected_subscriptions
 from quorum_backend.features.tasks import fetch_tasks
+from quorum_backend.features.today import (
+    fetch_active_negotiations,
+    fetch_pending_actions,
+    fetch_today_budget,
+    fetch_today_capacity,
+)
 from quorum_backend.features.trust_digest import fetch_trust_digest
 from quorum_backend.security.account_deletion import delete_account
 from quorum_backend.security.supabase_deletion_store import SupabaseDeletionStore
@@ -265,6 +271,61 @@ async def tasks(
         }
         for record in records
     ]
+
+
+@app.get("/today")
+async def today(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live -- `QUORUM_DATA_CONTRACTS.md` §5.4's full response
+    shape, specified since `DEC-026`/`DEC-028`, implemented here for the
+    first time (`DEC-119`). Real per-user scoped from this route's first
+    line, unlike `/tasks`/`/career_pipeline`/`/finance/subscriptions`,
+    which needed a later retrofit (`DEC-110`).
+
+    A real, disclosed, honest fact, not a bug: `needs_you_now` and
+    `in_motion` will genuinely, correctly return empty arrays in real
+    production use right now -- nothing in this backend yet invokes the
+    Gate against a real, live user action to ever produce a row into
+    `action_events` or `negotiations` in the first place. `capacity` and
+    `budget` are real, live-computed numbers regardless, from this
+    user's actual `tasks`/`expenses` rows."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    capacity = await fetch_today_capacity(pool, user_id=internal_user_id)
+    budget = await fetch_today_budget(pool, user_id=internal_user_id)
+    pending_actions = await fetch_pending_actions(pool, user_id=internal_user_id)
+    active_negotiations = await fetch_active_negotiations(pool, user_id=internal_user_id)
+    return {
+        "capacity": {
+            "hours_remaining_today": capacity.hours_remaining_today,
+            "remaining_fraction": capacity.remaining_fraction,
+            "source": capacity.source,
+        },
+        "budget": {
+            "amount_remaining": budget.amount_remaining,
+            "remaining_fraction": budget.remaining_fraction,
+            "source": budget.source,
+        },
+        "needs_you_now": [
+            {
+                "proposal_id": record.proposal_id,
+                "action_type": record.action_type,
+                "stakes": record.stakes,
+                "payload": record.payload,
+                "created_at": record.created_at,
+            }
+            for record in pending_actions
+        ],
+        "in_motion": [
+            {
+                "negotiation_id": record.negotiation_id,
+                "conflicted_domains": record.conflicted_domains,
+                "started_at": record.started_at,
+            }
+            for record in active_negotiations
+        ],
+    }
 
 
 @app.get("/career_pipeline")
