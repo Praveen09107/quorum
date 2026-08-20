@@ -28,6 +28,14 @@
 // construction, not literally re-derived from a source file this
 // repository doesn't have.
 //
+// `application` added later, Roadmap Phase 4a (`DEC-120`), when
+// `backend/features/search.py` finally became real: leaving out an
+// entire real domain (career applications) from a feature whose own
+// name is "Unified" Fast Search would have been a real, silent gap, not
+// a faithful implementation of what "unified" means here. A small,
+// disclosed extension of this file's own already-reasoned construction,
+// not a literal spec value either.
+//
 // A REAL, HONEST DISTINCTION from `MOBILE_11`'s Career pipeline: that
 // screen's open-vocabulary handling responds to a CONFIRMED fact
 // (`applications.status` genuinely has no database CHECK constraint).
@@ -41,7 +49,7 @@
 // full corpus -- genuinely server-side work, unlike Today's zones -- so
 // results render in exactly the order received, never re-sorted here.
 
-enum SearchItemType { email, task, expense, decision, unknown }
+enum SearchItemType { email, task, expense, application, decision, unknown }
 
 class SearchResultItem {
   final String itemId;
@@ -68,6 +76,8 @@ SearchItemType parseItemType(String raw) {
       return SearchItemType.task;
     case 'expense':
       return SearchItemType.expense;
+    case 'application':
+      return SearchItemType.application;
     case 'decision':
       return SearchItemType.decision;
     default:
@@ -83,6 +93,8 @@ String labelForItemType(SearchItemType type) {
       return 'Task';
     case SearchItemType.expense:
       return 'Expense';
+    case SearchItemType.application:
+      return 'Application';
     case SearchItemType.decision:
       return 'Decision';
     case SearchItemType.unknown:
