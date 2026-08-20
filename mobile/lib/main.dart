@@ -31,6 +31,16 @@
 /// `GET /search?q=...`, backed by a real Gemini embedding call and a
 /// real pgvector similarity query (`features/search.py`), reaching the
 /// You tab's already-built Search screen for the first time.
+/// `fetchNegotiation` closes a real gap found while scoping the demo
+/// dataset session: `NegotiationBundle` has existed as a real, tested
+/// mobile type since `MOBILE_09`, but no real backend contract for
+/// viewing a negotiation's positions/options -- and no real, live
+/// LLM-generated content to populate them with -- ever existed until
+/// this session (`features/negotiation_detail.py`, `negotiation/
+/// gemini_calls.py`, the first real Stage-B-style LLM content-
+/// generation call this backend has ever made). Wiring it genuinely
+/// unlocks the Today tab's In Motion cards as real, tappable drill-
+/// throughs for the first time, not just a static display.
 /// `confirmDelete` is real and live too, as of `DEC-113` -- the real,
 /// irreversible `DELETE /account`, unblocked only once real user
 /// provisioning existed (`DEC-110`) to make a correctly per-user-scoped
@@ -46,6 +56,7 @@ import 'package:http/http.dart' as http;
 import 'package:quorum_mobile/api/account_api.dart';
 import 'package:quorum_mobile/api/career_pipeline_api.dart';
 import 'package:quorum_mobile/api/finance_api.dart';
+import 'package:quorum_mobile/api/negotiation_api.dart';
 import 'package:quorum_mobile/api/search_api.dart';
 import 'package:quorum_mobile/api/tasks_api.dart';
 import 'package:quorum_mobile/api/today_api.dart';
@@ -175,6 +186,10 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             fetchSearch: createSearchFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            fetchNegotiation: createNegotiationFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),

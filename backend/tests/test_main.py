@@ -495,6 +495,81 @@ def test_today_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
             app.state.db_pool = real_pool
 
 
+async def test_negotiation_detail_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
+    """Real, end-to-end: real-provisions a real user, inserts a real
+    negotiation row with real, persisted positions/options, confirms
+    `GET /negotiations/{id}` genuinely round-trips through the real
+    database with a real, valid access token."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    negotiation_id = uuid.uuid4()
+
+    await pool.execute(
+        "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at, positions, options) "
+        "VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)",
+        negotiation_id,
+        uuid.UUID(internal_user_id),
+        ["finance", "tasks"],
+        datetime.now(timezone.utc),
+        json.dumps([{"domain": "finance", "concern": "c", "severity_claim": "s", "resource_claims": [], "proposed_resolution": "r", "evidence": []}]),
+        json.dumps([{"option_id": "option_a", "description": "d", "source_domains": ["finance"], "impact": []}]),
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/negotiations/{negotiation_id}", headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body.keys()) == {"positions", "options"}
+        assert body["positions"][0]["domain"] == "finance"
+        assert body["options"][0]["option_id"] == "option_a"
+    finally:
+        await pool.execute("DELETE FROM negotiations WHERE negotiation_id = $1", negotiation_id)
+
+
+async def test_negotiation_detail_endpoint_never_leaks_another_real_users_negotiation(pool, provisioned_users):
+    headers_a, _user_a = await _provisioned_auth_header(pool, provisioned_users)
+    _headers_b, user_b = await _provisioned_auth_header(pool, provisioned_users)
+    negotiation_id = uuid.uuid4()
+
+    await pool.execute(
+        "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at) VALUES ($1, $2, $3, $4)",
+        negotiation_id, uuid.UUID(user_b), ["finance"], datetime.now(timezone.utc),
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/negotiations/{negotiation_id}", headers=headers_a)
+        assert response.status_code == 404
+    finally:
+        await pool.execute("DELETE FROM negotiations WHERE negotiation_id = $1", negotiation_id)
+
+
+def test_negotiation_detail_endpoint_a_real_syntactically_invalid_id_is_a_real_404_not_a_500():
+    with TestClient(app) as client:
+        response = client.get("/negotiations/not-a-real-uuid", headers=_auth_header())
+    assert response.status_code == 404
+
+
+def test_negotiation_detail_endpoint_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.get(f"/negotiations/{uuid.uuid4()}")
+    assert response.status_code == 401
+
+
+def test_negotiation_detail_endpoint_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
+    with TestClient(app) as client:
+        real_pool = app.state.db_pool
+        app.state.db_pool = None
+        try:
+            response = client.get(f"/negotiations/{uuid.uuid4()}", headers=_auth_header())
+            health_response = client.get("/health")
+            assert response.status_code == 503
+            assert health_response.status_code == 200
+        finally:
+            app.state.db_pool = real_pool
+
+
 @pytest.mark.skipif(get_settings().gemini_api_key is None, reason="no real GEMINI_API_KEY configured in this environment")
 async def test_search_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
     """Real, end-to-end: real-provisions a real user, inserts a real

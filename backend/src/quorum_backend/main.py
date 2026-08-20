@@ -20,6 +20,7 @@ loudly logged now -- a real safety net for exactly the "someone forgot
 to set a real secret" failure mode.
 """
 import logging
+import uuid
 from urllib.parse import urlencode
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -54,6 +55,7 @@ from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
 from quorum_backend.core.embeddings import EmbeddingError
 from quorum_backend.features.career_pipeline import fetch_career_pipeline
+from quorum_backend.features.negotiation_detail import fetch_negotiation_detail
 from quorum_backend.features.search import search as run_search
 from quorum_backend.features.self_test_harness import ScenarioResult, run_self_test, summarize
 from quorum_backend.features.subscription_detective import fetch_detected_subscriptions
@@ -328,6 +330,35 @@ async def today(
             for record in active_negotiations
         ],
     }
+
+
+@app.get("/negotiations/{negotiation_id}")
+async def negotiation_detail_endpoint(
+    negotiation_id: str,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live -- `QUORUM_DATA_CONTRACTS.md` §5.5a, a real gap found
+    and closed this session: `mobile/lib/shell/main_shell.dart`'s
+    `NegotiationBundle` has needed this since `MOBILE_09`, but no real
+    REST contract for it ever existed. Real per-user scoped from this
+    route's first line.
+
+    A real, honest `404` if `negotiation_id` isn't a real, syntactically
+    valid UUID, or doesn't resolve to a negotiation this caller owns --
+    the two cases are deliberately indistinguishable in the response,
+    the same "never confirm another user's data exists" discipline
+    every other real per-user route in this backend already holds
+    itself to."""
+    try:
+        negotiation_uuid = uuid.UUID(negotiation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="No negotiation found with that id.") from exc
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    detail = await fetch_negotiation_detail(pool, user_id=internal_user_id, negotiation_id=str(negotiation_uuid))
+    if detail is None:
+        raise HTTPException(status_code=404, detail="No negotiation found with that id.")
+    return {"positions": detail.positions, "options": detail.options}
 
 
 @app.get("/search")

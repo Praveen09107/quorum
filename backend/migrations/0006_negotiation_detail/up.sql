@@ -1,0 +1,27 @@
+-- Real gap, found while scoping the demo dataset session (DEC-121):
+-- the negotiations table (migration 0004) stores only negotiation_id,
+-- user_id, conflicted_domains, started_at, resolved_at, and
+-- chosen_option_id -- enough for GET /today's real "In motion" card,
+-- but nothing a real negotiation DETAIL screen needs (positions,
+-- options, and each option's real, code-computed impact deltas).
+-- mobile/lib/shell/main_shell.dart's own NegotiationBundle type has
+-- needed `positions`/`options` since MOBILE_09 -- no backend contract
+-- for it has ever existed, confirmed by direct search of
+-- QUORUM_DATA_CONTRACTS.md before writing this migration.
+--
+-- Stored as real JSONB snapshots, not a fully normalized schema: a
+-- negotiation's positions/options are the real, immutable output of
+-- one real run of the negotiation subgraph (trigger -> positions ->
+-- synthesis -> impact simulation) at the moment it was created --
+-- there's no real use case for querying into individual fields across
+-- negotiations the way there is for, say, tasks.title. Matches the
+-- same JSONB-for-structured-output-not-relational-data precedent this
+-- project already uses for action_events.payload.
+--
+-- Nullable, not NOT NULL: a negotiation is a real, valid row the
+-- instant scan_for_conflicts() (negotiation/trigger.py) flags it, and
+-- position/option generation happens afterward -- a genuinely
+-- in-progress negotiation with no detail yet is a real, honest state,
+-- not an error.
+ALTER TABLE negotiations ADD COLUMN positions JSONB;
+ALTER TABLE negotiations ADD COLUMN options JSONB;
