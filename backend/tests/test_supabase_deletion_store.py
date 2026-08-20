@@ -42,6 +42,8 @@ async def test_purge_postgres_rows_deletes_real_tasks_expenses_applications_inte
     expense_id = uuid.uuid4()
     application_id = uuid.uuid4()
     interview_id = uuid.uuid4()
+    proposal_id = uuid.uuid4()
+    negotiation_id = uuid.uuid4()
 
     await pool.execute(
         "INSERT INTO tasks (task_id, user_id, title, estimated_hours, deadline, status) VALUES ($1, $2, $3, $4, $5, $6)",
@@ -59,16 +61,28 @@ async def test_purge_postgres_rows_deletes_real_tasks_expenses_applications_inte
         "INSERT INTO interviews (interview_id, application_id, scheduled_at, format, status) VALUES ($1, $2, $3, $4, $5)",
         interview_id, application_id, None, "phone", "scheduled",
     )
+    # DEC-124: real action_events/negotiations rows this account owns.
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, trace_id, user_id) VALUES ($1, $2, $3, $4::jsonb, $5, $6)",
+        proposal_id, "create_note", "S0", "{}", f"test-deletion-{proposal_id}", uuid.UUID(user_id),
+    )
+    await pool.execute(
+        "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at) VALUES ($1, $2, $3, $4)",
+        negotiation_id, uuid.UUID(user_id), ["finance", "tasks"], datetime.now(timezone.utc),
+    )
 
     deleted_count = await store.purge_postgres_rows(user_id)
 
-    # 1 task + 1 expense + 1 application + 1 interview + 1 users row.
-    assert deleted_count == 5
+    # 1 task + 1 expense + 1 application + 1 interview + 1 action_event
+    # + 1 negotiation + 1 users row.
+    assert deleted_count == 7
 
     assert await pool.fetchrow("SELECT 1 FROM tasks WHERE task_id = $1", task_id) is None
     assert await pool.fetchrow("SELECT 1 FROM expenses WHERE expense_id = $1", expense_id) is None
     assert await pool.fetchrow("SELECT 1 FROM applications WHERE application_id = $1", application_id) is None
     assert await pool.fetchrow("SELECT 1 FROM interviews WHERE interview_id = $1", interview_id) is None
+    assert await pool.fetchrow("SELECT 1 FROM action_events WHERE proposal_id = $1", proposal_id) is None
+    assert await pool.fetchrow("SELECT 1 FROM negotiations WHERE negotiation_id = $1", negotiation_id) is None
     assert not await _real_user_exists(pool, user_id)
 
 
@@ -79,6 +93,10 @@ async def test_purge_postgres_rows_never_touches_another_real_users_rows(pool):
 
     victim_task = uuid.uuid4()
     bystander_task = uuid.uuid4()
+    victim_proposal = uuid.uuid4()
+    bystander_proposal = uuid.uuid4()
+    victim_negotiation = uuid.uuid4()
+    bystander_negotiation = uuid.uuid4()
 
     await pool.execute(
         "INSERT INTO tasks (task_id, user_id, title, estimated_hours, deadline, status) VALUES ($1, $2, $3, $4, $5, $6)",
@@ -88,16 +106,35 @@ async def test_purge_postgres_rows_never_touches_another_real_users_rows(pool):
         "INSERT INTO tasks (task_id, user_id, title, estimated_hours, deadline, status) VALUES ($1, $2, $3, $4, $5, $6)",
         bystander_task, uuid.UUID(bystander_id), "Bystander's real, untouched task", 1.0, None, "open",
     )
+    # DEC-124: the same real cross-user proof, extended to
+    # action_events/negotiations -- the exact property this session's
+    # own fix exists to add, not just "doesn't crash."
+    for proposal_id, uid in ((victim_proposal, victim_id), (bystander_proposal, bystander_id)):
+        await pool.execute(
+            "INSERT INTO action_events (proposal_id, action_type, stakes, payload, trace_id, user_id) VALUES ($1, $2, $3, $4::jsonb, $5, $6)",
+            proposal_id, "create_note", "S0", "{}", f"test-deletion-{proposal_id}", uuid.UUID(uid),
+        )
+    for negotiation_id, uid in ((victim_negotiation, victim_id), (bystander_negotiation, bystander_id)):
+        await pool.execute(
+            "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at) VALUES ($1, $2, $3, $4)",
+            negotiation_id, uuid.UUID(uid), ["finance"], datetime.now(timezone.utc),
+        )
 
     try:
         await store.purge_postgres_rows(victim_id)
 
         assert await pool.fetchrow("SELECT 1 FROM tasks WHERE task_id = $1", victim_task) is None
         assert await pool.fetchrow("SELECT 1 FROM tasks WHERE task_id = $1", bystander_task) is not None
+        assert await pool.fetchrow("SELECT 1 FROM action_events WHERE proposal_id = $1", victim_proposal) is None
+        assert await pool.fetchrow("SELECT 1 FROM action_events WHERE proposal_id = $1", bystander_proposal) is not None
+        assert await pool.fetchrow("SELECT 1 FROM negotiations WHERE negotiation_id = $1", victim_negotiation) is None
+        assert await pool.fetchrow("SELECT 1 FROM negotiations WHERE negotiation_id = $1", bystander_negotiation) is not None
         assert not await _real_user_exists(pool, victim_id)
         assert await _real_user_exists(pool, bystander_id)
     finally:
         await pool.execute("DELETE FROM tasks WHERE task_id = $1", bystander_task)
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = $1", bystander_proposal)
+        await pool.execute("DELETE FROM negotiations WHERE negotiation_id = $1", bystander_negotiation)
         await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(bystander_id))
 
 
