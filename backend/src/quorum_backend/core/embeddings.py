@@ -20,31 +20,57 @@ stores each item's raw `content` in Postgres directly, so on-device
 generation would buy no real privacy benefit here either. Gemini's own
 embedding API is used instead: a real, already-provisioned credential
 (`DEC-098`), no new external signup, fits this deployment's serverless
-shape cleanly. Logged as a real, disclosed open item (`STATUS_INDEX.md`),
-not a silent spec rewrite.
+shape cleanly. Logged as a real, disclosed open item in
+`STATUS_INDEX.md` and `DECISIONS_LOG.md` (`DEC-120`), per Rule 3 --
+this module deliberately does not quietly override a "Locked" spec
+decision without that record existing.
 
-The real model name (`gemini-embedding-001`) and its real, live output
-dimension (3072) were both confirmed directly against the actual
-Gemini API before writing this file or any migration touching
-`note_embeddings.embedding`'s column type -- `text-embedding-004`
-(the model this session first assumed, matching a commonly-cited
-Gemini embedding model name) returned a real, live 404 for this
-project's real API key/version, confirmed by a real call, not assumed
-correct from memory. `ListModels` was then used to find the real,
-currently-available embedding models for this key, and a real
-`embedContent` call against `gemini-embedding-001` confirmed the real
-3072-dimension default output -- matching `QUORUM_MASTER_REFERENCE.md`
-§5's own explicit caution never to hardcode a guessed dimension.
+THE REAL MODEL AND DIMENSION, both confirmed live before any migration
+hardcoded either -- `QUORUM_MASTER_REFERENCE.md` §5's own standing
+caution is never to hardcode a guessed dimension, and that caution
+earned itself twice here:
+  1. `text-embedding-004` (this session's first assumption, a commonly-
+     cited Gemini embedding model name) returned a real, live 404 for
+     this project's real API key and version. `ListModels` was then
+     used to find the genuinely-available models.
+  2. `gemini-embedding-001`'s real DEFAULT output is 3072 dimensions,
+     confirmed by a real `embedContent` call -- and that default is
+     unusable for this project: pgvector refuses to build either an
+     HNSW or an IVFFlat index above 2000 dimensions, confirmed live
+     against the real production database ("column cannot have more
+     than 2000 dimensions for hnsw index"). A 3072-dimension column
+     would have permanently forced every real search to a sequential
+     scan of the user's whole corpus. Found by `DEC-120`'s own
+     pre-merge review, before any real row was ever written.
+
+So this module asks for 768 explicitly via `outputDimensionality`
+(Gemini's real Matryoshka/MRL truncation, confirmed live returning
+exactly 768), which pgvector indexes cleanly with HNSW.
+
+A real, live-confirmed subtlety that follows from that truncation, and
+is genuinely easy to miss: the 3072 default comes back already
+L2-normalized (measured norm 1.000000), but the MRL-truncated 768
+output does NOT (measured norm 0.582911). Cosine distance -- what this
+project's real similarity query uses (`<=>`) -- is magnitude-
+invariant, so ranking would still be correct either way; the vectors
+are re-normalized below anyway, because Google's own guidance for
+truncated embeddings says to, because it keeps every stored vector
+consistent with the 3072 default's own property, and because it makes
+a future switch to an L2-distance operator safe instead of silently
+wrong.
 """
 from __future__ import annotations
+
+import math
 
 import httpx
 
 GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
 
-# Real, live-confirmed default output size for this model -- see this
-# file's own docstring for how this was verified, not assumed.
-GEMINI_EMBEDDING_DIMENSION = 3072
+# Real, live-confirmed, and deliberately NOT the model's own 3072
+# default -- see this module's docstring for the real pgvector
+# 2000-dimension index limit that drives this number.
+GEMINI_EMBEDDING_DIMENSION = 768
 
 _EMBED_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_EMBEDDING_MODEL}:embedContent"
 
@@ -57,23 +83,60 @@ class EmbeddingError(Exception):
     without any visible signal that anything actually went wrong."""
 
 
+def _l2_normalize(values: list[float]) -> list[float]:
+    """Real, explicit L2 normalization -- see this module's docstring
+    for why MRL-truncated output genuinely needs it. A zero vector is
+    returned unchanged rather than dividing by zero; Gemini has never
+    been observed to return one, but a silent NaN vector written into
+    `note_embeddings` would be a real, hard-to-trace corruption, and
+    pgvector rejects NaN loudly on insert anyway."""
+    norm = math.sqrt(sum(v * v for v in values))
+    if norm == 0.0:
+        return values
+    return [v / norm for v in values]
+
+
 async def embed_text(text: str, *, api_key: str) -> list[float]:
     """Real, live call to Gemini's `embedContent` endpoint. Raises
     `EmbeddingError` on any failure -- callers (`features/search.py`)
     are expected to let this propagate into a real, honest HTTP error,
-    never to catch-and-substitute a fake vector."""
+    never to catch-and-substitute a fake vector.
+
+    The real API key travels in the `x-goog-api-key` HEADER, never as a
+    `?key=` query parameter. Both genuinely work (confirmed live), and
+    the query-parameter form is the more commonly shown one -- but it
+    puts a real, live credential into the request URL, and `httpx` logs
+    `request.url` at INFO on its own logger. That log is silent under
+    this project's real Dockerfile/uvicorn configuration today, but
+    "today" is the whole problem: a single future `logging.basicConfig(
+    level=INFO)`, or the Langfuse tracing integration this project
+    already has open as real future work, would start writing the real
+    key into Cloud Logging with nothing in this file to prevent it. The
+    header form has no such failure mode. Found by `DEC-120`'s own
+    pre-merge review, which also confirmed the related landmine:
+    `httpx.HTTPStatusError`'s own `str()` embeds the full request URL,
+    so a future `raise_for_status()` anywhere in this call path would
+    have leaked a query-parameter key into an exception message
+    directly. There is deliberately no `raise_for_status()` below."""
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             response = await client.post(
                 _EMBED_URL,
-                params={"key": api_key},
-                json={"content": {"parts": [{"text": text}]}},
+                headers={"x-goog-api-key": api_key},
+                json={
+                    "content": {"parts": [{"text": text}]},
+                    "outputDimensionality": GEMINI_EMBEDDING_DIMENSION,
+                },
             )
         except httpx.HTTPError as exc:
-            raise EmbeddingError(f"Gemini embedding request failed: {exc}") from exc
+            # `exc` here is deliberately a transport-level error only
+            # (connect/timeout/protocol) -- confirmed live that none of
+            # those carry the request URL in their str(), and the key
+            # is no longer in the URL regardless.
+            raise EmbeddingError(f"Gemini embedding request failed: {type(exc).__name__}: {exc}") from exc
 
     if response.status_code != 200:
-        raise EmbeddingError(f"Gemini embedding API returned {response.status_code}: {response.text}")
+        raise EmbeddingError(f"Gemini embedding API returned {response.status_code}")
 
     try:
         data = response.json()
@@ -87,4 +150,4 @@ async def embed_text(text: str, *, api_key: str) -> list[float]:
             "-- the model's real output shape may have changed since this was last confirmed live."
         )
 
-    return values
+    return _l2_normalize([float(v) for v in values])

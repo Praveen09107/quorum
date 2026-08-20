@@ -361,7 +361,14 @@ async def search_endpoint(
     try:
         results = await run_search(pool, user_id=internal_user_id, query=q, api_key=settings.gemini_api_key)
     except EmbeddingError as exc:
-        raise HTTPException(status_code=502, detail=f"Search is temporarily unavailable: {exc}") from exc
+        # The real detail is logged server-side, never echoed to the
+        # caller. `DEC-120`'s review confirmed live that Gemini's own
+        # error bodies carry no credential -- but they do carry the
+        # upstream's internal error structure, which no authenticated
+        # caller of THIS API has any reason to see. A generic message
+        # out, the real diagnostic detail into Cloud Logging.
+        logger.exception("Real Gemini embedding failure while serving /search")
+        raise HTTPException(status_code=502, detail="Search is temporarily unavailable -- please try again shortly.") from exc
     return [
         {"item_id": item.item_id, "item_type": item.item_type, "text": item.text, "timestamp": item.timestamp}
         for item in results

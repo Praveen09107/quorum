@@ -578,6 +578,42 @@ def test_search_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
             app.state.db_pool = real_pool
 
 
+async def test_search_502_body_never_leaks_the_real_api_key_or_upstream_internals(pool, provisioned_users, monkeypatch):
+    """A real, permanent security regression test, added because
+    `DEC-120`'s CRITICAL-tier review specifically probed this path.
+
+    The concern was concrete, not theoretical: an earlier version of
+    the `/search` route interpolated `EmbeddingError`'s own message --
+    which then carried Gemini's raw `response.text` -- straight into
+    the 502 response body. The key itself was never actually in there
+    (the review confirmed that live against real Gemini error bodies),
+    but the shape of that code was one refactor away from leaking, and
+    it echoed the upstream's internals to any authenticated caller for
+    no good reason. This test pins the fixed behavior down: whatever
+    goes wrong upstream, the caller sees a generic message."""
+    from quorum_backend import main as main_module
+
+    headers, _internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    sentinel_key = "SENTINEL-FAKE-KEY-abc123-must-never-appear-in-any-response"
+
+    async def _exploding_search(*args, **kwargs):
+        from quorum_backend.core.embeddings import EmbeddingError
+
+        # Deliberately stuffs the key into the error, the worst case.
+        raise EmbeddingError(f"upstream blew up, url=https://x/?key={sentinel_key}")
+
+    fake_settings = get_settings().model_copy(update={"gemini_api_key": sentinel_key})
+    monkeypatch.setattr(main_module, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(main_module, "run_search", _exploding_search)
+
+    with TestClient(app) as client:
+        response = client.get("/search", params={"q": "anything"}, headers=headers)
+
+    assert response.status_code == 502
+    assert sentinel_key not in response.text
+    assert "url=" not in response.text
+
+
 def test_search_returns_503_when_the_embedding_provider_is_not_configured(monkeypatch):
     """A fresh clone/CI environment with no real GEMINI_API_KEY must
     fail loud and honest, never crash with a raw exception reaching the

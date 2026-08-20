@@ -27,7 +27,18 @@ from quorum_backend.features.search import (
 )
 
 _HAS_REAL_KEY = get_settings().gemini_api_key is not None
-pytestmark = pytest.mark.skipif(not _HAS_REAL_KEY, reason="no real GEMINI_API_KEY configured in this environment")
+
+# Applied per-test to the live tests ONLY, deliberately not as a
+# module-level `pytestmark`. A real, disclosed correction found by
+# `DEC-120`'s own pre-merge review: a module-level mark skipped all 23
+# tests in this file without a real key, including the 7 pure
+# content-formatting tests below that need no key, no database, and no
+# network at all -- exactly the "a skipped test proves nothing while
+# the count still looks healthy" failure mode CI is most vulnerable
+# to, since CI is precisely where no real key exists.
+_needs_real_key = pytest.mark.skipif(
+    not _HAS_REAL_KEY, reason="no real GEMINI_API_KEY configured in this environment"
+)
 
 
 # --- Pure content formatting (no real infrastructure needed) ---
@@ -85,6 +96,7 @@ async def api_key():
     return get_settings().gemini_api_key
 
 
+@_needs_real_key
 async def test_backfill_embeds_a_real_task_and_is_idempotent_on_a_second_run(pool, user_id, api_key):
     task_id = uuid.uuid4()
     try:
@@ -112,6 +124,7 @@ async def test_backfill_embeds_a_real_task_and_is_idempotent_on_a_second_run(poo
         await pool.execute("DELETE FROM tasks WHERE task_id = $1", task_id)
 
 
+@_needs_real_key
 async def test_search_ranks_a_real_semantically_related_task_first(pool, user_id, api_key):
     budget_task_id = uuid.uuid4()
     groceries_task_id = uuid.uuid4()
@@ -138,6 +151,7 @@ async def test_search_ranks_a_real_semantically_related_task_first(pool, user_id
         )
 
 
+@_needs_real_key
 async def test_search_never_leaks_another_real_users_rows(pool, user_id, api_key):
     other_google_sub = f"test-search-other-{uuid.uuid4()}"
     other_user_id = await get_or_create_user(pool, google_sub=other_google_sub, email=None)
@@ -164,6 +178,7 @@ async def test_search_never_leaks_another_real_users_rows(pool, user_id, api_key
         await pool.execute("DELETE FROM users WHERE google_sub = $1", other_google_sub)
 
 
+@_needs_real_key
 async def test_search_covers_all_four_real_domains_and_caps_at_ten(pool, user_id, api_key):
     task_id = uuid.uuid4()
     expense_id = uuid.uuid4()

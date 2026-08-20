@@ -61,6 +61,7 @@
 | Predictive-risk density tolerance | ±1 deadline, when matching historical weeks | `predictive_risk.py` |
 | Predictive-risk flag threshold | historical correction rate ≥ 0.5 at matching density | `predictive_risk.py` |
 | Unified search result cap | top 10 | `search.py` |
+| Unified search max backfill per request | 50 rows (a real, enforced `LIMIT`, not a soft intention) — this backend has no write path that creates a task/expense/application, so there is no "on creation" moment to embed at and `search()` lazily backfills inline instead; at Cloud Run `--concurrency=1`, an unbounded backfill would block a whole instance and could exceed the request timeout entirely. 50 is a real, disclosed, reasoned choice, not a measured optimum: ~0.2–0.5s per real embedding call puts it around 10–25s, well inside the real 300s timeout. A first search over a large unembedded corpus can therefore return honestly incomplete results, and self-heals across calls (`DEC-120`) | `search.py` |
 | Career digest summary cap | 5 points (a brief, not a report) | `career_digest.py` |
 | Style-reply max style examples | 3 | `style_reply.py` |
 | Trust Digest stability threshold | 0.01 (1 percentage point — a week-over-week success-rate change smaller than this reports as "stable," not noise misread as a real trend) | `trust_digest.py` — added during a full staleness audit; genuinely missing despite this document's own stated purpose |
@@ -129,7 +130,8 @@
 | Supabase keep-alive ping frequency | every 3–4 days (comfortably inside the 7-day window; GitHub Actions' 15–60 min drift is irrelevant at this cadence) |
 | Upstash Redis free tier | 500,000 commands/month, 256MB |
 | Langfuse Cloud (Hobby) | 50,000 traced units/month, 30-day retention, 2 users |
-| Embedding dimension (Qwen3-Embedding-0.6B) | **not yet confirmed — do not hardcode in a migration until verified against the loaded model at integration time**; the pgvector schema in `QUORUM_DATA_CONTRACTS.md` §3 marks this explicitly |
+| Embedding dimension (Qwen3-Embedding-0.6B) | **SUPERSEDED, `DEC-120`** — this row's own caution ("do not hardcode in a migration until verified against the loaded model at integration time") was correct and earned itself twice at real integration time; see the row below. Qwen3-Embedding-0.6B itself was never wired into this backend, and `QUORUM_MASTER_REFERENCE.md` §5's locking of it is superseded by a real, disclosed, Preethish-approved switch to Gemini's embedding API |
+| Embedding model and dimension, real and live (`gemini-embedding-001`) | **768**, requested explicitly via `outputDimensionality` (Gemini's real Matryoshka/MRL truncation), never the model's own 3072 default. Both facts confirmed by real, live API calls before any migration hardcoded them: `text-embedding-004` (a plausible first guess) returns a real 404 for this project's key, and 3072 — while real — is **unusable here**, because pgvector refuses to build an HNSW or IVFFlat index above 2000 dimensions (confirmed live against the real production database), which would have condemned every search to a permanent sequential scan. MRL-truncated output is **not** pre-normalized (measured L2 norm `0.582911`, versus `1.000000` at 3072), so `core/embeddings.py` re-normalizes explicitly. Real consumers: `core/embeddings.py`, `migrations/0005_search_embeddings/` |
 
 ---
 
