@@ -40,11 +40,19 @@
         <!-- Real, necessary: flutter_web_auth_2's own callback activity,
              registered for the exact custom scheme the real backend's
              GET /auth/callback bridge redirects to
-             (com.quorum.quorum_mobile://oauth2redirect). Captures
+             (com.quorum.quorummobile://oauth2redirect). Captures
              control back from the in-app browser once Google's real
              sign-in flow completes. android:taskAffinity="" is required
              per the package's own documented setup to avoid task-stack
-             issues when the browser hands control back. -->
+             issues when the browser hands control back.
+
+             DEC-118: this is deliberately NOT the real applicationId
+             (com.quorum.quorum_mobile) despite looking similar: a
+             real, disclosed bug found live on a real device. The
+             applicationId's underscore is not a valid URL-scheme
+             character (RFC 3986), and flutter_web_auth_2 rejected it
+             immediately, every time, on every real device this was
+             ever actually tested against, before this fix. -->
         <activity
             android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
             android:exported="true"
@@ -53,7 +61,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="com.quorum.quorum_mobile" />
+                <data android:scheme="com.quorum.quorummobile" />
             </intent-filter>
         </activity>
     </application>
