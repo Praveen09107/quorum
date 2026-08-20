@@ -26,12 +26,26 @@ fresh internal UUID, never silently resurrecting deleted history).
 `purge_vector_embeddings()` covers `note_embeddings` specifically --
 the one real table with a pgvector column, a genuine conceptual
 distinct from the other tables even though it lives in the same real
-Postgres database. `action_events` and `retry_queue` are deliberately
-NOT touched here: `action_events` has no `user_id` column at all
-(confirmed against the real schema, the same real, disclosed limitation
-`/trust_digest` already carries), and `retry_queue` is a generic,
-system-level job queue with no per-user ownership concept whatsoever --
-neither table has a real, correct way to be scoped to one account.
+Postgres database. `action_events` and `negotiations` (and, inside
+`negotiations`, the real `positions`/`options` `DEC-121` added) are
+NOT touched here -- a real, disclosed, STILL-OPEN gap, not a
+deliberate design choice this comment previously claimed it was: this
+comment used to state `action_events` "has no `user_id` column at
+all," which was true when it was written but stopped being true the
+moment `DEC-119`'s migration `0004` added one. Corrected here, found
+while working on unrelated negotiation-choice code, not by auditing
+this file directly -- a real account deletion today genuinely leaves
+that user's `action_events`/`negotiations` rows behind, orphaned.
+Tracked as a real, open item (`STATUS_INDEX.md`) rather than
+silently fixed as a side effect of the session that happened to find
+it -- `DELETE /account`'s own purge completeness is CRITICAL-tier,
+irreversible-action-adjacent work and deserves its own explicit scope,
+not an incidental patch. `retry_queue` remains genuinely, permanently
+out of scope for per-user purging: it is a real, generic, system-level
+job queue with no per-user ownership *column* at all (a user's own
+`user_id` may appear inside an individual job's `payload` JSONB, but
+that is not a queryable, indexed relationship this store can safely
+scope a bulk delete against).
 
 **Two real, honest, disclosed zeros, not silently faked:**
 `purge_memories()` -- no real `mem0` integration exists anywhere in this

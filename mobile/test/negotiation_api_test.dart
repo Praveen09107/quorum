@@ -179,4 +179,111 @@ void main() {
       await expectLater(fetch('anything'), throwsA(isA<ApiException>()));
     });
   });
+
+  group('createChooseNegotiationFetcher', () {
+    test('sends a real POST with the real body, Bearer header, and JSON content-type', () async {
+      late Uri capturedUri;
+      late String? capturedAuth;
+      late String? capturedContentType;
+      late String capturedBody;
+
+      final client = MockClient((request) async {
+        capturedUri = request.url;
+        capturedAuth = request.headers['Authorization'];
+        capturedContentType = request.headers['Content-Type'];
+        capturedBody = request.body;
+        return http.Response('', 202);
+      });
+
+      final choose = createChooseNegotiationFetcher(
+        getAccessToken: () async => 'a-real-test-token',
+        client: client,
+        baseUrl: 'https://example.test',
+      );
+      await choose('a-real-negotiation-id', 'option_a');
+
+      expect(capturedUri.toString(), 'https://example.test/negotiations/a-real-negotiation-id/choose');
+      expect(capturedAuth, 'Bearer a-real-test-token');
+      expect(capturedContentType, contains('application/json'));
+      expect(jsonDecode(capturedBody), {'chosen_option': 'option_a'});
+    });
+
+    test('a real 202 completes successfully with no error', () async {
+      final client = MockClient((request) async => http.Response('', 202));
+      final choose = createChooseNegotiationFetcher(getAccessToken: () async => 't', client: client);
+
+      await choose('a-real-negotiation-id', 'do_nothing'); // should not throw
+    });
+
+    test('a real 409 (already resolved) throws a real, distinct ApiException', () async {
+      final client = MockClient((request) async => http.Response(jsonEncode({'detail': 'already resolved'}), 409));
+      final choose = createChooseNegotiationFetcher(getAccessToken: () async => 't', client: client);
+
+      try {
+        await choose('a-real-negotiation-id', 'option_a');
+        fail('should have thrown');
+      } on ApiException catch (e) {
+        expect(e.statusCode, 409);
+        expect(e.isAuthFailure, isFalse);
+      }
+    });
+
+    test('a real 400 (ungrounded option) throws a real, distinct ApiException from 409', () async {
+      final client = MockClient((request) async => http.Response(jsonEncode({'detail': 'not a real option'}), 400));
+      final choose = createChooseNegotiationFetcher(getAccessToken: () async => 't', client: client);
+
+      try {
+        await choose('a-real-negotiation-id', 'not_real');
+        fail('should have thrown');
+      } on ApiException catch (e) {
+        expect(e.statusCode, 400);
+      }
+    });
+
+    test('a real 404 throws a real, distinct ApiException', () async {
+      final client = MockClient((request) async => http.Response(jsonEncode({'detail': 'not found'}), 404));
+      final choose = createChooseNegotiationFetcher(getAccessToken: () async => 't', client: client);
+
+      try {
+        await choose('a-real-negotiation-id', 'option_a');
+        fail('should have thrown');
+      } on ApiException catch (e) {
+        expect(e.statusCode, 404);
+      }
+    });
+
+    test('a null access token fails loud with a real 401, before any real request is even sent', () async {
+      var requestSent = false;
+      final client = MockClient((request) async {
+        requestSent = true;
+        return http.Response('', 202);
+      });
+
+      final choose = createChooseNegotiationFetcher(getAccessToken: () async => null, client: client);
+
+      try {
+        await choose('a-real-negotiation-id', 'option_a');
+        fail('should have thrown');
+      } on ApiException catch (e) {
+        expect(e.isAuthFailure, isTrue);
+        expect(requestSent, isFalse);
+      }
+    });
+
+    test('a genuine network failure throws ApiException with a null statusCode', () async {
+      final client = MockClient((request) async {
+        throw http.ClientException('Connection refused');
+      });
+
+      final choose = createChooseNegotiationFetcher(getAccessToken: () async => 't', client: client);
+
+      try {
+        await choose('a-real-negotiation-id', 'option_a');
+        fail('should have thrown');
+      } on ApiException catch (e) {
+        expect(e.statusCode, isNull);
+        expect(e.isAuthFailure, isFalse);
+      }
+    });
+  });
 }

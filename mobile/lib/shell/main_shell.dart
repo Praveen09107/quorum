@@ -93,6 +93,7 @@ typedef DeletionConfirmer = Future<DeletionResultData> Function();
 typedef TaskListFetcher = Future<List<TaskData>> Function();
 typedef GateRevealFetcher = Future<GateRevealBundle> Function(String proposalId);
 typedef NegotiationFetcher = Future<NegotiationBundle> Function(String negotiationId);
+typedef ChooseNegotiationOption = Future<void> Function(String negotiationId, String optionId);
 typedef CareerFetcher = Future<List<CareerApplication>> Function();
 typedef CareerDigestFetcher = Future<CompanyDigestData> Function(String applicationId);
 typedef FinanceFetcher = Future<List<DetectedSubscriptionData>> Function();
@@ -109,6 +110,7 @@ class MainShell extends ConsumerStatefulWidget {
   final TaskListFetcher? fetchTasks;
   final GateRevealFetcher? fetchGateReveal;
   final NegotiationFetcher? fetchNegotiation;
+  final ChooseNegotiationOption? chooseNegotiation;
   final CareerFetcher? fetchCareerApplications;
   final CareerDigestFetcher? fetchCareerDigest;
   final FinanceFetcher? fetchFinance;
@@ -132,6 +134,7 @@ class MainShell extends ConsumerStatefulWidget {
     this.fetchTasks,
     this.fetchGateReveal,
     this.fetchNegotiation,
+    this.chooseNegotiation,
     this.fetchCareerApplications,
     this.fetchCareerDigest,
     this.fetchFinance,
@@ -187,6 +190,7 @@ class _MainShellState extends ConsumerState<MainShell> {
           fetchTasks: widget.fetchTasks,
           fetchGateReveal: widget.fetchGateReveal,
           fetchNegotiation: widget.fetchNegotiation,
+          chooseNegotiation: widget.chooseNegotiation,
         );
       case 1:
         return _HonestyLogTab(fetch: widget.fetchHonestyFeed);
@@ -282,8 +286,9 @@ class _TodayTab extends StatelessWidget {
   final TaskListFetcher? fetchTasks;
   final GateRevealFetcher? fetchGateReveal;
   final NegotiationFetcher? fetchNegotiation;
+  final ChooseNegotiationOption? chooseNegotiation;
 
-  const _TodayTab({this.fetch, this.fetchTasks, this.fetchGateReveal, this.fetchNegotiation});
+  const _TodayTab({this.fetch, this.fetchTasks, this.fetchGateReveal, this.fetchNegotiation, this.chooseNegotiation});
 
   @override
   Widget build(BuildContext context) {
@@ -316,7 +321,11 @@ class _TodayTab extends StatelessWidget {
               ? null
               : (negotiationId) => Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => _NegotiationLoader(fetch: () => negotiation(negotiationId)),
+                      builder: (_) => _NegotiationLoader(
+                        negotiationId: negotiationId,
+                        fetch: () => negotiation(negotiationId),
+                        chooseNegotiation: chooseNegotiation,
+                      ),
                     ),
                   ),
         );
@@ -354,33 +363,96 @@ class _GateRevealLoader extends StatelessWidget {
 }
 
 /// The negotiation screen's real drill-through, triggered from an In
-/// Motion card. `onChoose` is deliberately left unwired -- the real
-/// `POST /negotiations/{id}/choose` endpoint doesn't exist yet
-/// (`QUORUM_DATA_CONTRACTS.md` §5.6 remains specified, not implemented);
-/// this screen shows real data honestly without pretending a choice can
-/// be submitted yet.
-class _NegotiationLoader extends StatelessWidget {
+/// Motion card. `onChoose` is now real and live (`QUORUM_DATA_CONTRACTS.md`
+/// §5.6, closing the gap `DEC-104`/`DEC-121` both disclosed) --
+/// `StatefulWidget` since submitting a real choice needs real loading/
+/// error/success states of its own, distinct from the initial fetch.
+class _NegotiationLoader extends StatefulWidget {
+  final String negotiationId;
   final Future<NegotiationBundle> Function() fetch;
+  final ChooseNegotiationOption? chooseNegotiation;
 
-  const _NegotiationLoader({required this.fetch});
+  const _NegotiationLoader({required this.negotiationId, required this.fetch, this.chooseNegotiation});
+
+  @override
+  State<_NegotiationLoader> createState() => _NegotiationLoaderState();
+}
+
+class _NegotiationLoaderState extends State<_NegotiationLoader> {
+  late final Future<NegotiationBundle> _bundleFuture;
+  bool _submitting = false;
+  String? _submitError;
+  bool _accepted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _bundleFuture = widget.fetch();
+  }
+
+  Future<void> _handleChoose(String optionId) async {
+    final choose = widget.chooseNegotiation;
+    if (choose == null) return;
+    setState(() {
+      _submitting = true;
+      _submitError = null;
+    });
+    try {
+      await choose(widget.negotiationId, optionId);
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _accepted = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _submitError = '$e';
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Negotiation')),
-      body: FutureBuilder<NegotiationBundle>(
-        future: fetch(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(child: Text("Couldn't load the negotiation: ${snapshot.error}"));
-          }
-          final bundle = snapshot.data!;
-          return NegotiationScreen(positions: bundle.positions, options: bundle.options);
-        },
-      ),
+      // A real, honest terminal state -- matches the backend's own real
+      // 202 Accepted semantics exactly: the choice is real and durably
+      // recorded, the downstream action is real and genuinely queued,
+      // but not yet processed. Never claims more happened than that.
+      body: _accepted
+          ? const Center(child: Text('Choice accepted -- this action is now queued.'))
+          : FutureBuilder<NegotiationBundle>(
+              future: _bundleFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return Center(child: Text("Couldn't load the negotiation: ${snapshot.error}"));
+                }
+                final bundle = snapshot.data!;
+                final canChoose = widget.chooseNegotiation != null && !_submitting;
+                return Column(
+                  children: [
+                    if (_submitError != null)
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text("Couldn't submit your choice: $_submitError"),
+                      ),
+                    if (_submitting) const LinearProgressIndicator(),
+                    Expanded(
+                      child: NegotiationScreen(
+                        positions: bundle.positions,
+                        options: bundle.options,
+                        onChoose: canChoose ? _handleChoose : null,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
     );
   }
 }
