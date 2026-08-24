@@ -29,8 +29,19 @@ code, not assumed:
     translation always produces `CREATE_TASK`, never `UPDATE_TASK`, per
     `negotiation/downstream_translation.py`'s own disclosed reasoning;
     `career` is never a real negotiation domain at all).
+  - `CREATE_NOTE` has no real execution target either: no `notes` table
+    exists anywhere in this schema (only `note_embeddings`, a genuinely
+    different real concept -- Search's own embedding store, not a place
+    to persist a note's real content) -- a real, disclosed gap this
+    session's own CRITICAL-tier review found missing from an earlier
+    draft of this exact enumeration, corrected here rather than left as
+    a real, if harmless, overclaim of exhaustiveness (the code's own
+    generic fallback below, and `test_action_executor.py`'s own
+    exhaustive iteration over every real `ActionType`, both already
+    covered it correctly; only this prose account didn't).
 
-Every one of those returns a real, honest `executed=False` with a real
+That's all 9 real `ActionType`s besides `CREATE_TASK`/`LOG_EXPENSE` --
+every one of those returns a real, honest `executed=False` with a real
 explanation -- never silently skipped, never fabricated as done.
 
 A REAL, DISCLOSED SCHEMA GAP FOUND AND CLOSED HERE, NOT SILENTLY

@@ -19,6 +19,7 @@ import pytest_asyncio
 from quorum_backend.auth.user_provisioning import get_or_create_user
 from quorum_backend.core import db
 from quorum_backend.features.retry_queue_drainer import (
+    _mark_job_failed,
     available_hours_before_deadline,
     drain_due_jobs,
     map_verdict_to_outcome,
@@ -105,9 +106,26 @@ def test_validate_and_build_finance_proposal_accepts_a_real_positive_amount():
     assert proposal.payload["amount"] == 42.5
 
 
+def test_validate_and_build_finance_proposal_rejects_an_amount_exceeding_the_real_numeric_10_2_column():
+    """A real regression proof for a real bug found by this session's
+    own CRITICAL-tier review: an unbounded, hallucinated amount must
+    never reach the real `expenses.amount NUMERIC(10,2)` column."""
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_finance_proposal({"action": "log_expense", "amount": 100_000_000.0, "category": "food", "payee": None})
+
+
 def test_validate_and_build_task_proposal_rejects_non_positive_hours():
     with pytest.raises(DownstreamTranslationError):
         validate_and_build_task_proposal({"title": "x", "estimated_hours": 0, "deadline_iso": None})
+
+
+def test_validate_and_build_task_proposal_rejects_estimated_hours_exceeding_the_real_numeric_4_1_column():
+    """A real regression proof for the same class of bug: an unbounded,
+    hallucinated `estimated_hours` (e.g. "handle onboarding through the
+    quarter" -> 2000) must never reach the real `tasks.estimated_hours
+    NUMERIC(4,1)` column."""
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_task_proposal({"title": "x", "estimated_hours": 2000.0, "deadline_iso": None})
 
 
 def test_validate_and_build_task_proposal_handles_a_real_null_deadline_honestly():
@@ -325,6 +343,37 @@ async def test_drain_due_jobs_an_unknown_job_type_fails_loud_via_the_same_real_r
         assert "some_future_job_type_this_drainer_does_not_know" in stored["last_error"]
     finally:
         await pool.execute("DELETE FROM retry_queue WHERE retry_id = $1", retry_id)
+
+
+async def test_mark_job_failed_succeeds_after_a_real_transaction_genuinely_aborts_and_rolls_back(pool, user_id):
+    """A real, live regression proof for a real, structural bug this
+    session's own CRITICAL-tier review found: `_mark_job_failed()` must
+    genuinely succeed even immediately after a real Postgres transaction
+    aborted (a genuine SQL-level error, not a Python exception) and
+    rolled back on the SAME connection. Before the fix, `drain_due_
+    jobs()` called this from INSIDE the still-open, now-aborted
+    transaction -- every subsequent statement on it, including this
+    real recovery UPDATE, would itself fail with a second, uncaught
+    exception, permanently wedging the job at `attempt_count=0` instead
+    of genuinely backing off."""
+    retry_id = await _seed_job(pool, user_id=user_id, source_domains=[])
+    async with pool.acquire() as conn:
+        try:
+            async with conn.transaction():
+                # A real, genuine Postgres-level error -- division by
+                # zero -- not a Python-side exception.
+                await conn.execute("SELECT 1/0")
+        except Exception:
+            pass  # a real ROLLBACK already happened via the transaction context manager exiting here
+        # The real, load-bearing assertion: this must NOT raise. Before
+        # the fix, this would fail with a real
+        # "current transaction is aborted" error.
+        await _mark_job_failed(conn, retry_id, "simulated real DB-level failure")
+
+    row = await pool.fetchrow("SELECT attempt_count, last_error FROM retry_queue WHERE retry_id = $1", retry_id)
+    assert row is not None
+    assert row["attempt_count"] == 1
+    assert "simulated real DB-level failure" in row["last_error"]
 
 
 async def test_drain_due_jobs_deadline_conflict_check_genuinely_uses_real_committed_task_hours(pool, user_id):

@@ -184,11 +184,31 @@ async def _build_stage_a_checks(
     return checks
 
 
+# Real, upper-bound caps mirroring the real, live column precision each
+# value is eventually written into (`expenses.amount NUMERIC(10,2)`,
+# `tasks.estimated_hours NUMERIC(4,1)`, confirmed against `migrations/
+# 0001_initial_schema/up.sql` before choosing these). A real, live-shaped
+# gap this session's own CRITICAL-tier review found and this fix closes:
+# an unbounded, LLM-supplied number (a plausible hallucinated
+# translation, e.g. "handle onboarding through the quarter" ->
+# estimated_hours: 2000) would previously sail through Stage A untouched
+# whenever no deadline is present (deadline_conflict_check trivially
+# passes with no deadline to check against) and reach a real
+# `INSERT INTO tasks`/`expenses` a fixed-precision NUMERIC column
+# genuinely cannot hold -- caught here instead, with a real, honest
+# `DownstreamTranslationError`, well before that INSERT is ever
+# attempted.
+_MAX_FINANCE_AMOUNT = 99_999_999.99
+_MAX_ESTIMATED_HOURS = 999.9
+
+
 def validate_and_build_finance_proposal(args: dict) -> ActionProposal:
     action = args["action"]
     amount = float(args["amount"])
     if amount <= 0:
         raise DownstreamTranslationError(f"Translated finance amount must be positive, got {amount!r}")
+    if amount > _MAX_FINANCE_AMOUNT:
+        raise DownstreamTranslationError(f"Translated finance amount {amount!r} exceeds the real, max storable value {_MAX_FINANCE_AMOUNT}")
     return build_finance_proposal(action=action, amount=amount, category=args["category"], payee=args.get("payee"))
 
 
@@ -196,6 +216,10 @@ def validate_and_build_task_proposal(args: dict) -> ActionProposal:
     estimated_hours = float(args["estimated_hours"])
     if estimated_hours <= 0:
         raise DownstreamTranslationError(f"Translated estimated_hours must be positive, got {estimated_hours!r}")
+    if estimated_hours > _MAX_ESTIMATED_HOURS:
+        raise DownstreamTranslationError(
+            f"Translated estimated_hours {estimated_hours!r} exceeds the real, max storable value {_MAX_ESTIMATED_HOURS}"
+        )
     deadline_iso = args.get("deadline_iso")
     deadline = datetime.fromisoformat(deadline_iso) if deadline_iso else None
     return build_task_proposal(title=args["title"], estimated_hours=estimated_hours, deadline=deadline, existing_task_id=None)
@@ -429,6 +453,31 @@ async def drain_due_jobs(
     pushes `next_attempt_at` forward rather than losing the job or
     retrying it in a tight loop -- `MAX_RETRY_ATTEMPTS` matches this
     schema's own already-existing partial index exactly.
+
+    A REAL, STRUCTURAL BUG FOUND BY THIS SESSION'S OWN CRITICAL-TIER
+    REVIEW, FIXED BEFORE MERGE: an earlier version called
+    `_mark_job_failed()` from INSIDE the same `except` block that was
+    itself still inside the same `async with conn.transaction():` the
+    real failure occurred in. A genuine Postgres-level failure (a
+    constraint violation, a numeric-overflow -- exactly the class
+    `validate_and_build_finance_proposal`/`validate_and_build_task_
+    proposal`'s own new upper-bound checks above now catch earlier and
+    more precisely) leaves that transaction in Postgres's own real
+    "aborted" state; every subsequent statement on it -- including the
+    real `UPDATE retry_queue` `_mark_job_failed()` itself issues --
+    fails too, with a second, uncaught exception. Net effect: the whole
+    transaction rolls back (safe -- no partial data), but `attempt_count`
+    is never incremented and `next_attempt_at` never advances, so the
+    identical, permanently-malformed job would be re-selected and
+    reprocessed from scratch on every future drain call, forever, rather
+    than genuinely backing off and eventually giving up at
+    `MAX_RETRY_ATTEMPTS`. Fixed structurally: the `try` now wraps the
+    WHOLE `async with conn.transaction():` block, not a piece nested
+    inside it -- letting a real failure propagate out of that block
+    triggers Postgres's own real `ROLLBACK` via the transaction context
+    manager itself, restoring the connection to a normal, usable state
+    BEFORE `_mark_job_failed()` ever runs, as its own separate,
+    guaranteed-to-succeed statement.
     """
     jobs_seen = jobs_succeeded = jobs_failed = 0
     downstream_actions_produced = 0
@@ -436,40 +485,54 @@ async def drain_due_jobs(
 
     for _ in range(max_jobs):
         async with pool.acquire() as conn:
-            async with conn.transaction():
-                row = await conn.fetchrow(
-                    "SELECT retry_id, job_type, payload, attempt_count FROM retry_queue "
-                    "WHERE next_attempt_at <= now() AND attempt_count < $1 "
-                    "ORDER BY next_attempt_at FOR UPDATE SKIP LOCKED LIMIT 1",
-                    MAX_RETRY_ATTEMPTS,
-                )
-                if row is None:
-                    break
-                jobs_seen += 1
+            retry_id = None
+            error_message: str | None = None
+            no_more_jobs = False
 
-                if row["job_type"] != _NEGOTIATION_DOWNSTREAM_JOB_TYPE:
-                    # A real, exhaustive, disclosed guard -- this
-                    # drainer only knows how to process the one real
-                    # job_type any code in this backend has ever
-                    # enqueued. An unrecognized job_type fails loud into
-                    # the same real retry/backoff path, never silently
-                    # dropped or guessed at.
-                    await _mark_job_failed(conn, row["retry_id"], f"Unknown job_type: {row['job_type']!r}")
-                    jobs_failed += 1
-                    continue
-
-                try:
-                    payload = json.loads(row["payload"])
-                    produced, executed = await process_negotiation_downstream_job(
-                        conn, payload, translation_call=translation_call, critic_call=critic_call, judge_call=judge_call
+            try:
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        "SELECT retry_id, job_type, payload, attempt_count FROM retry_queue "
+                        "WHERE next_attempt_at <= now() AND attempt_count < $1 "
+                        "ORDER BY next_attempt_at FOR UPDATE SKIP LOCKED LIMIT 1",
+                        MAX_RETRY_ATTEMPTS,
                     )
-                    await conn.execute("DELETE FROM retry_queue WHERE retry_id = $1", row["retry_id"])
-                    jobs_succeeded += 1
-                    downstream_actions_produced += produced
-                    downstream_actions_executed += executed
-                except Exception as exc:  # noqa: BLE001 -- deliberately broad: any real failure here retries via the queue, never silently drops the job
-                    await _mark_job_failed(conn, row["retry_id"], str(exc))
-                    jobs_failed += 1
+                    if row is None:
+                        no_more_jobs = True
+                    else:
+                        jobs_seen += 1
+                        retry_id = row["retry_id"]
+
+                        if row["job_type"] != _NEGOTIATION_DOWNSTREAM_JOB_TYPE:
+                            # A real, exhaustive, disclosed guard -- this
+                            # drainer only knows how to process the one
+                            # real job_type any code in this backend has
+                            # ever enqueued. Raised, not handled inline,
+                            # so it flows through the exact same real
+                            # recovery path every other real failure
+                            # below does.
+                            raise DownstreamDrainError(f"Unknown job_type: {row['job_type']!r}")
+
+                        payload = json.loads(row["payload"])
+                        produced, executed = await process_negotiation_downstream_job(
+                            conn, payload, translation_call=translation_call, critic_call=critic_call, judge_call=judge_call
+                        )
+                        await conn.execute("DELETE FROM retry_queue WHERE retry_id = $1", retry_id)
+                        jobs_succeeded += 1
+                        downstream_actions_produced += produced
+                        downstream_actions_executed += executed
+            except Exception as exc:  # noqa: BLE001 -- deliberately broad: any real failure here retries via the queue, never silently drops the job
+                jobs_failed += 1
+                error_message = str(exc)
+
+            if no_more_jobs:
+                break
+
+            if error_message is not None and retry_id is not None:
+                # A real, deliberately SEPARATE statement from the
+                # transaction above -- see this function's own top-of-
+                # docstring account of the real bug this ordering fixes.
+                await _mark_job_failed(conn, retry_id, error_message)
 
     return DrainResult(
         jobs_seen=jobs_seen,
