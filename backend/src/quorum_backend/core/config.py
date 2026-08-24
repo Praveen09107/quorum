@@ -86,6 +86,17 @@ class Settings(BaseSettings):
     langfuse_public_key: str | None = Field(default=None, alias="LANGFUSE_PUBLIC_KEY")
     langfuse_secret_key: str | None = Field(default=None, alias="LANGFUSE_SECRET_KEY")
 
+    # Internal service-to-service auth for `POST /internal/drain-retry-
+    # queue` (`DEC-127`) -- a real, deliberately DIFFERENT mechanism from
+    # `jwt_signing_key` above: `pg_net` calling this endpoint has no real
+    # user session to hold a Bearer token, so this is a real, static
+    # shared secret instead, checked with a timing-safe comparison
+    # (`main.py`'s own `_require_internal_secret`). Defaults to `None`,
+    # the same honest "not yet provisioned" default every other real
+    # credential field in this class uses -- the endpoint fails closed
+    # (401) whenever this is unset, never silently open.
+    internal_drain_secret: str | None = Field(default=None, alias="INTERNAL_DRAIN_SECRET")
+
     @property
     def is_using_insecure_default_jwt_signing_key(self) -> bool:
         """A real, checkable fact a caller (main.py's startup, a real
