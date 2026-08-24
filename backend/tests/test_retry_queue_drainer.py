@@ -215,6 +215,37 @@ async def test_drain_due_jobs_processes_a_real_multi_domain_job_and_persists_one
     assert {e["action_type"] for e in events} == {"log_expense", "create_task"}
 
 
+async def test_drain_due_jobs_a_real_multi_domain_job_persists_nothing_at_all_when_a_later_domain_fails(pool, user_id):
+    """A real, live regression proof for a real bug found and fixed
+    during this session's own self-review: the first domain succeeding
+    must never leave a real, durable `action_events` row behind when a
+    later domain in the SAME job genuinely fails -- the whole job must
+    retry cleanly from scratch, with zero partial state, or a later
+    successful retry would duplicate the first domain's own row."""
+    retry_id = await _seed_job(pool, user_id=user_id, source_domains=["finance", "tasks"])
+
+    async def failing_second_domain_translation(domain: str, description: str) -> dict:
+        if domain == "finance":
+            return {"action": "log_expense", "amount": 10.0, "category": "food", "payee": None}
+        raise DownstreamTranslationError("simulated real failure on the second domain")
+
+    result = await drain_due_jobs(
+        pool, translation_call=failing_second_domain_translation, critic_call=_fake_critic_call, judge_call=_fake_judge_approve
+    )
+
+    assert result.jobs_failed == 1
+    assert result.downstream_actions_produced == 0
+    # The real, load-bearing assertion: finance's own successful review
+    # must NOT have left a real, orphaned row behind, even though its
+    # own translation/Gate review genuinely succeeded before tasks' own
+    # translation failed.
+    assert await pool.fetchrow("SELECT 1 FROM action_events WHERE user_id = $1", uuid.UUID(user_id)) is None
+    # The real job survives for a clean retry, not silently dropped.
+    row = await pool.fetchrow("SELECT attempt_count FROM retry_queue WHERE retry_id = $1", retry_id)
+    assert row is not None
+    assert row["attempt_count"] == 1
+
+
 async def test_drain_due_jobs_escalate_to_human_leaves_a_real_still_open_action_event(pool, user_id):
     await _seed_job(pool, user_id=user_id, source_domains=["finance"])
     translation_call = await _fake_translation_call_factory(

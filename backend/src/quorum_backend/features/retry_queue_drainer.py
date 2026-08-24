@@ -293,10 +293,32 @@ async def process_negotiation_downstream_job(
     judge_call: JudgeCall,
 ) -> int:
     """Processes one real, dequeued `negotiation_downstream_action` job
-    -- one real `ActionProposal` (translated, then Gate-reviewed, then
-    persisted) per domain in the job's real `source_domains`. Returns
-    the real count of downstream actions produced (0 for a genuine "do
-    nothing" choice)."""
+    -- one real `ActionProposal` (translated, then Gate-reviewed) per
+    domain in the job's real `source_domains`. Returns the real count of
+    downstream actions produced (0 for a genuine "do nothing" choice).
+
+    A REAL, LIVE BUG FOUND AND FIXED DURING THIS SESSION'S OWN SECOND-
+    PASS SELF-REVIEW, BEFORE ANY REVIEW SUBAGENT RAN: an earlier version
+    of this function persisted each domain's own `action_events` row as
+    soon as its own Gate review completed, inside the loop. Since
+    `drain_due_jobs()`'s own `try/except` around this whole call sits
+    INSIDE the same real Postgres transaction as the dequeue and the
+    retry-queue bookkeeping, a LATER domain's real failure (a
+    translation error, a Gate `InfrastructureFailure`) was caught by
+    that outer `except`, not re-raised -- so the transaction still
+    committed normally, durably persisting the EARLIER domain's already-
+    inserted row even though the whole job was simultaneously being
+    marked failed-and-retried. The next drain would re-process the
+    whole job from scratch, genuinely duplicating that earlier domain's
+    real `action_events` row. Fixed structurally, not with an added
+    idempotency check: every domain's real translate -> propose ->
+    Stage A -> Stage B pipeline (a pure read/compute pass against
+    `conn`, only for `deadline_conflict_check`'s own real query) now
+    runs to completion for EVERY domain BEFORE any real persistence
+    happens, and persistence for the whole job commits together, only
+    once every domain has genuinely succeeded -- never partially. A
+    real failure at any point in the first pass now leaves nothing
+    persisted at all, so a retry-from-scratch is always safe."""
     user_id = payload["user_id"]
     option_description = payload["option_description"]
     source_domains: list[str] = payload["source_domains"]
@@ -307,14 +329,18 @@ async def process_negotiation_downstream_job(
         # real downstream actions needed, not an error.
         return 0
 
+    reviewed: list[tuple[ActionProposal, Stakes, GateVerdict]] = []
     for domain in source_domains:
         proposal = await _translate_and_build_proposal(domain, option_description, translation_call)
         stakes = get_stakes(proposal.action_type)
         stage_a_checks = await _build_stage_a_checks(conn, domain=domain, proposal=proposal, user_id=user_id)
         verdict = await review(proposal, stakes, stage_a_checks, critic_call, judge_call)
+        reviewed.append((proposal, stakes, verdict))
+
+    for proposal, stakes, verdict in reviewed:
         await _persist_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
 
-    return len(source_domains)
+    return len(reviewed)
 
 
 async def _mark_job_failed(conn: asyncpg.Connection, retry_id, error_message: str) -> None:
