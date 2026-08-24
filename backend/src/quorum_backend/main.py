@@ -20,6 +20,7 @@ loudly logged now -- a real safety net for exactly the "someone forgot
 to set a real secret" failure mode.
 """
 import logging
+import secrets
 import uuid
 from urllib.parse import urlencode
 from contextlib import asynccontextmanager
@@ -63,6 +64,7 @@ from quorum_backend.features.negotiation_choice import (
     choose_negotiation_option,
 )
 from quorum_backend.features.negotiation_detail import fetch_negotiation_detail
+from quorum_backend.features.retry_queue_drainer import drain_due_jobs
 from quorum_backend.features.search import search as run_search
 from quorum_backend.features.self_test_harness import ScenarioResult, run_self_test, summarize
 from quorum_backend.features.subscription_detective import fetch_detected_subscriptions
@@ -74,6 +76,8 @@ from quorum_backend.features.today import (
     fetch_today_capacity,
 )
 from quorum_backend.features.trust_digest import fetch_trust_digest
+from quorum_backend.gate.llm_calls import make_gemini_judge_call, make_groq_critic_call
+from quorum_backend.negotiation.downstream_translation import make_gemini_downstream_translation_call
 from quorum_backend.security.account_deletion import delete_account
 from quorum_backend.security.supabase_deletion_store import SupabaseDeletionStore
 
@@ -156,6 +160,27 @@ def _require_auth(authorization: str | None = Header(default=None)) -> str:
         raise HTTPException(status_code=401, detail="Access token has expired -- use /auth/refresh to get a new one.") from exc
     except AccessTokenInvalid as exc:
         raise HTTPException(status_code=401, detail="Access token is invalid.") from exc
+
+
+def _require_internal_secret(x_internal_secret: str | None = Header(default=None)) -> None:
+    """Real, deliberately DIFFERENT auth from `_require_auth` above --
+    `POST /internal/drain-retry-queue` is called by `pg_net` (once
+    genuinely enabled, `DEC-127`'s own disclosed open item) or a real,
+    trusted operator, never by a real end-user session, so there is no
+    real Bearer access token to check here. A real, static shared secret
+    instead, read once from `core/config.py`'s own real `internal_drain_
+    secret` field. Fails closed on every real failure path: the secret
+    is unset (never provisioned, or a real deployment simply hasn't set
+    one), the header is missing, or it doesn't match -- all three are
+    the same real 401, no path silently proceeds. `secrets.compare_digest`
+    is used deliberately, not `==` -- a real, if narrow, timing-attack
+    hardening for a value that genuinely gates a real, live database
+    write path."""
+    settings = get_settings()
+    if settings.internal_drain_secret is None:
+        raise HTTPException(status_code=401, detail="Internal drain endpoint is not configured on this deployment.")
+    if x_internal_secret is None or not secrets.compare_digest(x_internal_secret, settings.internal_drain_secret):
+        raise HTTPException(status_code=401, detail="Missing or invalid X-Internal-Secret header.")
 
 
 async def _resolve_internal_user_id_or_404(pool: asyncpg.Pool, google_sub: str) -> str:
@@ -719,4 +744,48 @@ async def delete_account_route(
         "vector_embeddings_deleted": result.vector_embeddings_deleted,
         "memories_deleted": result.memories_deleted,
         "oauth_tokens_revoked": result.oauth_tokens_revoked,
+    }
+
+
+@app.post("/internal/drain-retry-queue")
+async def drain_retry_queue_route(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    _internal: None = Depends(_require_internal_secret),
+) -> dict:
+    """Real, live -- `STATUS_INDEX.md` open item #26, `DEC-127`. Drains
+    real, due `retry_queue` jobs via `features/retry_queue_drainer.py`,
+    the real `gate.review()` re-entry `QUORUM_DATA_CONTRACTS.md` §5.6
+    always promised. Real Critic/Judge (`DEC-125`) and real translation
+    (`DEC-127`) are constructed fresh per real request from this
+    deployment's own real, live credentials -- never cached across
+    requests, matching every other real credential-backed call factory
+    in this backend.
+
+    A real, disclosed, honest scope boundary, not glossed over: this
+    route produces a real Gate VERDICT per downstream action (a real
+    `action_events` row) and stops there -- it does not execute the
+    approved action's real-world effect. See `retry_queue_drainer.py`'s
+    own top-of-file docstring for the full account of why.
+
+    NOT YET CALLED BY A REAL SCHEDULE: `pg_cron`/`pg_net` are confirmed,
+    live, NOT currently enabled on the real Supabase project (`DEC-127`)
+    -- this route is real and independently callable today (by a real
+    operator, or by CI/manual verification), but nothing in this
+    deployment calls it on any real cadence yet. `scripts/
+    enable_retry_queue_drain_cron.sql` has the real, ready-to-run SQL
+    for once that's enabled.
+    """
+    settings = get_settings()
+    translation_call = make_gemini_downstream_translation_call(api_key=settings.gemini_api_key)
+    critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
+    judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
+
+    result = await drain_due_jobs(
+        pool, translation_call=translation_call, critic_call=critic_call, judge_call=judge_call
+    )
+    return {
+        "jobs_seen": result.jobs_seen,
+        "jobs_succeeded": result.jobs_succeeded,
+        "jobs_failed": result.jobs_failed,
+        "downstream_actions_produced": result.downstream_actions_produced,
     }

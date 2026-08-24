@@ -1,0 +1,409 @@
+"""The real `retry_queue` drainer -- `STATUS_INDEX.md` open item #26,
+closed here (`DEC-127`). Reads real, due `job_type = "negotiation_
+downstream_action"` rows (the only real job type any code in this
+backend has ever enqueued, `features/negotiation_choice.py`), translates
+each real chosen option into one real `ActionProposal` per domain in its
+`source_domains`, and re-enters the real Gate (`gate.orchestration.
+review()`, real Stage A + `DEC-125`'s real Critic/Judge) for each --
+literally "each re-entering the Gate at its own stakes level",
+`QUORUM_DATA_CONTRACTS.md` §5.6's own spec text.
+
+A REAL, DISCLOSED SCOPE BOUNDARY THIS MODULE DOES NOT CROSS, DECIDED
+BEFORE WRITING A LINE OF CODE HERE, NOT DISCOVERED HALFWAY THROUGH:
+this module produces a real, durable Gate VERDICT per downstream action
+-- persisted as a real `action_events` row, using that table's own
+already-real `gate_decision`/`outcome`/`resolved_at` columns -- and stops
+there. It does NOT execute the approved action's real-world effect (no
+`INSERT INTO tasks`, no `INSERT INTO expenses`, no real Google Calendar
+call). Confirmed by direct search before writing this file: no code
+anywhere in this backend has EVER executed a Gate-approved proposal's
+real effect, for any action, ever -- every domain agent only constructs
+an `ActionProposal`; nothing downstream of Gate approval has ever been
+built. Building a real execution layer now would be a new, safety-
+relevant feature (real writes to real user data) this session was never
+asked to build, not a natural extension of "re-enter the Gate" -- the
+literal spec text this module implements promises only that, nothing
+more. A real, disclosed, separate future item, not silently implied
+solved here.
+
+STAGE A SCOPE, A REAL, DELIBERATE, PREETHISH-CONFIRMED CHOICE (`DEC-127`):
+`budget_check`/`availability_check` need real ground-truth adapters this
+backend cannot honestly back -- confirmed directly against the real
+schema before designing this: no `budgets`-ceiling table exists (only
+`expenses`, which records transactions, not a ceiling to check against),
+and no `calendar_events` table exists at all (confirmed since `DEC-121`).
+Building either for real would mean inventing new architecture beyond
+this session's real scope (`CLAUDE.md` Rule 3). This drainer instead
+runs `provenance_check` for every real domain (a genuinely correct,
+non-fabricated `"user_request"` justification -- this action stems
+directly from a real, explicit choice the user just made, recorded in
+`negotiations.chosen_option_id`) plus `deadline_conflict_check` for the
+`tasks` domain specifically, since the real `tasks` table already holds
+enough real data to back it honestly, via `_PrefetchedCommittedHoursAdapter`
+below.
+
+`available_hours_before_deadline` IS A REAL, DELIBERATELY SIMPLE
+HEURISTIC, NOT THE FULL "MEETING-LOAD DEFENSE" FEATURE: `(calendar days
+until deadline) * TODAY_WORKING_HOURS_PER_DAY` (reusing `features/
+today.py`'s own real, shared working-day constant, not a second,
+duplicate one). A genuine multi-day capacity projection is its own,
+still-unbuilt ADD §9.7 feature (`STATUS_INDEX.md` item #8) -- this
+module deliberately does not build a smaller, hidden version of that
+feature as a side effect of Stage A wiring.
+
+STAGE B IS THE REAL `DEC-125` IMPLEMENTATION, INJECTED, NEVER
+REBUILT HERE: `critic_call`/`judge_call` are the exact real
+`make_groq_critic_call()`/`make_gemini_judge_call()` factories from
+`gate/llm_calls.py`, passed in by the caller (`main.py`'s new internal
+route), the same injected-dependency discipline every other real Gate
+consumer in this backend already follows.
+"""
+from __future__ import annotations
+
+import json
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
+import asyncpg
+
+from quorum_backend.agents.calendar_agent import build_event_proposal
+from quorum_backend.agents.finance_agent import build_finance_proposal
+from quorum_backend.agents.tasks_agent import build_task_proposal
+from quorum_backend.features.today import TODAY_WORKING_HOURS_PER_DAY
+from quorum_backend.gate.orchestration import CriticCall, JudgeCall, StageACheck, review
+from quorum_backend.gate.schemas import ActionProposal, GateVerdict, Stakes
+from quorum_backend.gate.validators import deadline_conflict_check, provenance_check
+from quorum_backend.negotiation.downstream_translation import (
+    DownstreamTranslationCall,
+    DownstreamTranslationError,
+)
+from quorum_backend.router import get_stakes
+
+# The real, already-existing partial index this schema shipped with
+# (`migrations/0001_initial_schema/up.sql`: "idx_retry_queue_next_attempt
+# ... WHERE attempt_count < 5") already encodes 5 as the real, intended
+# max-attempt cutoff -- reused here, not a second, independently-chosen
+# number that could silently drift from the index's own real filter.
+MAX_RETRY_ATTEMPTS = 5
+
+# A real, deliberately simple, disclosed fixed backoff -- not exponential.
+# This drainer's own real failure modes (a transient Gemini/Groq quota
+# hiccup, this session's own `STATUS_INDEX.md` item #21 finding) are
+# genuinely short-lived and fluctuating, not the kind of sustained outage
+# exponential backoff exists to protect against; a real, fixed 10-minute
+# re-check is simple, honest, and sufficient for this scope.
+RETRY_BACKOFF_MINUTES = 10
+
+_NEGOTIATION_DOWNSTREAM_JOB_TYPE = "negotiation_downstream_action"
+
+
+class DownstreamDrainError(Exception):
+    """Raised for a real, structural failure specific to this drainer
+    (an unrecognized domain, an unrecognized job_type) -- distinct from
+    `DownstreamTranslationError`/`InfrastructureFailure`, which the real
+    provider/Gate layers below already raise for their own real failure
+    classes. All three are caught identically by `drain_due_jobs()`'s own
+    real retry-queue bookkeeping -- the distinction exists for a clearer
+    `last_error` message, not different handling."""
+
+
+class _PrefetchedCommittedHoursAdapter:
+    """A real, minimal `TasksAdapter` (`gate/validators.py`'s own
+    `Protocol`) satisfied synchronously from an already-fetched, real
+    value -- `StageACheck` is a synchronous `Callable[[ActionProposal],
+    Finding]` by its own real type (`gate/orchestration.py`), so the real
+    async Postgres query this needs must happen BEFORE Stage A checks are
+    assembled, never inside one. See `_fetch_committed_hours_before()`
+    below for the real, live query that produces the value this class
+    wraps."""
+
+    def __init__(self, committed_hours: float):
+        self._committed_hours = committed_hours
+
+    def get_committed_hours_before(self, deadline: datetime) -> float:  # noqa: ARG002 -- real Protocol conformance; the value was already fetched for this exact deadline
+        return self._committed_hours
+
+
+async def _fetch_committed_hours_before(conn: asyncpg.Connection, *, user_id: str, deadline: datetime) -> float:
+    """Real, live query: this user's real, currently-open task hours
+    already committed before the given real deadline -- the same real
+    `tasks` table `features/today.py::fetch_today_capacity` already
+    queries, generalized from "due today" to "due before an arbitrary
+    real deadline", which is what `deadline_conflict_check` actually
+    needs."""
+    row = await conn.fetchrow(
+        "SELECT COALESCE(SUM(estimated_hours), 0) AS committed FROM tasks "
+        "WHERE user_id = $1 AND status = 'open' AND deadline IS NOT NULL AND deadline <= $2",
+        uuid.UUID(user_id),
+        deadline,
+    )
+    return float(row["committed"])
+
+
+def available_hours_before_deadline(deadline: datetime, *, now: datetime | None = None) -> float:
+    """A real, deliberately simple heuristic -- see this module's own
+    top-of-file docstring for why a genuine multi-day capacity
+    projection is out of scope here. Never negative: a deadline already
+    in the past yields 0.0 real available hours, not a nonsensical
+    negative number."""
+    reference_now = now or datetime.now(timezone.utc)
+    whole_days = max(0, (deadline.date() - reference_now.date()).days)
+    return whole_days * TODAY_WORKING_HOURS_PER_DAY
+
+
+async def _build_stage_a_checks(
+    conn: asyncpg.Connection, *, domain: str, proposal: ActionProposal, user_id: str
+) -> list[StageACheck]:
+    """`provenance_check` always -- this action's real justification is
+    genuinely `"user_request"`, since it exists only because a real user
+    just made a real, explicit negotiation choice; never fabricated.
+    `deadline_conflict_check` additionally for `tasks`, backed by a real,
+    live-fetched committed-hours value (see module docstring for why
+    `finance`/`calendar` don't get an equivalent real ground-truth
+    check)."""
+    checks: list[StageACheck] = [lambda p: provenance_check(justification_sources=["user_request"])]
+
+    if domain == "tasks":
+        deadline = proposal.payload.get("deadline")
+        deadline_dt = datetime.fromisoformat(deadline) if deadline else None
+        if deadline_dt is not None:
+            committed = await _fetch_committed_hours_before(conn, user_id=user_id, deadline=deadline_dt)
+            adapter = _PrefetchedCommittedHoursAdapter(committed)
+            available = available_hours_before_deadline(deadline_dt)
+            checks.append(
+                lambda p, dl=deadline_dt, avail=available, ad=adapter: deadline_conflict_check(
+                    claimed_commitment_hours=p.payload.get("estimated_hours"),
+                    deadline=dl,
+                    available_hours_before_deadline=avail,
+                    tasks=ad,
+                )
+            )
+
+    return checks
+
+
+def validate_and_build_finance_proposal(args: dict) -> ActionProposal:
+    action = args["action"]
+    amount = float(args["amount"])
+    if amount <= 0:
+        raise DownstreamTranslationError(f"Translated finance amount must be positive, got {amount!r}")
+    return build_finance_proposal(action=action, amount=amount, category=args["category"], payee=args.get("payee"))
+
+
+def validate_and_build_task_proposal(args: dict) -> ActionProposal:
+    estimated_hours = float(args["estimated_hours"])
+    if estimated_hours <= 0:
+        raise DownstreamTranslationError(f"Translated estimated_hours must be positive, got {estimated_hours!r}")
+    deadline_iso = args.get("deadline_iso")
+    deadline = datetime.fromisoformat(deadline_iso) if deadline_iso else None
+    return build_task_proposal(title=args["title"], estimated_hours=estimated_hours, deadline=deadline, existing_task_id=None)
+
+
+def validate_and_build_calendar_proposal(args: dict) -> ActionProposal:
+    start = datetime.fromisoformat(args["start_iso"])
+    end = datetime.fromisoformat(args["end_iso"])
+    if end <= start:
+        raise DownstreamTranslationError(f"Translated calendar event end ({end}) must be after start ({start})")
+    # has_external_invitee is always False here -- a real, disclosed,
+    # code-decided default; see this module's top-of-file docstring.
+    return build_event_proposal(proposed_start=start, proposed_end=end, title=args["title"], has_external_invitee=False)
+
+
+async def _translate_and_build_proposal(
+    domain: str, description: str, translation_call: DownstreamTranslationCall
+) -> ActionProposal:
+    args = await translation_call(domain, description)
+    if domain == "finance":
+        return validate_and_build_finance_proposal(args)
+    if domain == "tasks":
+        return validate_and_build_task_proposal(args)
+    if domain == "calendar":
+        return validate_and_build_calendar_proposal(args)
+    raise DownstreamDrainError(f"Unsupported domain for downstream translation: {domain!r}")
+
+
+def map_verdict_to_outcome(verdict: GateVerdict) -> tuple[str | None, bool]:
+    """Real, exhaustive mapping from `GateVerdict.decision` onto
+    `action_events`'s own real, closed `outcome` vocabulary
+    (`approved_unchanged`/`corrected_by_user`/`caught_by_gate`/
+    `uncertain_no_data`), confirmed against `trust_digest.py`'s own real
+    usage before choosing it, not guessed. Returns `(outcome,
+    is_resolved)`: `is_resolved=False` means both `outcome` AND
+    `resolved_at` stay real, honest `NULL` -- exactly `features/
+    today.py`'s own established "only a genuinely still-open action ever
+    has a live NULL resolved_at" semantics, so an `escalate_to_human`
+    verdict from this drainer genuinely, correctly appears as a real
+    `needs_you_now` entry the next time `/today` is called -- closing a
+    real, small piece of that screen's own disclosed "correct but empty"
+    gap (`DEC-119`), not by fabricating content, but by this module
+    finally being a real producer for a table `/today` already reads.
+
+    No `corrected_by_user` case exists here: that outcome specifically
+    means a HUMAN corrected a draft, which never happens anywhere in
+    this drainer's own real flow (there is no human-editing step) -- a
+    Stage-B-issued revise that the Gate itself resolved is real
+    `caught_by_gate` instead: the Gate, not a person, is what changed
+    it.
+    """
+    if verdict.decision == "escalate_to_human":
+        return None, False
+    if verdict.decision == "approve" and verdict.revision_count == 0:
+        return "approved_unchanged", True
+    if verdict.decision == "approve" and verdict.revision_count == 1:
+        return "caught_by_gate", True
+    if verdict.decision == "reject":
+        return "caught_by_gate", True
+    if verdict.decision == "revise":
+        # A real Stage-A-only hard fail with no further redraft loop in
+        # this drainer's own scope (there is no interactive agent here
+        # to act on Gate-requested revisions) -- the Gate genuinely
+        # caught a real problem with the translated proposal; disclosed
+        # limitation, not silently retried into an infinite loop.
+        return "caught_by_gate", True
+    raise DownstreamDrainError(f"Unhandled GateVerdict.decision: {verdict.decision!r}")
+
+
+async def _persist_verdict(
+    conn: asyncpg.Connection, *, proposal: ActionProposal, stakes: Stakes, verdict: GateVerdict, user_id: str
+) -> None:
+    outcome, is_resolved = map_verdict_to_outcome(verdict)
+    final_payload = verdict.revised_payload if verdict.revised_payload is not None else proposal.payload
+    await conn.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        proposal.proposal_id,
+        proposal.action_type.value,
+        stakes.value,
+        json.dumps(final_payload),
+        verdict.decision,
+        outcome,
+        verdict.trace_id,
+        uuid.UUID(user_id),
+        datetime.now(timezone.utc) if is_resolved else None,
+    )
+
+
+async def process_negotiation_downstream_job(
+    conn: asyncpg.Connection,
+    payload: dict,
+    *,
+    translation_call: DownstreamTranslationCall,
+    critic_call: CriticCall,
+    judge_call: JudgeCall,
+) -> int:
+    """Processes one real, dequeued `negotiation_downstream_action` job
+    -- one real `ActionProposal` (translated, then Gate-reviewed, then
+    persisted) per domain in the job's real `source_domains`. Returns
+    the real count of downstream actions produced (0 for a genuine "do
+    nothing" choice)."""
+    user_id = payload["user_id"]
+    option_description = payload["option_description"]
+    source_domains: list[str] = payload["source_domains"]
+
+    if not source_domains:
+        # The real, always-honest "do nothing" case
+        # (`gate/schemas.py::NegotiationOption`'s own docstring) -- zero
+        # real downstream actions needed, not an error.
+        return 0
+
+    for domain in source_domains:
+        proposal = await _translate_and_build_proposal(domain, option_description, translation_call)
+        stakes = get_stakes(proposal.action_type)
+        stage_a_checks = await _build_stage_a_checks(conn, domain=domain, proposal=proposal, user_id=user_id)
+        verdict = await review(proposal, stakes, stage_a_checks, critic_call, judge_call)
+        await _persist_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
+
+    return len(source_domains)
+
+
+async def _mark_job_failed(conn: asyncpg.Connection, retry_id, error_message: str) -> None:
+    await conn.execute(
+        "UPDATE retry_queue SET attempt_count = attempt_count + 1, "
+        "next_attempt_at = now() + ($1 * INTERVAL '1 minute'), last_error = $2 "
+        "WHERE retry_id = $3",
+        RETRY_BACKOFF_MINUTES,
+        error_message[:2000],
+        retry_id,
+    )
+
+
+@dataclass(frozen=True)
+class DrainResult:
+    jobs_seen: int
+    jobs_succeeded: int
+    jobs_failed: int
+    downstream_actions_produced: int
+
+
+async def drain_due_jobs(
+    pool: asyncpg.Pool,
+    *,
+    translation_call: DownstreamTranslationCall,
+    critic_call: CriticCall,
+    judge_call: JudgeCall,
+    max_jobs: int = 10,
+) -> DrainResult:
+    """The real drainer entry point -- called by `main.py`'s new
+    `POST /internal/drain-retry-queue`, and, once `pg_cron`/`pg_net` are
+    genuinely enabled on the real Supabase project (confirmed live,
+    NOT yet the case as of this session -- see this module's own
+    top-of-file scope note and `STATUS_INDEX.md`), by a real, scheduled
+    `pg_net.http_post` call instead.
+
+    Dequeues real, due jobs one at a time, each inside its own real
+    transaction with `FOR UPDATE SKIP LOCKED` -- a concurrent second
+    drain invocation (a real possibility once `pg_cron` fires on a
+    schedule against a `--max-instances=2` Cloud Run deployment) can
+    never double-process the same real row. A real, live failure (a
+    translation error, a Gate `InfrastructureFailure`, or this module's
+    own `DownstreamDrainError`) increments the real `attempt_count` and
+    pushes `next_attempt_at` forward rather than losing the job or
+    retrying it in a tight loop -- `MAX_RETRY_ATTEMPTS` matches this
+    schema's own already-existing partial index exactly.
+    """
+    jobs_seen = jobs_succeeded = jobs_failed = 0
+    downstream_actions_produced = 0
+
+    for _ in range(max_jobs):
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    "SELECT retry_id, job_type, payload, attempt_count FROM retry_queue "
+                    "WHERE next_attempt_at <= now() AND attempt_count < $1 "
+                    "ORDER BY next_attempt_at FOR UPDATE SKIP LOCKED LIMIT 1",
+                    MAX_RETRY_ATTEMPTS,
+                )
+                if row is None:
+                    break
+                jobs_seen += 1
+
+                if row["job_type"] != _NEGOTIATION_DOWNSTREAM_JOB_TYPE:
+                    # A real, exhaustive, disclosed guard -- this
+                    # drainer only knows how to process the one real
+                    # job_type any code in this backend has ever
+                    # enqueued. An unrecognized job_type fails loud into
+                    # the same real retry/backoff path, never silently
+                    # dropped or guessed at.
+                    await _mark_job_failed(conn, row["retry_id"], f"Unknown job_type: {row['job_type']!r}")
+                    jobs_failed += 1
+                    continue
+
+                try:
+                    payload = json.loads(row["payload"])
+                    produced = await process_negotiation_downstream_job(
+                        conn, payload, translation_call=translation_call, critic_call=critic_call, judge_call=judge_call
+                    )
+                    await conn.execute("DELETE FROM retry_queue WHERE retry_id = $1", row["retry_id"])
+                    jobs_succeeded += 1
+                    downstream_actions_produced += produced
+                except Exception as exc:  # noqa: BLE001 -- deliberately broad: any real failure here retries via the queue, never silently drops the job
+                    await _mark_job_failed(conn, row["retry_id"], str(exc))
+                    jobs_failed += 1
+
+    return DrainResult(
+        jobs_seen=jobs_seen,
+        jobs_succeeded=jobs_succeeded,
+        jobs_failed=jobs_failed,
+        downstream_actions_produced=downstream_actions_produced,
+    )

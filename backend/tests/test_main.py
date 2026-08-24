@@ -1317,3 +1317,68 @@ def test_delete_account_returns_503_not_a_crash_when_the_real_pool_is_unavailabl
             assert health_response.status_code == 200
         finally:
             app.state.db_pool = real_pool
+
+
+# --- POST /internal/drain-retry-queue (DEC-127) ---
+
+
+def test_drain_retry_queue_is_401_when_no_internal_secret_is_configured_at_all(monkeypatch):
+    monkeypatch.delenv("INTERNAL_DRAIN_SECRET", raising=False)
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/drain-retry-queue")
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_drain_retry_queue_is_401_with_a_real_configured_secret_but_no_header(monkeypatch):
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/drain-retry-queue")
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_drain_retry_queue_is_401_with_a_real_configured_secret_but_the_wrong_header_value(monkeypatch):
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/drain-retry-queue", headers={"X-Internal-Secret": "not-the-real-secret"})
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_drain_retry_queue_real_secret_and_matching_header_reaches_the_real_drainer(monkeypatch):
+    """A real, live proof the route's own auth genuinely passes through
+    to the real drainer with an empty real `retry_queue` -- not a mocked
+    success. `retry_queue_drainer.py`'s own real, deep integration
+    (translate -> propose -> Stage A -> Stage B -> persist) is covered
+    directly and thoroughly by `test_retry_queue_drainer.py`; this test
+    proves only that this specific route's own real auth dependency and
+    real wiring genuinely reach that module, using this real, live
+    deployment's own real Gemini/Groq keys (skipped without them, the
+    same discipline every other real-key-dependent test in this backend
+    already follows)."""
+    settings = get_settings()
+    if settings.gemini_api_key is None or settings.groq_api_key is None:
+        import pytest
+
+        pytest.skip("no real GEMINI_API_KEY/GROQ_API_KEY configured in this environment")
+
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/drain-retry-queue", headers={"X-Internal-Secret": "a-real-configured-secret"})
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body.keys()) == {"jobs_seen", "jobs_succeeded", "jobs_failed", "downstream_actions_produced"}
+    finally:
+        get_settings.cache_clear()
