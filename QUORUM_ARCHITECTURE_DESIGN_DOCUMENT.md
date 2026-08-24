@@ -235,21 +235,23 @@ mem0 + pgvector, absorbing Notes and Contacts as searchable context rather than 
 
 ## 9.7 Newly built features — complete real-code status
 
+**RESOLVED, real, load-bearing correction (`specs/tier1_foundation/QUORUM_PRODUCTION_COMPLETION_PLAN.md`'s own creation session):** a full repository diagnosis, checking the actual filesystem directly rather than trusting this table, found 6 of the rows below describe files that **do not exist anywhere in this repository** — the same "specification narrative describes a different, no-longer-accessible environment" pattern `specs/tier3_verification/STATUS_INDEX.md`'s own intro paragraph already disclosed once for a different claim (`DEC-050`), never previously caught here. Confirmed real, present, and passing in this repository as of that same check: `subscription_detective.py`, `self_test_harness.py` (real since `DEC-099`, wired directly to the live Gate, no stub was ever built here), `search.py`. The "Real code" column below is corrected accordingly; building the 6 genuinely-absent modules is tracked as real, scoped work in `QUORUM_PRODUCTION_COMPLETION_PLAN.md` (Phases 2, 4–6), each against this table's own already-real, already-specified parameters rather than starting from nothing.
+
 | Feature | Domain | Real code | Tests | Status |
 |---|---|---|---|---|
-| Style-Conditioned Replies | Email | `style_reply.py` | 3/3 | Assembly verified; live LLM call needs real credentials |
-| Waiting On | Email | `waiting_on.py` | 1/1 | Complete |
-| Meeting-Load Defense | Calendar | `meeting_load.py` | 1/1 | Complete |
-| Predictive Risk | Tasks | `predictive_risk.py` | 1/1 | Complete |
-| Subscription Detective | Finance | `subscription_detective.py` | 1/1 | Complete |
-| Company Research Digest | Career | `career_digest.py` | 2/2 | Complete, real search-API decided (Tavily) |
-| Self-Test Harness | Substrate | `self_test_harness.py` | 1/1 | Runs against explicit stub, pending real Gate orchestration |
-| Honesty Log | Substrate | `honesty_log.py` + `verdict_outcome_mapping.py` | 1/1 + 4/4 | Complete, vocabulary mapped to Gate verdicts |
-| Unified Fast Search | Cross-cutting | `search.py` | 1/1 | Exact-term match; semantic pgvector pass is the named upgrade |
-| Computed State (Today numbers) | Cross-cutting | `computed_state.py` (Python) + `computed_state.dart` (on-device) | 3/3 (Python), hand-verified parity (Dart) | Complete on both platforms |
-| Share-to-Quorum | Mobile platform | `share_intent_handler.dart` + manifest snippet | — | Real code, unverified in sandbox (no Flutter SDK) |
-| App Icon Shortcuts | Mobile platform | `shortcuts.xml` | — | Real code, unverified in sandbox |
-| Home-Screen Widget | Mobile platform | `today_widget_bridge.dart` + `TodayWidgetProvider.kt` | — | Real code, unverified in sandbox |
+| Style-Conditioned Replies | Email | **`style_reply.py` — does not exist in this repository** | — | Not built. Real parameters (few-shot retrieval from past sent mail to the same contact) remain valid design guidance for `QUORUM_PRODUCTION_COMPLETION_PLAN.md` Phase 4. |
+| Waiting On | Email | **`waiting_on.py` — does not exist in this repository** | — | Not built (backend). A mobile screen/logic file exists with no backend behind it. Real 4-day staleness threshold (`QUORUM_CONFIGURATION_CONSTANTS.md` §4) remains valid — see Phase 4. |
+| Meeting-Load Defense | Calendar | **`meeting_load.py` — does not exist in this repository** | — | Not built. Real parameters (8h working day, 0.25 buffer fraction, 0.7 overload threshold) remain valid — see Phase 5. |
+| Predictive Risk | Tasks | **`predictive_risk.py` — does not exist in this repository** | — | Not built. Real parameters (≥0.5 historical correction rate, ±1 deadline tolerance) remain valid — see Phase 6. |
+| Subscription Detective | Finance | `subscription_detective.py` | real, passing | **Confirmed real and present** — the one feature in this table that genuinely is what this table claims. |
+| Company Research Digest | Career | **`career_digest.py` — does not exist in this repository** | — | Not built. Real search-API decision (Tavily, `DEC-004`) remains valid — see Phase 6. |
+| Self-Test Harness | Substrate | `self_test_harness.py` | real, passing | **Confirmed real and present.** Status corrected: real, wired directly to the live Gate since `DEC-099` — no stub was ever built in this repository (a separate, since-resolved stale claim, see `.claude/CLAUDE.md`'s own "What changed mid-project"). |
+| Honesty Log | Substrate | **`honesty_log.py` — does not exist in this repository** | — | Not built (backend). A mobile screen/logic file exists with no backend behind it — the app's own permanent "Log" bottom-nav tab is a dead end for every real user as a direct result. See Phase 6. |
+| Unified Fast Search | Cross-cutting | `search.py` | real, passing | **Confirmed real and present** — and further ahead than this row claims: real semantic pgvector search is already live (`DEC-120`), not just the "named upgrade" this row still describes as future work. |
+| Computed State (Today numbers) | Cross-cutting | `computed_state.dart` (on-device) only | hand-verified parity (Dart) | **`computed_state.py` (the Python reference) does not exist in this repository** — a real, already-disclosed gap `STATUS_INDEX.md` has repeated at every relevant milestone (most recently `DEC-119`, whose own narrower `today.py` port covers only Today's specific needs, not the general Python reference this row claims exists). |
+| Share-to-Quorum | Mobile platform | `share_intent_handler.dart` + manifest snippet | real, passing (`flutter test`) | Confirmed present and real; genuinely verified as of `DEC-103`, not "unverified in sandbox" as this row still claims. |
+| App Icon Shortcuts | Mobile platform | **`shortcuts.xml` — does not exist anywhere in this repository** | — | Not built (confirmed by a real, direct search across the whole `mobile/` tree during this diff's own review pass, after this row was first left as "not independently re-verified" — checked rather than left ambiguous). |
+| Home-Screen Widget | Mobile platform | `today_widget_bridge.dart` + `TodayWidgetProvider.kt` | real, passing (`flutter test`) | Confirmed present and real; genuinely verified as of `DEC-103`, not "unverified in sandbox" as this row still claims. |
 
 ## 9.8 Briefing Enrichments — not domains
 Weather via a free API, folded into the morning composition alongside the computed-state numbers (§11.4) — one additional call, disproportionate perceived-quality gain.
