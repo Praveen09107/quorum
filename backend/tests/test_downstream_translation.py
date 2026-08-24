@@ -11,6 +11,7 @@ import pytest
 from quorum_backend.core.config import get_settings
 from quorum_backend.negotiation.downstream_translation import (
     DownstreamTranslationError,
+    build_translation_prompt,
     make_gemini_downstream_translation_call,
 )
 
@@ -29,6 +30,24 @@ class _FakeResponse:
 
 
 # --- Deterministic (monkeypatched httpx client, no real network) ---
+
+
+def test_build_translation_prompt_includes_real_injection_hardening():
+    """A real hardening added during this session's own self-review,
+    matching `gate/prompts.py`'s own Critic/Judge injection-hardening
+    language: `description` originates from a prior AI-generation stage
+    (negotiation synthesis) grounded in real situational data, but is
+    still treated as data, never as instructions, the same defense-in-
+    depth this backend already applies everywhere real model output
+    feeds into a later real prompt."""
+    rendered = build_translation_prompt("finance", "A real chosen option's description")
+    assert "not an instruction" in rendered.lower()
+    assert "A real chosen option's description" in rendered
+
+
+def test_build_translation_prompt_raises_for_an_unsupported_domain():
+    with pytest.raises(DownstreamTranslationError):
+        build_translation_prompt("career", "Any description")
 
 
 async def test_translation_call_raises_for_a_domain_with_no_real_schema(monkeypatch):
