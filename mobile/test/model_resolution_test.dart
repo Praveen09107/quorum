@@ -43,23 +43,23 @@ void main() {
 
   group('resolvedFullTierModel honesty', () {
     test(
-        'resolvedFullTierModel is still genuinely unresolved -- Sprint 0 has not run',
+        'resolvedFullTierModel is genuinely resolved -- real Sprint 0 result, DEC-130',
         () {
       // THE real, load-bearing check: a regression here would mean this
       // project silently guessed at an empirical question it explicitly
-      // committed to resolving only by real measurement.
-      expect(resolvedFullTierModel, OnDeviceModelId.unresolved);
+      // committed to resolving only by real measurement. Now asserting
+      // the actual, real, mechanically-decided outcome: Sprint 0 genuinely
+      // ran to completion on a real device, Llama 3.2 3B genuinely
+      // downloaded, loaded, and passed real on-device inference (67%
+      // validity) -- a real winner, not the StateError fallback path.
+      expect(resolvedFullTierModel, OnDeviceModelId.llama32_3B);
     });
   });
 
   group('resolveModelForTier', () {
-    test(
-        'throws OnDeviceModelNotResolvedException for Full tier while unresolved',
+    test('resolves Full tier to the real, decided Llama 3.2 3B winner',
         () {
-      expect(
-        () => resolveModelForTier(DeviceTier.full),
-        throwsA(isA<OnDeviceModelNotResolvedException>()),
-      );
+      expect(resolveModelForTier(DeviceTier.full), 'Llama 3.2 3B');
     });
 
     test('resolves the Light tier directly to the locked SmolLM2-1.7B model',

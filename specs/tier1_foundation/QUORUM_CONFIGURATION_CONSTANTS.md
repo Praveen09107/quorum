@@ -96,13 +96,14 @@
 
 | Tier | Device RAM | Model |
 |---|---|---|
-| Full | ≥ 8GB | Primary — **SmolLM2-1.7B, resolved live by Sprint 0.** Real, mechanical decision (`ModelBenchmark.decideWinner()`'s own `StateError` escalation path, per `IMPL_00`'s design): both real Full-tier candidates (Gemma 4 E4B, Llama 3.2 3B) genuinely failed to load on the real Android emulator this project's real Sprint 0 run used — confirmed, honest reason captured directly from the device: `LlamaException: Failed to download ... (SocketException: Failed host lookup: 'huggingface.co' ...)`, a real, recurring emulator-level DNS relay failure (see `DECISIONS_LOG.md` `DEC-111`), not a RAM-capacity or inference-capability finding — neither candidate's real download ever completed enough to reach the load or inference stage. Per this project's own "trust the mechanical decision, never second-guess it with human intuition after the fact" discipline, this stands as the real, current, decided outcome, not a placeholder pending a cleaner re-run. |
+| Full | ≥ 8GB | Primary — **Llama 3.2 3B, resolved live by Sprint 0 for real, on a real physical Android device, run to genuine completion (`DECISIONS_LOG.md` `DEC-130`).** Real, mechanical decision (`ModelBenchmark.decideWinner()`'s own logic, per `IMPL_00`'s design): Gemma 4 E4B genuinely never finished downloading — a real, ordinary mid-transfer network interruption on a ~4.7GB file (confirmed reaching 74% before exhausting the harness's retry budget; not a RAM-capacity or inference-capability finding, a real transfer-length/retry-budget mismatch, precisely diagnosed in `DEC-130`). Llama 3.2 3B genuinely downloaded in full, loaded, and ran real, live on-device inference against all 6 of Sprint 0's real test prompts: **67% validity (4/6 passed), 0.1 tokens/second** (dominated by a real, slow first-inference/model-warm-up cost — later prompts ran markedly faster). Per `ModelBenchmark.decideWinner()`'s own real logic (`!gemma.loadedSuccessfully → return llama3_2_3B`), this is a genuine, mechanically-decided winner, not a fallback escalation. `DEC-111`'s original "emulator DNS relay failure" theory is superseded — `DEC-130` traced the real cause precisely: ordinary connection drops during a long, multi-gigabyte transfer, not a device/network/DNS defect. Per this project's own "trust the mechanical decision, never second-guess it with human intuition after the fact" discipline, this stands as the real, current, decided outcome. |
 | Light | 4GB – 8GB | SmolLM2-1.7B |
 | Cloud-only | < 4GB | No local model; all C0 work routes to Gemini Flash-Lite |
 
 | Model | Approximate RAM footprint (4-bit quantization) |
 |---|---|
 | Gemma 4 E4B | ~5GB |
+| Llama 3.2 3B | ~2.5GB (Q4_K_M, real ~1.92GB on-disk file size confirmed `DEC-130`; RAM estimate, not directly measured) |
 | SmolLM2-1.7B | ~1.1GB |
 
 ---

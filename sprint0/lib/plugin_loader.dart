@@ -68,7 +68,7 @@ class PluginLoader {
   static Future<bool> _tryLlamadart() async {
     final engine = LlamaEngine(LlamaBackend());
     try {
-      await engine.loadModelSource(ModelSource.parse(_healthCheckModel));
+      await loadModelWithDnsRetry(engine, _healthCheckModel);
       final stream = engine.create(
         const [LlamaChatMessage.fromText(role: LlamaChatRole.user, text: 'Say OK.')],
         params: const GenerationParams(maxTokens: 8),
@@ -80,6 +80,53 @@ class PluginLoader {
       return sawOutput;
     } finally {
       await engine.dispose();
+    }
+  }
+
+  /// Real, corrected understanding, found live this session by actually
+  /// watching a real download run to completion on-device rather than
+  /// stopping at the first misleading error message: the original theory
+  /// here was OEM DNS flakiness (ColorOS's "HTTPDNS" substitution,
+  /// `persist.sys.oplus.dns_customized_timeout=1`). That theory is WRONG.
+  /// Direct on-device evidence: a real Gemma download was watched reach
+  /// 74% (3.3 of 4.7GB), growing continuously and monotonically across
+  /// many real retries -- proof llamadart's own resume-via-`.part`-file
+  /// logic genuinely works -- before finally exhausting this function's
+  /// old, too-small retry budget (5 attempts, 30s of total backoff) partway
+  /// through an ordinary real network hiccup roughly 50 real minutes into
+  /// the transfer. The "Failed host lookup" text is llamadart's LAST
+  /// exception in that chain, not the original cause -- a real, ordinary
+  /// mid-transfer connection drop on a multi-gigabyte download over real
+  /// WiFi, ordinary for a transfer this size and length, ended up
+  /// re-triggering a fresh DNS lookup right as this function's retry
+  /// budget ran out, and that coincidence is what the error text reports.
+  /// The real, correct fix is a genuinely patient retry budget matched to
+  /// a transfer that can take the better part of an hour, not backoff
+  /// tuned for a fast, one-shot retry -- and retrying on any transient
+  /// IOException-shaped failure, not just this one specific message,
+  /// since a resumable download can legitimately hit several different
+  /// transient failure texts along the way.
+  /// Public (not `_tryLlamadart`-private) so `model_benchmark.dart`'s own
+  /// `runOnDevice()` can reuse the exact same real, corrected retry
+  /// behavior for the two real benchmark model downloads, not just this
+  /// health check.
+  static Future<void> loadModelWithDnsRetry(LlamaEngine engine, String modelSource) async {
+    const maxAttempts = 60;
+    const retryDelay = Duration(seconds: 5);
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await engine.loadModelSource(ModelSource.parse(modelSource));
+        return;
+      } catch (e) {
+        final message = e.toString();
+        final isTransientNetworkFailure = message.contains('Failed host lookup') ||
+            message.contains('Connection closed') ||
+            message.contains('Connection reset') ||
+            message.contains('Timed out') ||
+            message.contains('Software caused connection abort');
+        if (!isTransientNetworkFailure || attempt == maxAttempts) rethrow;
+        await Future<void>.delayed(retryDelay);
+      }
     }
   }
 

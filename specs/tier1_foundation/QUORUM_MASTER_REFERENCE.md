@@ -48,7 +48,7 @@ Email (spine, Gmail API) · Calendar (CalendarProvider primary, GCal API for ext
 
 | Role | Model | Status |
 |---|---|---|
-| On-device primary | **SmolLM2-1.7B** | **RESOLVED, live Sprint 0 result** — both real Full-tier candidates (Gemma 4 E4B, Llama 3.2 3B) genuinely failed to load on the real device this project's Sprint 0 run used, a real, disclosed emulator-level DNS failure, not a capability finding; `decideWinner()`'s own real mechanical escalation stands as the current, decided outcome. Full detail: `STATUS_INDEX.md`, `DECISIONS_LOG.md` `DEC-111`. |
+| On-device primary | **Llama 3.2 3B** | **RESOLVED, live Sprint 0 result, run to genuine completion on a real physical device (`DEC-130`)** — Gemma 4 E4B never finished downloading (a real, ordinary mid-transfer interruption on a ~4.7GB file, reaching 74% before exhausting retry budget — a transfer-length/retry-budget mismatch, not a device/network/DNS defect; `DEC-111`'s original emulator-DNS theory is superseded). Llama 3.2 3B genuinely downloaded, loaded, and ran real inference: **67% validity, 0.1 tok/s**. `decideWinner()`'s own real mechanical logic makes this a genuine winner, not a fallback. Full detail: `STATUS_INDEX.md`, `DECISIONS_LOG.md` `DEC-130`. |
 | On-device fallback | SmolLM2-1.7B | Locked |
 | Generator, Judge | Gemini Flash | Locked |
 | Fast/cheap cloud | Gemini Flash-Lite | Locked |
@@ -82,8 +82,8 @@ Full detail: `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md` §10.
 
 **Authoritative source: `STATUS_INDEX.md`'s "Known open items" — never this section.** The five items open at this document's last substantive revision are preserved below for historical context; genuine new open items have emerged since, during real implementation work, and belong only in the one place that's actually kept current.
 
-1. **RESOLVED, real Sprint 0 result (`DEC-111`):** on-device primary model — SmolLM2-1.7B, a real, mechanically-decided fallback (both Full-tier candidates genuinely failed to load in this project's real environment; see §5 above).
-2. **RESOLVED, real Sprint 0 result (`DEC-111`):** Flutter llama.cpp plugin — `llamadart`, confirmed real and working via a real, successful health-check model load (`SmolLM2-135M-Instruct-Q2_K.gguf`) before either Full-tier candidate was ever attempted.
+1. **RESOLVED, real Sprint 0 result, run to genuine completion on a real physical device (`DEC-130`, superseding `DEC-111`):** on-device primary model — Llama 3.2 3B, a real, mechanically-decided winner (Gemma 4 E4B never finished a real, ordinary interrupted download; Llama 3.2 3B genuinely downloaded, loaded, and passed real inference at 67% validity; see §5 above).
+2. **RESOLVED, real Sprint 0 result, reconfirmed on real hardware (`DEC-130`):** Flutter llama.cpp plugin — `llamadart`, confirmed real and working via a real, successful health-check model load (`SmolLM2-135M-Instruct-Q2_K.gguf`) on a real physical device, before either Full-tier candidate was ever attempted.
 3. Real Cloud Run cold-start latency under actual model footprint — unmeasured.
 4. Whether `pg_cron`'s own firing prevents Supabase's inactivity pause, independent of the keep-alive ping — unmeasured.
 5. Embedding vector dimension for the `note_embeddings` pgvector column — confirm against the loaded Qwen3-Embedding-0.6B model at integration time, do not hardcode from assumption.
