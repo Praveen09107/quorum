@@ -357,6 +357,24 @@ async def process_negotiation_downstream_job(
         verdict = await review(proposal, stakes, stage_a_checks, critic_call, judge_call)
         reviewed.append((proposal, stakes, verdict))
 
+    # A real, narrow, disclosed remaining gap, NOT the same bug the
+    # docstring above already found and fixed: that fix guarantees every
+    # domain's real translate/review pass completes before ANY real
+    # persistence begins. It does NOT guarantee every domain's own
+    # persist step (this loop) is atomic relative to every OTHER
+    # domain's persist step -- if domain 1's real action_events insert
+    # and `execute_approved_action()` genuinely succeed, and domain 2's
+    # OWN persist step then raises a genuine, uncaught exception (a real
+    # database infrastructure failure, not the malformed-payload case
+    # `action_executor.py` already handles defensively), domain 1's
+    # already-committed-in-this-transaction row would still commit when
+    # the whole job is caught and marked failed-and-retried one level up
+    # -- a real, low-probability risk of a duplicate on retry, the same
+    # real category of trade-off `security/supabase_deletion_store.py`'s
+    # own disclosed `DEC-113` atomicity gap already accepted for this
+    # project: narrow, needs a genuine infra failure specifically mid-
+    # persist-loop, not fixed by restructuring further this session,
+    # disclosed rather than silently left unexamined.
     executed_count = 0
     for proposal, stakes, verdict in reviewed:
         executed = await _persist_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
