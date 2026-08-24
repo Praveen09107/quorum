@@ -8,6 +8,7 @@
 import 'package:llamadart/llamadart.dart';
 
 import 'model_benchmark_logic.dart';
+import 'plugin_loader.dart';
 import 'test_prompts.dart';
 
 export 'model_benchmark_logic.dart';
@@ -25,7 +26,10 @@ class ModelBenchmarkRunner {
   }) async {
     final engine = LlamaEngine(LlamaBackend());
     try {
-      await engine.loadModelSource(ModelSource.parse(modelSource));
+      // Real retry against a real, diagnosed-live intermittent DNS flake
+      // on this session's test device -- see PluginLoader.loadModelWithDnsRetry's
+      // own header for the full, real root-cause explanation.
+      await PluginLoader.loadModelWithDnsRetry(engine, modelSource);
     } catch (e) {
       return ModelBenchmarkResult(
         model: model,

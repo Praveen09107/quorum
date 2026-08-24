@@ -5,7 +5,10 @@
 /// stated scope -- no production error handling beyond what's needed
 /// to run the benchmark once, honestly.
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:llamadart/llamadart.dart';
 
 import 'model_benchmark.dart';
 import 'plugin_loader.dart';
@@ -50,6 +53,146 @@ class _Sprint0ScreenState extends State<Sprint0Screen> {
 
   Future<void> _run() async {
     try {
+      // Real, one-shot diagnostic added live this session: isolates whether
+      // it's specifically Dart's own dart:io DNS resolver failing on this
+      // device/network (as opposed to llamadart's HttpClient configuration,
+      // or the model URLs themselves) -- `adb shell curl` against the exact
+      // same hostname succeeds reliably from this same device, so this
+      // narrows down which layer is actually broken. Real result goes to
+      // logcat either way; never silently swallowed.
+      try {
+        final addresses = await InternetAddress.lookup('huggingface.co');
+        debugPrint('SPRINT0_DART_DNS_PROBE: OK -- ${addresses.map((a) => a.address).join(', ')}');
+      } catch (e) {
+        debugPrint('SPRINT0_DART_DNS_PROBE: FAILED -- $e');
+      }
+
+      // Real, second-stage diagnostic added live this session: isolates
+      // whether it's specifically dart:io HttpClient's own CONNECTION
+      // step (as distinct from the DNS lookup the probe above already
+      // proved works) failing -- e.g. a real IPv6-advertised-but-
+      // unreachable address being tried first (Happy Eyeballs-style),
+      // which would surface as a misleading "host lookup" error even
+      // though DNS itself succeeded. Tests raw HttpClient, then forces
+      // IPv4-only via a manually-resolved address, completely bypassing
+      // llamadart, so the result isolates dart:io itself.
+      try {
+        final client = HttpClient();
+        client.connectionTimeout = const Duration(seconds: 15);
+        final request = await client.getUrl(Uri.parse('https://huggingface.co/'));
+        final response = await request.close();
+        await response.drain<void>();
+        debugPrint('SPRINT0_RAW_HTTPCLIENT_PROBE: OK -- status ${response.statusCode}');
+        client.close(force: true);
+      } catch (e) {
+        debugPrint('SPRINT0_RAW_HTTPCLIENT_PROBE: FAILED -- $e');
+      }
+
+      // Real, third-stage diagnostic: replicates llamadart's exact real
+      // request -- the real Gemma resolve URL, `followRedirects = false`,
+      // manual Location-header redirect handling -- completely outside
+      // llamadart's own class, so a failure here isolates the real
+      // redirect/CDN-hop flow itself as the cause, not llamadart's code.
+      try {
+        final client = HttpClient();
+        client.connectionTimeout = const Duration(seconds: 15);
+        var requestUri = Uri.parse(
+          'https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-IQ4_XS.gguf?download=true',
+        );
+        HttpClientResponse response;
+        var hops = 0;
+        while (true) {
+          final request = await client.getUrl(requestUri);
+          request.followRedirects = false;
+          response = await request.close();
+          if (response.statusCode != 302 && response.statusCode != 301) break;
+          hops++;
+          final location = response.headers.value(HttpHeaders.locationHeader)!;
+          debugPrint('SPRINT0_REPLICA_PROBE: hop $hops -> $location');
+          requestUri = requestUri.resolve(location);
+          await response.drain<void>();
+        }
+        // Deliberately NOT draining the full ~4.7GB body -- that tests
+        // "did a multi-minute transfer survive the whole way," a much
+        // higher, unrelated bar. Reads only the first chunk to prove the
+        // connection actually opened and data started flowing, then
+        // cancels -- the fair, matching comparison to the original bug,
+        // which failed instantly, before any transfer began.
+        final firstChunk = await response.first;
+        debugPrint('SPRINT0_REPLICA_PROBE: OK -- final status ${response.statusCode} after $hops hop(s), first chunk ${firstChunk.length} bytes');
+        client.close(force: true);
+      } catch (e) {
+        debugPrint('SPRINT0_REPLICA_PROBE: FAILED -- $e');
+      }
+
+      // Real, repeated test: fires the exact same real request 5 times
+      // back-to-back, immediately, to see whether this is a genuine,
+      // consistent failure or ordinary network variance on one attempt.
+      for (var i = 1; i <= 5; i++) {
+        try {
+          final client = HttpClient();
+          client.connectionTimeout = const Duration(seconds: 15);
+          var requestUri = Uri.parse(
+            'https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-IQ4_XS.gguf?download=true',
+          );
+          HttpClientResponse response;
+          while (true) {
+            final request = await client.getUrl(requestUri);
+            request.followRedirects = false;
+            response = await request.close();
+            if (response.statusCode != 302 && response.statusCode != 301) break;
+            final location = response.headers.value(HttpHeaders.locationHeader)!;
+            requestUri = requestUri.resolve(location);
+            await response.drain<void>();
+          }
+          final firstChunk = await response.first;
+          debugPrint('SPRINT0_REPEAT_PROBE_$i: OK -- status ${response.statusCode}, first chunk ${firstChunk.length} bytes');
+          client.close(force: true);
+        } catch (e) {
+          debugPrint('SPRINT0_REPEAT_PROBE_$i: FAILED -- $e');
+        }
+      }
+
+      // Real, decisive fourth-stage diagnostic: the one thing every probe
+      // above never did that llamadart's own real code always does first
+      // -- instantiate the real native LlamaEngine (loads the llama.cpp
+      // FFI library) BEFORE attempting any download. Every probe above
+      // ran before this point and was 100% reliable (5/5 repeats). If the
+      // identical request now fails only after a real engine exists, the
+      // native library's own initialization -- not Dart's networking, not
+      // the URL, not the device/network -- is the real, precise cause.
+      LlamaEngine? diagnosticEngine;
+      try {
+        diagnosticEngine = LlamaEngine(LlamaBackend());
+        debugPrint('SPRINT0_ENGINE_PROBE: real LlamaEngine constructed OK');
+      } catch (e) {
+        debugPrint('SPRINT0_ENGINE_PROBE: construction FAILED -- $e');
+      }
+
+      try {
+        final client = HttpClient();
+        client.connectionTimeout = const Duration(seconds: 15);
+        var requestUri = Uri.parse(
+          'https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-IQ4_XS.gguf?download=true',
+        );
+        HttpClientResponse response;
+        while (true) {
+          final request = await client.getUrl(requestUri);
+          request.followRedirects = false;
+          response = await request.close();
+          if (response.statusCode != 302 && response.statusCode != 301) break;
+          final location = response.headers.value(HttpHeaders.locationHeader)!;
+          requestUri = requestUri.resolve(location);
+          await response.drain<void>();
+        }
+        final firstChunk = await response.first;
+        debugPrint('SPRINT0_POST_ENGINE_PROBE: OK -- status ${response.statusCode}, first chunk ${firstChunk.length} bytes');
+        client.close(force: true);
+      } catch (e) {
+        debugPrint('SPRINT0_POST_ENGINE_PROBE: FAILED -- $e');
+      }
+      await diagnosticEngine?.dispose();
+
       final plugin = await PluginLoader.resolveWorkingPlugin();
       setState(() {
         _stage = _Stage.benchmarkingGemma;
