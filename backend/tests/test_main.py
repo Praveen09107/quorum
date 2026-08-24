@@ -1379,6 +1379,12 @@ def test_drain_retry_queue_real_secret_and_matching_header_reaches_the_real_drai
             response = client.post("/internal/drain-retry-queue", headers={"X-Internal-Secret": "a-real-configured-secret"})
         assert response.status_code == 200
         body = response.json()
-        assert set(body.keys()) == {"jobs_seen", "jobs_succeeded", "jobs_failed", "downstream_actions_produced"}
+        assert set(body.keys()) == {
+            "jobs_seen",
+            "jobs_succeeded",
+            "jobs_failed",
+            "downstream_actions_produced",
+            "downstream_actions_executed",
+        }
     finally:
         get_settings.cache_clear()

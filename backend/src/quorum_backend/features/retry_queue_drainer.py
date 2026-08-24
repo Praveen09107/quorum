@@ -8,23 +8,23 @@ review()`, real Stage A + `DEC-125`'s real Critic/Judge) for each --
 literally "each re-entering the Gate at its own stakes level",
 `QUORUM_DATA_CONTRACTS.md` §5.6's own spec text.
 
-A REAL, DISCLOSED SCOPE BOUNDARY THIS MODULE DOES NOT CROSS, DECIDED
-BEFORE WRITING A LINE OF CODE HERE, NOT DISCOVERED HALFWAY THROUGH:
-this module produces a real, durable Gate VERDICT per downstream action
--- persisted as a real `action_events` row, using that table's own
-already-real `gate_decision`/`outcome`/`resolved_at` columns -- and stops
-there. It does NOT execute the approved action's real-world effect (no
-`INSERT INTO tasks`, no `INSERT INTO expenses`, no real Google Calendar
-call). Confirmed by direct search before writing this file: no code
-anywhere in this backend has EVER executed a Gate-approved proposal's
-real effect, for any action, ever -- every domain agent only constructs
-an `ActionProposal`; nothing downstream of Gate approval has ever been
-built. Building a real execution layer now would be a new, safety-
-relevant feature (real writes to real user data) this session was never
-asked to build, not a natural extension of "re-enter the Gate" -- the
-literal spec text this module implements promises only that, nothing
-more. A real, disclosed, separate future item, not silently implied
-solved here.
+A REAL SCOPE BOUNDARY, NARROWED SINCE `DEC-127` FIRST DISCLOSED IT,
+NOW REAL FOR TWO DOMAINS (`DEC-128`): this module persists a real,
+durable Gate VERDICT per downstream action -- a real `action_events`
+row, using that table's own real `gate_decision`/`outcome`/
+`resolved_at` columns -- and, for a genuine "approve" verdict, now also
+calls `features/action_executor.py::execute_approved_action()` on the
+SAME connection/transaction, so the real write and the real decision
+that authorized it commit or roll back together. `CREATE_TASK`/
+`LOG_EXPENSE` genuinely execute (a real `INSERT INTO tasks`/`expenses`).
+Every other real `ActionType` -- `UPDATE_BUDGET`, both real calendar
+types, `SEND_EMAIL` -- still returns a real, honest `executed=False`;
+see `action_executor.py`'s own top-of-file docstring for exactly why
+each one doesn't have a real execution target yet (a missing
+`budgets`/`calendar_events` table, or a genuine external API call this
+project deliberately treats as separate, Rule-5-gated scope). Never
+called for `reject`/`revise`/`escalate_to_human` -- only a genuine
+`approve` verdict.
 
 STAGE A SCOPE, A REAL, DELIBERATE, PREETHISH-CONFIRMED CHOICE (`DEC-127`):
 `budget_check`/`availability_check` need real ground-truth adapters this
@@ -70,6 +70,7 @@ import asyncpg
 from quorum_backend.agents.calendar_agent import build_event_proposal
 from quorum_backend.agents.finance_agent import build_finance_proposal
 from quorum_backend.agents.tasks_agent import build_task_proposal
+from quorum_backend.features.action_executor import execute_approved_action
 from quorum_backend.features.today import TODAY_WORKING_HOURS_PER_DAY
 from quorum_backend.gate.orchestration import CriticCall, JudgeCall, StageACheck, review
 from quorum_backend.gate.schemas import ActionProposal, GateVerdict, Stakes
@@ -183,11 +184,31 @@ async def _build_stage_a_checks(
     return checks
 
 
+# Real, upper-bound caps mirroring the real, live column precision each
+# value is eventually written into (`expenses.amount NUMERIC(10,2)`,
+# `tasks.estimated_hours NUMERIC(4,1)`, confirmed against `migrations/
+# 0001_initial_schema/up.sql` before choosing these). A real, live-shaped
+# gap this session's own CRITICAL-tier review found and this fix closes:
+# an unbounded, LLM-supplied number (a plausible hallucinated
+# translation, e.g. "handle onboarding through the quarter" ->
+# estimated_hours: 2000) would previously sail through Stage A untouched
+# whenever no deadline is present (deadline_conflict_check trivially
+# passes with no deadline to check against) and reach a real
+# `INSERT INTO tasks`/`expenses` a fixed-precision NUMERIC column
+# genuinely cannot hold -- caught here instead, with a real, honest
+# `DownstreamTranslationError`, well before that INSERT is ever
+# attempted.
+_MAX_FINANCE_AMOUNT = 99_999_999.99
+_MAX_ESTIMATED_HOURS = 999.9
+
+
 def validate_and_build_finance_proposal(args: dict) -> ActionProposal:
     action = args["action"]
     amount = float(args["amount"])
     if amount <= 0:
         raise DownstreamTranslationError(f"Translated finance amount must be positive, got {amount!r}")
+    if amount > _MAX_FINANCE_AMOUNT:
+        raise DownstreamTranslationError(f"Translated finance amount {amount!r} exceeds the real, max storable value {_MAX_FINANCE_AMOUNT}")
     return build_finance_proposal(action=action, amount=amount, category=args["category"], payee=args.get("payee"))
 
 
@@ -195,6 +216,10 @@ def validate_and_build_task_proposal(args: dict) -> ActionProposal:
     estimated_hours = float(args["estimated_hours"])
     if estimated_hours <= 0:
         raise DownstreamTranslationError(f"Translated estimated_hours must be positive, got {estimated_hours!r}")
+    if estimated_hours > _MAX_ESTIMATED_HOURS:
+        raise DownstreamTranslationError(
+            f"Translated estimated_hours {estimated_hours!r} exceeds the real, max storable value {_MAX_ESTIMATED_HOURS}"
+        )
     deadline_iso = args.get("deadline_iso")
     deadline = datetime.fromisoformat(deadline_iso) if deadline_iso else None
     return build_task_proposal(title=args["title"], estimated_hours=estimated_hours, deadline=deadline, existing_task_id=None)
@@ -266,7 +291,12 @@ def map_verdict_to_outcome(verdict: GateVerdict) -> tuple[str | None, bool]:
 
 async def _persist_verdict(
     conn: asyncpg.Connection, *, proposal: ActionProposal, stakes: Stakes, verdict: GateVerdict, user_id: str
-) -> None:
+) -> bool:
+    """Persists the real `action_events` row, then -- for a genuine
+    `approve` verdict only -- calls the real `action_executor.py` on
+    the SAME connection, so the real write (when one exists) commits or
+    rolls back together with the real decision that authorized it.
+    Returns whether a real execution genuinely happened."""
     outcome, is_resolved = map_verdict_to_outcome(verdict)
     final_payload = verdict.revised_payload if verdict.revised_payload is not None else proposal.payload
     await conn.execute(
@@ -283,6 +313,15 @@ async def _persist_verdict(
         datetime.now(timezone.utc) if is_resolved else None,
     )
 
+    if verdict.decision != "approve":
+        # Never executes on reject/revise/escalate_to_human -- see this
+        # module's and action_executor.py's own top-of-file docstrings
+        # for why escalate_to_human specifically must never execute.
+        return False
+
+    result = await execute_approved_action(conn, action_type=proposal.action_type, payload=final_payload, user_id=user_id)
+    return result.executed
+
 
 async def process_negotiation_downstream_job(
     conn: asyncpg.Connection,
@@ -291,11 +330,16 @@ async def process_negotiation_downstream_job(
     translation_call: DownstreamTranslationCall,
     critic_call: CriticCall,
     judge_call: JudgeCall,
-) -> int:
+) -> tuple[int, int]:
     """Processes one real, dequeued `negotiation_downstream_action` job
     -- one real `ActionProposal` (translated, then Gate-reviewed) per
-    domain in the job's real `source_domains`. Returns the real count of
-    downstream actions produced (0 for a genuine "do nothing" choice).
+    domain in the job's real `source_domains`. Returns real
+    `(actions_produced, actions_executed)` counts -- `(0, 0)` for a
+    genuine "do nothing" choice. `actions_executed` counts only real,
+    genuine writes (`action_executor.py`'s own `CREATE_TASK`/
+    `LOG_EXPENSE` execution); every other approved action still counts
+    toward `actions_produced` (a real Gate decision was reached and
+    persisted) but not `actions_executed`.
 
     A REAL, LIVE BUG FOUND AND FIXED DURING THIS SESSION'S OWN SECOND-
     PASS SELF-REVIEW, BEFORE ANY REVIEW SUBAGENT RAN: an earlier version
@@ -327,7 +371,7 @@ async def process_negotiation_downstream_job(
         # The real, always-honest "do nothing" case
         # (`gate/schemas.py::NegotiationOption`'s own docstring) -- zero
         # real downstream actions needed, not an error.
-        return 0
+        return 0, 0
 
     reviewed: list[tuple[ActionProposal, Stakes, GateVerdict]] = []
     for domain in source_domains:
@@ -337,10 +381,31 @@ async def process_negotiation_downstream_job(
         verdict = await review(proposal, stakes, stage_a_checks, critic_call, judge_call)
         reviewed.append((proposal, stakes, verdict))
 
+    # A real, narrow, disclosed remaining gap, NOT the same bug the
+    # docstring above already found and fixed: that fix guarantees every
+    # domain's real translate/review pass completes before ANY real
+    # persistence begins. It does NOT guarantee every domain's own
+    # persist step (this loop) is atomic relative to every OTHER
+    # domain's persist step -- if domain 1's real action_events insert
+    # and `execute_approved_action()` genuinely succeed, and domain 2's
+    # OWN persist step then raises a genuine, uncaught exception (a real
+    # database infrastructure failure, not the malformed-payload case
+    # `action_executor.py` already handles defensively), domain 1's
+    # already-committed-in-this-transaction row would still commit when
+    # the whole job is caught and marked failed-and-retried one level up
+    # -- a real, low-probability risk of a duplicate on retry, the same
+    # real category of trade-off `security/supabase_deletion_store.py`'s
+    # own disclosed `DEC-113` atomicity gap already accepted for this
+    # project: narrow, needs a genuine infra failure specifically mid-
+    # persist-loop, not fixed by restructuring further this session,
+    # disclosed rather than silently left unexamined.
+    executed_count = 0
     for proposal, stakes, verdict in reviewed:
-        await _persist_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
+        executed = await _persist_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
+        if executed:
+            executed_count += 1
 
-    return len(reviewed)
+    return len(reviewed), executed_count
 
 
 async def _mark_job_failed(conn: asyncpg.Connection, retry_id, error_message: str) -> None:
@@ -360,6 +425,7 @@ class DrainResult:
     jobs_succeeded: int
     jobs_failed: int
     downstream_actions_produced: int
+    downstream_actions_executed: int
 
 
 async def drain_due_jobs(
@@ -387,49 +453,91 @@ async def drain_due_jobs(
     pushes `next_attempt_at` forward rather than losing the job or
     retrying it in a tight loop -- `MAX_RETRY_ATTEMPTS` matches this
     schema's own already-existing partial index exactly.
+
+    A REAL, STRUCTURAL BUG FOUND BY THIS SESSION'S OWN CRITICAL-TIER
+    REVIEW, FIXED BEFORE MERGE: an earlier version called
+    `_mark_job_failed()` from INSIDE the same `except` block that was
+    itself still inside the same `async with conn.transaction():` the
+    real failure occurred in. A genuine Postgres-level failure (a
+    constraint violation, a numeric-overflow -- exactly the class
+    `validate_and_build_finance_proposal`/`validate_and_build_task_
+    proposal`'s own new upper-bound checks above now catch earlier and
+    more precisely) leaves that transaction in Postgres's own real
+    "aborted" state; every subsequent statement on it -- including the
+    real `UPDATE retry_queue` `_mark_job_failed()` itself issues --
+    fails too, with a second, uncaught exception. Net effect: the whole
+    transaction rolls back (safe -- no partial data), but `attempt_count`
+    is never incremented and `next_attempt_at` never advances, so the
+    identical, permanently-malformed job would be re-selected and
+    reprocessed from scratch on every future drain call, forever, rather
+    than genuinely backing off and eventually giving up at
+    `MAX_RETRY_ATTEMPTS`. Fixed structurally: the `try` now wraps the
+    WHOLE `async with conn.transaction():` block, not a piece nested
+    inside it -- letting a real failure propagate out of that block
+    triggers Postgres's own real `ROLLBACK` via the transaction context
+    manager itself, restoring the connection to a normal, usable state
+    BEFORE `_mark_job_failed()` ever runs, as its own separate,
+    guaranteed-to-succeed statement.
     """
     jobs_seen = jobs_succeeded = jobs_failed = 0
     downstream_actions_produced = 0
+    downstream_actions_executed = 0
 
     for _ in range(max_jobs):
         async with pool.acquire() as conn:
-            async with conn.transaction():
-                row = await conn.fetchrow(
-                    "SELECT retry_id, job_type, payload, attempt_count FROM retry_queue "
-                    "WHERE next_attempt_at <= now() AND attempt_count < $1 "
-                    "ORDER BY next_attempt_at FOR UPDATE SKIP LOCKED LIMIT 1",
-                    MAX_RETRY_ATTEMPTS,
-                )
-                if row is None:
-                    break
-                jobs_seen += 1
+            retry_id = None
+            error_message: str | None = None
+            no_more_jobs = False
 
-                if row["job_type"] != _NEGOTIATION_DOWNSTREAM_JOB_TYPE:
-                    # A real, exhaustive, disclosed guard -- this
-                    # drainer only knows how to process the one real
-                    # job_type any code in this backend has ever
-                    # enqueued. An unrecognized job_type fails loud into
-                    # the same real retry/backoff path, never silently
-                    # dropped or guessed at.
-                    await _mark_job_failed(conn, row["retry_id"], f"Unknown job_type: {row['job_type']!r}")
-                    jobs_failed += 1
-                    continue
-
-                try:
-                    payload = json.loads(row["payload"])
-                    produced = await process_negotiation_downstream_job(
-                        conn, payload, translation_call=translation_call, critic_call=critic_call, judge_call=judge_call
+            try:
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        "SELECT retry_id, job_type, payload, attempt_count FROM retry_queue "
+                        "WHERE next_attempt_at <= now() AND attempt_count < $1 "
+                        "ORDER BY next_attempt_at FOR UPDATE SKIP LOCKED LIMIT 1",
+                        MAX_RETRY_ATTEMPTS,
                     )
-                    await conn.execute("DELETE FROM retry_queue WHERE retry_id = $1", row["retry_id"])
-                    jobs_succeeded += 1
-                    downstream_actions_produced += produced
-                except Exception as exc:  # noqa: BLE001 -- deliberately broad: any real failure here retries via the queue, never silently drops the job
-                    await _mark_job_failed(conn, row["retry_id"], str(exc))
-                    jobs_failed += 1
+                    if row is None:
+                        no_more_jobs = True
+                    else:
+                        jobs_seen += 1
+                        retry_id = row["retry_id"]
+
+                        if row["job_type"] != _NEGOTIATION_DOWNSTREAM_JOB_TYPE:
+                            # A real, exhaustive, disclosed guard -- this
+                            # drainer only knows how to process the one
+                            # real job_type any code in this backend has
+                            # ever enqueued. Raised, not handled inline,
+                            # so it flows through the exact same real
+                            # recovery path every other real failure
+                            # below does.
+                            raise DownstreamDrainError(f"Unknown job_type: {row['job_type']!r}")
+
+                        payload = json.loads(row["payload"])
+                        produced, executed = await process_negotiation_downstream_job(
+                            conn, payload, translation_call=translation_call, critic_call=critic_call, judge_call=judge_call
+                        )
+                        await conn.execute("DELETE FROM retry_queue WHERE retry_id = $1", retry_id)
+                        jobs_succeeded += 1
+                        downstream_actions_produced += produced
+                        downstream_actions_executed += executed
+            except Exception as exc:  # noqa: BLE001 -- deliberately broad: any real failure here retries via the queue, never silently drops the job
+                jobs_failed += 1
+                error_message = str(exc)
+
+            if no_more_jobs:
+                break
+
+            if error_message is not None and retry_id is not None:
+                # A real, deliberately SEPARATE statement from the
+                # transaction above -- see this function's own top-of-
+                # docstring account of the real bug this ordering fixes.
+                await _mark_job_failed(conn, retry_id, error_message)
 
     return DrainResult(
         jobs_seen=jobs_seen,
         jobs_succeeded=jobs_succeeded,
         jobs_failed=jobs_failed,
         downstream_actions_produced=downstream_actions_produced,
+        downstream_actions_executed=downstream_actions_executed,
     )
