@@ -761,11 +761,14 @@ async def drain_retry_queue_route(
     requests, matching every other real credential-backed call factory
     in this backend.
 
-    A real, disclosed, honest scope boundary, not glossed over: this
-    route produces a real Gate VERDICT per downstream action (a real
-    `action_events` row) and stops there -- it does not execute the
-    approved action's real-world effect. See `retry_queue_drainer.py`'s
-    own top-of-file docstring for the full account of why.
+    A real, disclosed, honest scope boundary, narrowed since `DEC-128`:
+    this route produces a real Gate VERDICT per downstream action (a
+    real `action_events` row), and, for a genuine `approve` verdict on
+    `CREATE_TASK`/`LOG_EXPENSE` specifically, now genuinely executes it
+    too (a real `INSERT INTO tasks`/`expenses`). Every other real
+    action type still stops at the verdict -- see `features/
+    action_executor.py`'s own top-of-file docstring for exactly why
+    each one doesn't have a real execution target yet.
 
     NOT YET CALLED BY A REAL SCHEDULE: `pg_cron`/`pg_net` are confirmed,
     live, NOT currently enabled on the real Supabase project (`DEC-127`)
@@ -788,4 +791,5 @@ async def drain_retry_queue_route(
         "jobs_succeeded": result.jobs_succeeded,
         "jobs_failed": result.jobs_failed,
         "downstream_actions_produced": result.downstream_actions_produced,
+        "downstream_actions_executed": result.downstream_actions_executed,
     }

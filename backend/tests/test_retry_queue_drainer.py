@@ -45,6 +45,9 @@ async def user_id(pool):
     await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(uid))
     await pool.execute("DELETE FROM retry_queue")  # no per-row user_id column to scope by -- see DEC-124's own disclosed limitation
     await pool.execute("DELETE FROM tasks WHERE user_id = $1", uuid.UUID(uid))
+    # DEC-128: real execution now genuinely writes real expenses rows
+    # for a real, approved log_expense verdict -- cleaned up here too.
+    await pool.execute("DELETE FROM expenses WHERE user_id = $1", uuid.UUID(uid))
     await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(uid))
 
 
@@ -188,6 +191,7 @@ async def test_drain_due_jobs_processes_a_real_single_domain_job_and_persists_a_
 
     assert result.jobs_succeeded == 1
     assert result.downstream_actions_produced == 1
+    assert result.downstream_actions_executed == 1
     assert await pool.fetchrow("SELECT 1 FROM retry_queue WHERE retry_id = $1", retry_id) is None
 
     event = await pool.fetchrow(
@@ -197,6 +201,20 @@ async def test_drain_due_jobs_processes_a_real_single_domain_job_and_persists_a_
     assert event["gate_decision"] == "approve"
     assert event["outcome"] == "approved_unchanged"
     assert event["resolved_at"] is not None
+
+    # DEC-128: a real execution genuinely happened -- a real expenses
+    # row, not just a recorded verdict. `category` is NOT asserted here
+    # -- the real `expenses` table has no such column (confirmed
+    # against `migrations/0001_initial_schema/up.sql`); the translated
+    # category still survives in `action_events.payload` above, just
+    # not in a dedicated `expenses` column, see `action_executor.py`'s
+    # own disclosure.
+    expense = await pool.fetchrow(
+        "SELECT amount, source FROM expenses WHERE user_id = $1", uuid.UUID(user_id)
+    )
+    assert expense is not None
+    assert float(expense["amount"]) == 25.0
+    assert expense["source"] == "gate_approved"
 
 
 async def test_drain_due_jobs_processes_a_real_multi_domain_job_and_persists_one_action_event_per_domain(pool, user_id):
@@ -211,8 +229,16 @@ async def test_drain_due_jobs_processes_a_real_multi_domain_job_and_persists_one
     result = await drain_due_jobs(pool, translation_call=translation_call, critic_call=_fake_critic_call, judge_call=_fake_judge_approve)
 
     assert result.downstream_actions_produced == 2
+    assert result.downstream_actions_executed == 2
     events = await pool.fetch("SELECT action_type FROM action_events WHERE user_id = $1 ORDER BY action_type", uuid.UUID(user_id))
     assert {e["action_type"] for e in events} == {"log_expense", "create_task"}
+
+    # DEC-128: both real writes genuinely happened.
+    assert await pool.fetchrow("SELECT 1 FROM expenses WHERE user_id = $1", uuid.UUID(user_id)) is not None
+    real_task = await pool.fetchrow("SELECT title, status FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    assert real_task is not None
+    assert real_task["title"] == "Real follow-up"
+    assert real_task["status"] == "open"
 
 
 async def test_drain_due_jobs_a_real_multi_domain_job_persists_nothing_at_all_when_a_later_domain_fails(pool, user_id):
@@ -235,11 +261,14 @@ async def test_drain_due_jobs_a_real_multi_domain_job_persists_nothing_at_all_wh
 
     assert result.jobs_failed == 1
     assert result.downstream_actions_produced == 0
+    assert result.downstream_actions_executed == 0
     # The real, load-bearing assertion: finance's own successful review
     # must NOT have left a real, orphaned row behind, even though its
     # own translation/Gate review genuinely succeeded before tasks' own
-    # translation failed.
+    # translation failed -- DEC-128 extends this same guarantee to the
+    # real expenses write, not just the action_events record.
     assert await pool.fetchrow("SELECT 1 FROM action_events WHERE user_id = $1", uuid.UUID(user_id)) is None
+    assert await pool.fetchrow("SELECT 1 FROM expenses WHERE user_id = $1", uuid.UUID(user_id)) is None
     # The real job survives for a clean retry, not silently dropped.
     row = await pool.fetchrow("SELECT attempt_count FROM retry_queue WHERE retry_id = $1", retry_id)
     assert row is not None
