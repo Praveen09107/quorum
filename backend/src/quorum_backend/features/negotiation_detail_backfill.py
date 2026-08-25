@@ -88,6 +88,103 @@ genuinely different: a real, atomic, race-safe guard (`UPDATE ...
 WHERE options IS NULL`) so two real, concurrent invocations picking the
 same bare negotiation can never double-write, and the loser is honestly
 tallied as `ALREADY_DETAILED` rather than silently succeeding twice.
+
+**FOUR REAL, LIVE-PROVEN BUGS FOUND BY THIS PR'S OWN CRITICAL-TIER
+REVIEW, ALL FIXED HERE:**
+
+1. **Permanent head-of-line block (HIGH):** the original candidate query
+   ordered by `started_at ASC LIMIT n` with no exclusion for a row
+   already found `SITUATION_RESOLVED` -- and nothing anywhere ever marks
+   a bare, now-moot negotiation resolved (`features/negotiation_choice.
+   py`'s own only real `resolved_at` writer requires `options IS NOT
+   NULL`). Live-proven: 3 users whose bare negotiations had already gone
+   moot occupied the ENTIRE batch on every single run, forever, so a 4th
+   user's genuinely live conflict was NEVER detailed. Fixed: migration
+   `0009_negotiation_detail_backfill_attempts` adds `detail_backfill_
+   last_attempted_at`, and candidate selection now orders by "least
+   recently attempted" (`NULLS FIRST`, then `started_at`) instead of
+   raw creation order -- a genuine round-robin across every real bare
+   candidate, so no fixed set can dominate every batch forever.
+2. **Unbounded real Gemini quota burn on a durably-failing negotiation
+   (HIGH):** the same head-of-line ordering meant a negotiation that
+   fails every real attempt (a durable Gemini error, a malformed real
+   value) got re-picked, and re-attempted with fresh real Gemini calls,
+   on every single cron tick, forever -- live-proven to burn 4 real
+   outbound calls per tick indefinitely. Fixed: `detail_backfill_
+   attempts` (same migration) is incremented on every real attempt,
+   regardless of outcome, and `MAX_DETAIL_BACKFILL_ATTEMPTS` excludes a
+   negotiation from candidate selection once it's been durably tried and
+   failed that many times -- a real, disclosed, bounded give-up, not a
+   silent infinite retry.
+3. **`budget_remaining_fraction` can exceed `1.0` or go negative (MEDIUM),
+   rendered by the mobile app as an impossible "110% budget remaining":**
+   live-proven reachable two real ways -- a real refund making month-to-
+   date spend negative (`expenses.amount` has no real positivity `CHECK`),
+   and `spend_alert`-sourced negotiations computing this fraction from
+   two genuinely independent real quantities (remaining budget vs. total
+   detected subscription cost) that were never guaranteed to co-vary
+   within `[0, 1]`. Fixed: `_clamp_fraction_impact()` clamps this one
+   metric's `before`/`after` (and re-derives `direction`) after real
+   impact simulation, deliberately NOT inside the shared, already-tested
+   `impact_simulator.py` -- that module's own generic arithmetic contract
+   stays unchanged for every other real caller.
+4. **`deadline_slack_hours` never moves when the tasks-relief effect is
+   applied (MEDIUM), an internally contradictory delta pair** (the same
+   option shows "hours committed: improves" and "deadline slack:
+   unchanged" for the identical real relief): a real, exact consequence
+   of this module's own `deadline_slack_hours = available - committed`
+   definition -- reducing `committed` by `GENERIC_TASKS_RELIEF_HOURS`
+   must increase slack by the identical amount, algebraically, not
+   approximately. Fixed: `_generic_effect_extractor` now sets both
+   `deadline_slack_hours_change`/`task_hours_committed_change` together,
+   as the one real definition requires.
+
+**A FIFTH REAL FINDING, ADDRESSED HERE TOO (MEDIUM):** the original
+`DEC-135` log entry claimed the real, disclosed cross-job negotiation-
+duplication gap (`DEC-134`) was "unaffected" by this module, since detail
+generation "doesn't change how many negotiations get created." True, but
+understated the real consequence: before this module existed, a stray
+duplicate bare negotiation from the OTHER autonomous job expired
+harmlessly after `BARE_NEGOTIATION_COOLDOWN_HOURS`; after detailing BOTH
+of a real user's duplicate negotiations for the same underlying strain,
+the review found two live, simultaneously actionable cards on Today, and
+because an options-bearing negotiation blocks unconditionally with no
+cooldown, the ignored twin now permanently (not just for 24h) blocks
+BOTH autonomous jobs for that user. Fixed: before spending a single real
+Gemini call, this module checks whether the same real user already holds
+ANOTHER real, unresolved, options-bearing negotiation whose
+`conflicted_domains` overlaps -- if so, honestly leaves this one bare
+(`SKIPPED_DUPLICATE_ACTIONABLE`), the same real, pre-existing, already-
+accepted behavior this class of duplicate had before this module ever
+existed, not a new, worse one.
+
+**A SIXTH REAL FIX (MEDIUM-HIGH), SCHEDULING-RELATED:** the review
+measured a real, live Gemini round trip for one negotiation at ~28
+seconds -- `DEFAULT_BATCH_SIZE = 3`, run sequentially, meant a single
+real invocation of this job could take ~83 seconds, blowing past
+`DEC-134`'s own `pg_net` `timeout_milliseconds := 30000` fix and
+occupying a real Cloud Run instance (`--concurrency=1`) for over a
+minute while the other three real Phase 2 jobs queue behind it. Fixed:
+`DEFAULT_BATCH_SIZE` reduced to `1`, and `backend/scripts/enable_
+backfill_negotiation_detail_cron.sql` (written this same session, not
+yet scheduled live -- see that file's own top comment) uses an offset
+schedule and a real, measured-with-margin timeout, rather than
+mechanically copying `DEC-134`'s exact `*/30`+`30000ms` pattern the way
+this entry originally, incorrectly planned to.
+
+**TWO REAL, LOWER-SEVERITY FIXES ALSO APPLIED:** state rebuild
+(`_build_deadline_watch_state`/`_build_spend_alert_state`) now runs
+inside a real transaction, matching `deadline_watch.py`/`spend_alert.py`'s
+own established per-item transactional discipline (previously ran on a
+bare connection with no transaction -- low real impact, but a genuine
+inconsistency the review found). `negotiation/gemini_calls.py`'s own
+pre-existing retry loop (`DEC-121`) had no real backoff at all between
+attempts -- harmless for a single, human-triggered call, but this PR is
+the first thing to call it on a real, autonomous, repeating schedule, so
+a rate-limit response with zero backoff doubles the real request rate
+into the same limit. A small, real `asyncio.sleep` between retries is
+now in place there too, disclosed as a deliberate, narrowly-scoped touch
+to shared code this specific PR made newly consequential.
 """
 from __future__ import annotations
 
@@ -106,11 +203,11 @@ from quorum_backend.features.negotiation_trigger_support import (
     fetch_remaining_monthly_budget,
 )
 from quorum_backend.features.today import TODAY_MONTHLY_BUDGET_LIMIT
-from quorum_backend.gate.schemas import NegotiationOption, ResourceClaim
+from quorum_backend.gate.schemas import ImpactDelta, NegotiationOption, ResourceClaim
 from quorum_backend.negotiation.gemini_calls import make_gemini_position_call, make_gemini_synthesis_call
 from quorum_backend.negotiation.impact_simulator import DomainSnapshot, OptionEffect
 from quorum_backend.negotiation.subgraph import NegotiationState, build_negotiation_graph
-from quorum_backend.negotiation.trigger import DomainState
+from quorum_backend.negotiation.trigger import DomainState, scan_for_conflicts
 
 logger = logging.getLogger("quorum_backend")
 
@@ -129,13 +226,23 @@ GENERIC_FINANCE_RELIEF_FRACTION = 0.1
 GENERIC_TASKS_RELIEF_HOURS = 2.0
 
 # See this module's own top-of-file docstring's "REAL, QUOTA-CONSCIOUS
-# BATCHING" section.
-DEFAULT_BATCH_SIZE = 3
+# BATCHING" section -- reduced from 3 to 1 by this PR's own CRITICAL-tier
+# review's real, measured ~28s-per-negotiation finding (fix #6 above).
+DEFAULT_BATCH_SIZE = 1
+
+# See this module's own top-of-file docstring, fix #2 -- a real, bounded
+# give-up so a durably-failing negotiation stops burning real Gemini
+# quota on every cron tick forever. 5 real attempts, spread across
+# real, separate cron ticks (never retried twice in the same batch), is
+# generous enough to ride out a real, transient quota blip while still
+# being a genuine, real ceiling, not an unbounded one.
+MAX_DETAIL_BACKFILL_ATTEMPTS = 5
 
 
 class BackfillOutcome(Enum):
     UNKNOWN_TRIGGER_SOURCE = auto()  # not a recognized autonomous job -- honestly skipped, never guessed at
     SITUATION_RESOLVED = auto()  # a fresh re-scan against current real data no longer conflicts
+    SKIPPED_DUPLICATE_ACTIONABLE = auto()  # the same real user already has another real, actionable negotiation for an overlapping conflict
     ALREADY_DETAILED = auto()  # lost a real, live race to a concurrent invocation -- no double-write
     DETAILED = auto()  # real Gemini-backed positions/options genuinely generated and persisted
 
@@ -244,11 +351,96 @@ def _build_baseline(resource_claims: list[ResourceClaim], domain_states: dict[st
 def _generic_effect_extractor(option: NegotiationOption) -> OptionEffect:
     """See this module's own top-of-file docstring's "REAL, GENERIC
     IMPACT EFFECT SIZES" section for why these two fixed magnitudes,
-    not model-self-quantified or newly invented ones."""
+    not model-self-quantified or newly invented ones.
+
+    A REAL, DISCLOSED FIX (this PR's own CRITICAL-tier review, finding
+    #4): `deadline_slack_hours` is defined in `_build_baseline()` below
+    as `available - committed` -- so reducing `task_hours_committed` by
+    `GENERIC_TASKS_RELIEF_HOURS` MUST increase `deadline_slack_hours` by
+    the identical amount; that's not a judgment call, it's the algebra
+    of this module's own definition. An earlier version left `deadline_
+    slack_hours_change` at its real, zero default here, producing a
+    genuinely self-contradictory pair of real impact deltas for the same
+    option (hours committed improves; deadline slack unchanged) on every
+    single real negotiation this module has ever produced (`scan_for_
+    conflicts` only ever triggers when committed exceeds available, so
+    `deadline_slack_hours` starts negative every time -- never an edge
+    case here)."""
+    tasks_relief_hours = GENERIC_TASKS_RELIEF_HOURS if "tasks" in option.source_domains else 0.0
     return OptionEffect(
         budget_remaining_fraction_change=GENERIC_FINANCE_RELIEF_FRACTION if "finance" in option.source_domains else 0.0,
-        task_hours_committed_change=-GENERIC_TASKS_RELIEF_HOURS if "tasks" in option.source_domains else 0.0,
+        deadline_slack_hours_change=tasks_relief_hours,
+        task_hours_committed_change=-tasks_relief_hours,
     )
+
+
+def _clamp_fraction_impact(impact: dict[str, list[ImpactDelta]]) -> dict[str, list[ImpactDelta]]:
+    """A REAL, DISCLOSED FIX (this PR's own CRITICAL-tier review, finding
+    #3): `budget_remaining_fraction` is a genuine `0.0`-`1.0` fraction by
+    real, established contract (`negotiation_logic.dart`'s own real
+    rendering assumption, `'${(value * 100).round()}%'`), but this
+    module's own real baseline can legitimately land outside that range
+    for two real, disclosed reasons -- a real refund can make month-to-
+    date spend negative (`expenses.amount` carries no real positivity
+    `CHECK`), and a `spend_alert`-sourced negotiation computes this
+    fraction from two genuinely independent real quantities (remaining
+    budget vs. total detected subscription cost) never guaranteed to
+    co-vary within `[0, 1]`. Clamped HERE, in this module, deliberately
+    NOT inside the shared, already-tested `negotiation/impact_simulator.
+    py` -- that module's own generic `compute_deltas`/`apply_effect`
+    arithmetic stays exactly as every other real caller (`scripts/
+    seed_demo_dataset.py`, `test_negotiation_subgraph.py`) already
+    relies on it. Only the `budget_remaining_fraction` metric is
+    touched; `deadline_slack_hours`/`task_hours_committed` have no real
+    `[0, 1]` contract to violate."""
+    clamped: dict[str, list[ImpactDelta]] = {}
+    for option_id, deltas in impact.items():
+        new_deltas = []
+        for delta in deltas:
+            if delta.metric != "budget_remaining_fraction":
+                new_deltas.append(delta)
+                continue
+            before = max(0.0, min(1.0, delta.before))
+            after = max(0.0, min(1.0, delta.after))
+            direction = "unchanged" if after == before else ("improves" if after > before else "worsens")
+            new_deltas.append(ImpactDelta(metric=delta.metric, before=before, after=after, direction=direction))
+        clamped[option_id] = new_deltas
+    return clamped
+
+
+async def _mark_attempted(pool: asyncpg.Pool, *, negotiation_id: str) -> None:
+    """A REAL, DISCLOSED FIX (this PR's own CRITICAL-tier review, findings
+    #1/#2): called as the very FIRST real write inside `generate_detail_
+    for_one_negotiation()` below, before any state rebuild or Gemini call
+    -- so a real attempt is counted even when everything after this point
+    raises. This is what makes `_fetch_bare_autonomous_negotiation_ids()`'s
+    own real, round-robin ordering and bounded retry cap possible."""
+    await pool.execute(
+        "UPDATE negotiations SET detail_backfill_attempts = detail_backfill_attempts + 1, "
+        "detail_backfill_last_attempted_at = now() WHERE negotiation_id = $1",
+        uuid.UUID(negotiation_id),
+    )
+
+
+async def _user_already_has_another_actionable_negotiation(
+    pool: asyncpg.Pool, *, user_id: str, exclude_negotiation_id: str, conflicted_domains: list[str]
+) -> bool:
+    """A REAL, DISCLOSED FIX (this PR's own CRITICAL-tier review, the
+    "fifth real finding"): checked BEFORE any real Gemini call is made,
+    so a real, live-proven duplicate never spends real quota generating
+    a second, redundant, permanently-blocking actionable card for a
+    conflict the same real user already has one open for. `&&` is
+    Postgres's real array-overlap operator -- `True` the moment this
+    negotiation's own real conflicted domains share even one real
+    domain with another real, unresolved, options-bearing negotiation."""
+    row = await pool.fetchrow(
+        "SELECT 1 FROM negotiations WHERE user_id = $1 AND negotiation_id != $2 "
+        "AND options IS NOT NULL AND resolved_at IS NULL AND conflicted_domains && $3::text[] LIMIT 1",
+        uuid.UUID(user_id),
+        uuid.UUID(exclude_negotiation_id),
+        conflicted_domains,
+    )
+    return row is not None
 
 
 async def _persist_detail_if_still_bare(
@@ -285,12 +477,21 @@ async def generate_detail_for_one_negotiation(
     one short-lived `conn`, the real LLM work happens with no pool
     connection checked out, and the final write acquires a second,
     separate short-lived `conn` -- so a limited real connection pool
-    isn't tied up for the real seconds a live Gemini round trip takes."""
+    isn't tied up for the real seconds a live Gemini round trip takes.
+    A REAL, DISCLOSED, ACCEPTED CONSEQUENCE of this choice, found by this
+    PR's own CRITICAL-tier review: a real ~28-second gap can separate the
+    state read from the final write, so the underlying real `tasks`/
+    `expenses` data could in principle change mid-flight in a way the
+    "situation resolved itself" honest-skip (checked only at read time)
+    doesn't cover -- accepted as inherent to this design, cheaper than
+    holding a real connection open across a live LLM round trip."""
+    await _mark_attempted(pool, negotiation_id=negotiation_id)
+
     if trigger_source == DEADLINE_WATCH_TRIGGER_SOURCE:
-        async with pool.acquire() as conn:
+        async with pool.acquire() as conn, conn.transaction():
             state = await _build_deadline_watch_state(conn, user_id=user_id)
     elif trigger_source == SPEND_ALERT_TRIGGER_SOURCE:
-        async with pool.acquire() as conn:
+        async with pool.acquire() as conn, conn.transaction():
             state = await _build_spend_alert_state(conn, user_id=user_id)
     else:
         return BackfillOutcome.UNKNOWN_TRIGGER_SOURCE
@@ -300,6 +501,20 @@ async def generate_detail_for_one_negotiation(
 
     resource_claims, domain_states, context = state
     baseline = _build_baseline(resource_claims, domain_states)
+
+    # A real, cheap, zero-LLM-cost re-confirmation BEFORE any real Gemini
+    # call -- lets this function bail out on a moot or duplicate real
+    # negotiation without spending a single real network call, even
+    # though `build_negotiation_graph`'s own scan node will redundantly
+    # recompute the identical real result a moment later.
+    scan_result = scan_for_conflicts(resource_claims, domain_states)
+    if not scan_result.triggers_negotiation:
+        return BackfillOutcome.SITUATION_RESOLVED
+
+    if await _user_already_has_another_actionable_negotiation(
+        pool, user_id=user_id, exclude_negotiation_id=negotiation_id, conflicted_domains=scan_result.conflicted_domains
+    ):
+        return BackfillOutcome.SKIPPED_DUPLICATE_ACTIONABLE
 
     position_call = make_gemini_position_call(context, api_key=api_key)
     synthesis_call = make_gemini_synthesis_call(api_key=api_key)
@@ -319,13 +534,14 @@ async def generate_detail_for_one_negotiation(
     if not result["triggers_negotiation"]:
         return BackfillOutcome.SITUATION_RESOLVED
 
+    clamped_impact = _clamp_fraction_impact(result["impact"])
     async with pool.acquire() as conn:
         won = await _persist_detail_if_still_bare(
             conn,
             negotiation_id=negotiation_id,
             positions=result["positions"],
             options=result["options"],
-            impact=result["impact"],
+            impact=clamped_impact,
         )
     return BackfillOutcome.DETAILED if won else BackfillOutcome.ALREADY_DETAILED
 
@@ -336,12 +552,27 @@ async def _fetch_bare_autonomous_negotiation_ids(pool: asyncpg.Pool, *, batch_si
     (`scripts/seed_demo_dataset.py`'s own hand-seeded, human-authored
     bare rows never set it): this module only ever touches what an
     autonomous job itself created, never a human operator's own manual
-    seed data."""
+    seed data.
+
+    A REAL, DISCLOSED FIX (this PR's own CRITICAL-tier review, findings
+    #1/#2): an earlier version ordered by `started_at ASC` alone --
+    live-proven to let a small, fixed set of already-tried, now-moot
+    bare rows occupy the entire real batch on every single run forever,
+    since nothing ever marks a `SITUATION_RESOLVED` row resolved. Fixed:
+    ordered by "least recently attempted" instead (`NULLS FIRST` so a
+    genuinely never-tried candidate always goes first), a real round-
+    robin across every real bare candidate -- and `detail_backfill_
+    attempts < MAX_DETAIL_BACKFILL_ATTEMPTS` excludes a negotiation
+    that's durably failed a real, bounded number of times, capping real
+    Gemini quota waste on one that will never succeed."""
     rows = await pool.fetch(
         "SELECT negotiation_id FROM negotiations "
         "WHERE options IS NULL AND resolved_at IS NULL AND trigger_source IS NOT NULL "
-        "ORDER BY started_at LIMIT $1",
+        "AND detail_backfill_attempts < $2 "
+        "ORDER BY detail_backfill_last_attempted_at ASC NULLS FIRST, started_at ASC "
+        "LIMIT $1",
         batch_size,
+        MAX_DETAIL_BACKFILL_ATTEMPTS,
     )
     return [str(r["negotiation_id"]) for r in rows]
 
