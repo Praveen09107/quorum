@@ -1463,3 +1463,72 @@ def test_deadline_watch_real_secret_and_matching_header_reaches_the_real_route_w
         }
     finally:
         get_settings.cache_clear()
+
+
+# --- POST /internal/spend-alert (Phase 2, DEC-13x) ---
+
+
+def test_spend_alert_is_401_when_no_internal_secret_is_configured_at_all(monkeypatch):
+    monkeypatch.delenv("INTERNAL_DRAIN_SECRET", raising=False)
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/spend-alert")
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_spend_alert_is_401_with_a_real_configured_secret_but_no_header(monkeypatch):
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/spend-alert")
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_spend_alert_is_401_with_a_real_configured_secret_but_the_wrong_header_value(monkeypatch):
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/spend-alert", headers={"X-Internal-Secret": "not-the-real-secret"})
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_spend_alert_real_secret_and_matching_header_reaches_the_real_route_wiring(monkeypatch):
+    """Proves this route's own real auth dependency and real response
+    mapping, WITHOUT a real, unscoped call to `run_spend_alert()` --
+    the same real safety precedent `test_deadline_watch_real_secret_
+    and_matching_header_reaches_the_real_route_wiring` above already
+    established. `run_spend_alert()`'s own real, deep logic is covered
+    directly and safely in `test_spend_alert.py`, scoped to real,
+    test-owned user_ids only."""
+    from quorum_backend.features.spend_alert import SpendAlertResult
+
+    async def _fake_run_spend_alert(pool):
+        return SpendAlertResult(
+            users_scanned=3, users_failed=0, negotiations_created=1,
+            outcome_counts={"NO_CLAIM": 1, "NO_CONFLICT": 1, "ALREADY_NEGOTIATING": 0, "CREATED": 1},
+        )
+
+    monkeypatch.setattr("quorum_backend.main.run_spend_alert", _fake_run_spend_alert)
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/spend-alert", headers={"X-Internal-Secret": "a-real-configured-secret"})
+        assert response.status_code == 200
+        assert response.json() == {
+            "users_scanned": 3,
+            "users_failed": 0,
+            "negotiations_created": 1,
+            "outcome_counts": {"NO_CLAIM": 1, "NO_CONFLICT": 1, "ALREADY_NEGOTIATING": 0, "CREATED": 1},
+        }
+    finally:
+        get_settings.cache_clear()
