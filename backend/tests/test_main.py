@@ -1388,3 +1388,78 @@ def test_drain_retry_queue_real_secret_and_matching_header_reaches_the_real_drai
         }
     finally:
         get_settings.cache_clear()
+
+
+# --- POST /internal/deadline-watch (Phase 2, DEC-13x) ---
+
+
+def test_deadline_watch_is_401_when_no_internal_secret_is_configured_at_all(monkeypatch):
+    monkeypatch.delenv("INTERNAL_DRAIN_SECRET", raising=False)
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/deadline-watch")
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_deadline_watch_is_401_with_a_real_configured_secret_but_no_header(monkeypatch):
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/deadline-watch")
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_deadline_watch_is_401_with_a_real_configured_secret_but_the_wrong_header_value(monkeypatch):
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/deadline-watch", headers={"X-Internal-Secret": "not-the-real-secret"})
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_deadline_watch_real_secret_and_matching_header_reaches_the_real_route_wiring(monkeypatch):
+    """Proves this route's own real auth dependency and real response
+    mapping, WITHOUT a real, unscoped call to `run_deadline_watch()` --
+    that would iterate this deployment's ENTIRE real `users` table,
+    including its one real, live, non-test account, a real risk
+    `test_deadline_watch.py`'s own top-of-file docstring already
+    discloses and avoids. `run_deadline_watch()`'s own real, deep logic
+    (per-user scan, real trigger, real idempotency guard) is covered
+    directly and safely there, scoped to real, test-owned user_ids only
+    -- this test proves only that this route reaches that real function
+    and maps its real result correctly, the same "prove the wiring, not
+    re-prove the underlying logic" precedent `test_drain_retry_queue_
+    real_secret_and_matching_header_reaches_the_real_drainer` above
+    already established for `/internal/drain-retry-queue`."""
+    from quorum_backend.features.deadline_watch import DeadlineWatchResult
+
+    async def _fake_run_deadline_watch(pool):
+        return DeadlineWatchResult(
+            users_scanned=3, users_failed=0, negotiations_created=1,
+            outcome_counts={"NO_CLAIM": 1, "NO_CONFLICT": 1, "ALREADY_NEGOTIATING": 0, "CREATED": 1},
+        )
+
+    monkeypatch.setattr("quorum_backend.main.run_deadline_watch", _fake_run_deadline_watch)
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/deadline-watch", headers={"X-Internal-Secret": "a-real-configured-secret"})
+        assert response.status_code == 200
+        assert response.json() == {
+            "users_scanned": 3,
+            "users_failed": 0,
+            "negotiations_created": 1,
+            "outcome_counts": {"NO_CLAIM": 1, "NO_CONFLICT": 1, "ALREADY_NEGOTIATING": 0, "CREATED": 1},
+        }
+    finally:
+        get_settings.cache_clear()
