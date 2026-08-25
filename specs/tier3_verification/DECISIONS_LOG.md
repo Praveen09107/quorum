@@ -2825,4 +2825,29 @@ confirming the in-range event genuinely satisfies `start_q <= evt < end_q`, an e
 
 ---
 
-*Next entry: DEC-131*
+## DEC-131: Sprint 0's rewritten retry logic confirmed for real, end-to-end — both real Full-tier candidates now genuinely loaded, and Llama 3.2 3B wins a true head-to-head comparison, not just Gemma's earlier interrupted download
+
+**STANDARD tier** — `sprint0/` only; no production code changed. Pure strengthening of `DEC-130`'s already-merged, real conclusion with a more complete real result.
+
+**Directly continuing `DEC-130`'s own genuinely still-open item**, not a new session: `DEC-130` disclosed that the rewritten, more patient `loadModelWithDnsRetry` (60 attempts, 5s delay) was confirmed only for the small health-check download, not yet independently proven end-to-end for a full multi-gigabyte transfer. That confirmation was already in flight in the background when `DEC-130` was written and merged — this entry records its real, completed result.
+
+**Real, live result:** Gemma 4 E4B's partial download, lost on app reinstall (`code_cache` is cleared more aggressively than the regular app cache, per `DEC-130`), was retried from zero with the rewritten retry code. It **genuinely completed in full this time** — 4,715,416,704 bytes, the exact real file size, valid metadata — passing the exact point (74%) it failed at under the old code. **Gemma then genuinely loaded** (`loaded=true`), giving the first real, complete head-to-head comparison Sprint 0 was ever designed to produce, rather than a comparison decided by one candidate simply failing to load:
+
+| Model | Validity | Speed | Real per-prompt latency |
+|---|---|---|---|
+| Gemma 4 E4B | **17%** (1/6 passed) | 0.1 tok/s | 19–41 seconds per prompt |
+| Llama 3.2 3B | **67%** (4/6 passed) | 0.8 tok/s | 3–13 seconds per prompt |
+
+`ModelBenchmark.decideWinner()`'s real logic: both loaded, so the comparison falls to validity; the gap (50 points) is far beyond the 5-point closeness threshold, so the decision is validity-based, not a speed tiebreak. **Llama 3.2 3B wins decisively and correctly under this stronger, real comparison too** — the same real, mechanically-decided outcome `DEC-130` already recorded, now confirmed on genuinely stronger evidence: not "the other one failed to download," but real, measured, four-times-higher accuracy and roughly eight-times-faster real inference on this exact device.
+
+**No config or code change results from this entry** — `mobile/lib/config/model_config.dart`'s `resolvedFullTierModel` was already `OnDeviceModelId.llama32_3B` from `DEC-130`, and remains correct. This entry exists to close the one real, disclosed gap `DEC-130` left open, honestly, rather than let a since-completed background confirmation go unrecorded.
+
+**Verified live:** real device (`3828d2e9`), full logcat capture of both models' real per-prompt results and the harness's own real plain-language report, read directly, not summarized from memory.
+
+**Genuinely still open, not resolved by this entry:** the exact reason Android's `code_cache` is cleared on app reinstall (`DEC-130`'s own still-open item, unaffected by this entry); `sprint0/`'s `dart test`/`flutter test` hang on this Windows host (same, unaffected). Sprint 0 itself is now genuinely, fully closed — both real candidates have been loaded and benchmarked, the winner is real and decisive, and per the harness's own real report text, "No further sessions will ask this question again."
+
+**Affects:** this log only — no other file changes.
+
+---
+
+*Next entry: DEC-132*

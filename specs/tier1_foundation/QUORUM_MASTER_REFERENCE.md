@@ -48,7 +48,7 @@ Email (spine, Gmail API) · Calendar (CalendarProvider primary, GCal API for ext
 
 | Role | Model | Status |
 |---|---|---|
-| On-device primary | **Llama 3.2 3B** | **RESOLVED, live Sprint 0 result, run to genuine completion on a real physical device (`DEC-130`)** — Gemma 4 E4B never finished downloading (a real, ordinary mid-transfer interruption on a ~4.7GB file, reaching 74% before exhausting retry budget — a transfer-length/retry-budget mismatch, not a device/network/DNS defect; `DEC-111`'s original emulator-DNS theory is superseded). Llama 3.2 3B genuinely downloaded, loaded, and ran real inference: **67% validity, 0.1 tok/s**. `decideWinner()`'s own real mechanical logic makes this a genuine winner, not a fallback. Full detail: `STATUS_INDEX.md`, `DECISIONS_LOG.md` `DEC-130`. |
+| On-device primary | **Llama 3.2 3B** | **RESOLVED, live Sprint 0 result, run to genuine completion via a real head-to-head comparison on a real physical device (`DEC-130`/`DEC-131`)** — both candidates genuinely downloaded, loaded, and ran real inference: **Gemma 4 E4B 17% validity, 0.1 tok/s; Llama 3.2 3B 67% validity, 0.8 tok/s.** `decideWinner()`'s own real mechanical logic (a 50-point validity gap, far past its 5-point closeness threshold) makes Llama 3.2 3B a decisive, genuine winner on measured accuracy and speed — not merely because Gemma initially failed to finish downloading (`DEC-111`'s original emulator-DNS theory is superseded; the real cause was a retry-budget/transfer-length mismatch, fixed in `DEC-130`). Full detail: `STATUS_INDEX.md`, `DECISIONS_LOG.md` `DEC-130`/`DEC-131`. |
 | On-device fallback | SmolLM2-1.7B | Locked |
 | Generator, Judge | Gemini Flash | Locked |
 | Fast/cheap cloud | Gemini Flash-Lite | Locked |
