@@ -1,21 +1,14 @@
 -- Real, ready-to-run SQL for scheduling `POST /internal/deadline-watch`
--- (Phase 2, `DEC-13x`) via pg_cron/pg_net -- NOT YET RUN OR VERIFIED LIVE.
+-- (Phase 2, `DEC-132`) via pg_cron/pg_net.
 --
--- HONEST DISCLOSURE, same real gap `enable_retry_queue_drain_cron.sql`
--- (`DEC-127`) already disclosed and this script has not independently
--- re-verified since: neither `pg_cron` nor `pg_net` was confirmed enabled
--- on the real, live Supabase project as of that session. Enabling them
--- needs Preethish's own real, manual action in the Supabase dashboard's
--- Database -> Extensions panel; no CLI or service-role SQL connection
--- this environment has can flip that toggle. This script is real and
--- correct SQL, ready to run once the extensions are enabled (and once
--- `enable_retry_queue_drain_cron.sql` -- or this script -- has already
--- run `CREATE EXTENSION IF NOT EXISTS` for both), but genuinely
--- UNVERIFIED live -- run it, then verify with the two checks at the
--- bottom, don't assume it works from reading it alone.
+-- **REAL, LIVE, CONFIRMED AS OF THIS SESSION (`DEC-134`):** now
+-- genuinely scheduled and running unattended -- see `enable_retry_queue_
+-- drain_cron.sql`'s own top-of-file comment for the full real account
+-- of the extension-enablement correction and the real `timeout_
+-- milliseconds` collision bug this session found and fixed, which
+-- applies to this job too (`timeout_milliseconds := 30000` below).
 
--- Step 1: enable both extensions (safe to repeat even if
--- enable_retry_queue_drain_cron.sql already ran this).
+-- Step 1: enable both extensions (safe to repeat).
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 CREATE EXTENSION IF NOT EXISTS pg_net;
 
@@ -41,7 +34,8 @@ SELECT cron.schedule(
     SELECT net.http_post(
         url := '<CLOUD_RUN_URL>/internal/deadline-watch',
         headers := jsonb_build_object('X-Internal-Secret', '<INTERNAL_DRAIN_SECRET>'),
-        body := '{}'::jsonb
+        body := '{}'::jsonb,
+        timeout_milliseconds := 30000
     );
     $$
 );
@@ -51,10 +45,14 @@ SELECT cron.schedule(
 --      -- expect exactly one real row, schedule = '*/30 * * * *'.
 --   2. SELECT * FROM cron.job_run_details ORDER BY start_time DESC LIMIT 5;
 --      -- expect real rows appearing every ~30 minutes, status = 'succeeded'.
---      A real 401 status in net's own response body here means the
---      secret placeholder above wasn't actually replaced correctly --
---      check that before assuming the endpoint itself is broken.
---   3. The real, whole-system proof: seed a real, genuine conflict (a
+--   3. THE REAL CHECK THIS SESSION'S OWN BUG TAUGHT: 'succeeded' in
+--      job_run_details is NOT sufficient on its own -- also check
+--      SELECT id, status_code, timed_out, error_msg FROM net._http_response
+--      ORDER BY id DESC LIMIT 5; and confirm status_code = 200 for real,
+--      not timed_out = true with a null status_code (see enable_retry_
+--      queue_drain_cron.sql's own top-of-file comment for the full real
+--      account of why this matters).
+--   4. The real, whole-system proof: seed a real, genuine conflict (a
 --      real task due tomorrow needing more hours than available, a real
 --      month-to-date spend past half the monthly budget) against a real
 --      account, wait one real ~30-minute interval, then confirm a real
