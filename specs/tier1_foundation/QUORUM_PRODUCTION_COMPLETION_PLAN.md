@@ -40,6 +40,8 @@ Added `.claude/CLAUDE.md`'s new "Whole-system verification checkpoint" section, 
 
 ## Phase 2 — The autonomous trigger (highest leverage, uses only what's already real)
 
+**🔶 IN PROGRESS, `DEC-132`.** `deadline-watch` (the highest-leverage job — the one that actually creates negotiations) is real, tested, and built; the other three named jobs below (briefing, follow-up, spend-alert) remain open, a real, disclosed scope narrowing made explicit in that entry rather than assumed. A real, structural correction found while building this: Career is not a first-class negotiation domain in the real schema (`Position.domain`/`ResourceClaim.claim_type` only ever resolve to `calendar`/`tasks`/`finance`) — see `DEC-132` for the full reasoning. Full detail: `STATUS_INDEX.md` item #30, `DECISIONS_LOG.md` `DEC-132`.
+
 **Goal:** make Negotiation and the Gate genuinely autonomous for the 3 domains that are already real (Tasks, Finance, Career) — before touching Email/Calendar at all, because this doesn't need them.
 
 - **Enable `pg_cron`/`pg_net` for real** on the live Supabase project (Preethish's own dashboard action — Database → Extensions) — the one item in this whole plan that needs Preethish directly; flag it first so it's not a late blocker. Then run `backend/scripts/enable_retry_queue_drain_cron.sql` (already written, `DEC-127`) for the drainer, and extend it with the new jobs below.

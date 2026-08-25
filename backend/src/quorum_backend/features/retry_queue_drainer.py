@@ -115,7 +115,7 @@ class _PrefetchedCommittedHoursAdapter:
     value -- `StageACheck` is a synchronous `Callable[[ActionProposal],
     Finding]` by its own real type (`gate/orchestration.py`), so the real
     async Postgres query this needs must happen BEFORE Stage A checks are
-    assembled, never inside one. See `_fetch_committed_hours_before()`
+    assembled, never inside one. See `fetch_committed_hours_before()`
     below for the real, live query that produces the value this class
     wraps."""
 
@@ -126,13 +126,16 @@ class _PrefetchedCommittedHoursAdapter:
         return self._committed_hours
 
 
-async def _fetch_committed_hours_before(conn: asyncpg.Connection, *, user_id: str, deadline: datetime) -> float:
+async def fetch_committed_hours_before(conn: asyncpg.Connection, *, user_id: str, deadline: datetime) -> float:
     """Real, live query: this user's real, currently-open task hours
     already committed before the given real deadline -- the same real
     `tasks` table `features/today.py::fetch_today_capacity` already
     queries, generalized from "due today" to "due before an arbitrary
     real deadline", which is what `deadline_conflict_check` actually
-    needs."""
+    needs. Public (not `_`-prefixed) so `features/deadline_watch.py`
+    (`DEC-13x`) can reuse this exact real query rather than duplicating
+    it -- the same anti-duplication discipline this module's own reuse
+    of `today.py`'s `TODAY_WORKING_HOURS_PER_DAY` already established."""
     row = await conn.fetchrow(
         "SELECT COALESCE(SUM(estimated_hours), 0) AS committed FROM tasks "
         "WHERE user_id = $1 AND status = 'open' AND deadline IS NOT NULL AND deadline <= $2",
@@ -169,7 +172,7 @@ async def _build_stage_a_checks(
         deadline = proposal.payload.get("deadline")
         deadline_dt = datetime.fromisoformat(deadline) if deadline else None
         if deadline_dt is not None:
-            committed = await _fetch_committed_hours_before(conn, user_id=user_id, deadline=deadline_dt)
+            committed = await fetch_committed_hours_before(conn, user_id=user_id, deadline=deadline_dt)
             adapter = _PrefetchedCommittedHoursAdapter(committed)
             available = available_hours_before_deadline(deadline_dt)
             checks.append(

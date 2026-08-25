@@ -56,6 +56,7 @@ from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
 from quorum_backend.core.embeddings import EmbeddingError
 from quorum_backend.features.career_pipeline import fetch_career_pipeline
+from quorum_backend.features.deadline_watch import run_deadline_watch
 from quorum_backend.features.negotiation_choice import (
     InvalidChosenOption,
     NegotiationAlreadyResolved,
@@ -792,4 +793,40 @@ async def drain_retry_queue_route(
         "jobs_failed": result.jobs_failed,
         "downstream_actions_produced": result.downstream_actions_produced,
         "downstream_actions_executed": result.downstream_actions_executed,
+    }
+
+
+@app.post("/internal/deadline-watch")
+async def deadline_watch_route(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    _internal: None = Depends(_require_internal_secret),
+) -> dict:
+    """Real, live -- Phase 2 of `QUORUM_PRODUCTION_COMPLETION_PLAN.md`,
+    `DEC-13x`. The first genuinely autonomous, non-manual caller of
+    `negotiation/trigger.py::scan_for_conflicts` this backend has ever
+    had -- previously only ever invoked by hand, from `scripts/
+    seed_demo_dataset.py` (`DEC-129`'s own diagnosis finding). Iterates
+    every real user via `features/deadline_watch.py::run_deadline_watch`,
+    creating a real, bare `negotiations` row the moment a genuine
+    tasks/finance conflict is found in their real, live data -- zero
+    LLM calls, same shared `_require_internal_secret` auth as `/internal/
+    drain-retry-queue` above.
+
+    A real, disclosed, honest scope boundary: this route creates the
+    bare negotiation row only -- real Gemini-backed positions/options
+    are a genuine, separate, still-open item; see `features/
+    deadline_watch.py`'s own top-of-file docstring for exactly why.
+
+    NOT YET CALLED BY A REAL SCHEDULE: `pg_cron`/`pg_net` are confirmed,
+    live, NOT currently enabled on the real Supabase project (`DEC-127`)
+    -- this route is real and independently callable today (by a real
+    operator, or by CI/manual verification), but nothing in this
+    deployment calls it on any real cadence yet.
+    """
+    result = await run_deadline_watch(pool)
+    return {
+        "users_scanned": result.users_scanned,
+        "users_failed": result.users_failed,
+        "negotiations_created": result.negotiations_created,
+        "outcome_counts": result.outcome_counts,
     }
