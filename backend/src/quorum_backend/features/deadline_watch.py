@@ -47,28 +47,12 @@ independent domain here.
 
 REAL RESOURCE-CLAIM CONSTRUCTION, reusing every already-established
 real pattern rather than inventing new arithmetic:
-- tasks: the real, committed effort hours due before a user's
-  nearest real upcoming task deadline (`features/retry_queue_drainer.
-  py`'s own already-real `fetch_committed_hours_before` query, reused
-  directly, not duplicated) against the real available working hours
-  before that same deadline. A REAL, LIVE BUG FOUND BY THIS SESSION'S
-  OWN CRITICAL-TIER REVIEW, FIXED HERE, NOT BY REUSING `retry_queue_
-  drainer.py`'s own `available_hours_before_deadline` directly: that
-  function returns `0.0` for a same-day deadline -- a real, reasonable
-  choice for ITS OWN use case (checking whether a NEW proposed task
-  safely fits before an EXISTING deadline, where "today" has no real
-  buffer days left to distribute new work into), but live-proven wrong
-  for this module's different purpose: a real user with a single
-  1-hour task due today, on an otherwise completely free day, was
-  found to trigger a genuine conflict every time, directly
-  contradicting `features/today.py::fetch_today_capacity`'s own real
-  answer for the identical data (that function reported real hours
-  genuinely available today; this module's own would-be answer was
-  zero). `_available_hours_before_deadline_including_today()` below is
-  the real, corrected version, scoped to this module alone -- it does
-  NOT change `retry_queue_drainer.py`'s own shared function or its own
-  real, already-passing tests, since that module's own zero-for-today
-  choice remains correct for ITS real, different scenario.
+- tasks: `features/negotiation_trigger_support.py::build_tasks_claim_
+  and_state()` -- real, shared with `spend_alert.py`, since both jobs
+  need the exact same real computation. See that module's own top-of-
+  file docstring for the full real reasoning, including a real,
+  live-proven same-day-deadline bug this session's own CRITICAL-tier
+  review found and fixed there.
 - finance: real money already spent this real calendar month against
   the real remaining monthly budget (both computed from the same real
   `expenses` table `features/today.py::fetch_today_budget` already
@@ -111,32 +95,43 @@ in this backend -- `features/negotiation_choice.py`'s own only real
 `resolved_at` writer requires `options IS NOT NULL`, returning a real
 `409` otherwise -- live-proven to PERMANENTLY silence this trigger for
 a real user after its very first firing, regardless of how genuinely
-severe a later, real conflict becomes. Fixed: a negotiation with real
-options (genuinely actionable, truly awaiting the user's real choice)
-still blocks a new one unconditionally, exactly as before. A still-
-bare negotiation (this module's own only real output today) blocks a
-new one only within `BARE_NEGOTIATION_COOLDOWN_HOURS` of its own real
-`started_at` -- long enough that this module's own real 30-minute cron
-cadence never spams a duplicate bare row for the identical, still-
-standing situation, short enough that a real, later, genuinely
-different crisis is never silenced forever by one old, un-actionable
-detection. Real detail generation (this module's own disclosed, still-
-open follow-up above) would let a negotiation actually become
-resolved and close this gap properly; this cooldown is the real,
-minimal, disclosed mitigation until then, not a permanent design.
+severe a later, real conflict becomes. Fixed, and since generalized
+into `features/negotiation_trigger_support.py::has_blocking_negotiation()`
+once a second real autonomous job (`spend_alert.py`) needed the exact
+same real logic: a negotiation with real options (genuinely
+actionable, truly awaiting the user's real choice) still blocks a new
+one unconditionally, exactly as before. A still-bare negotiation
+blocks a new one only within `BARE_NEGOTIATION_COOLDOWN_HOURS` of its
+own real `started_at` -- long enough that this module's own real
+30-minute cron cadence never spams a duplicate bare row for the
+identical, still-standing situation, short enough that a real, later,
+genuinely different crisis is never silenced forever by one old,
+un-actionable detection. The real, generalized check is scoped to an
+EXACT `trigger_source` match (`'deadline_watch'` here), so this
+module's own idempotency never collides with `spend_alert.py`'s own,
+different real concerns for the same user -- see that shared module's
+own top-of-file docstring for the full real reasoning. Real detail
+generation (this module's own disclosed, still-open follow-up above)
+would let a negotiation actually become resolved and close this gap
+properly; this cooldown is the real, minimal, disclosed mitigation
+until then, not a permanent design.
 """
 from __future__ import annotations
 
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from enum import Enum, auto
 
 import asyncpg
 
-from quorum_backend.features.retry_queue_drainer import fetch_committed_hours_before
-from quorum_backend.features.today import TODAY_MONTHLY_BUDGET_LIMIT, TODAY_WORKING_HOURS_PER_DAY
+from quorum_backend.features.negotiation_trigger_support import (
+    build_tasks_claim_and_state,
+    create_bare_negotiation,
+    fetch_month_to_date_spend,
+    has_blocking_negotiation,
+)
+from quorum_backend.features.today import TODAY_MONTHLY_BUDGET_LIMIT
 from quorum_backend.gate.schemas import ResourceClaim
 from quorum_backend.negotiation.trigger import DomainState, scan_for_conflicts
 
@@ -145,13 +140,12 @@ from quorum_backend.negotiation.trigger import DomainState, scan_for_conflicts
 # independently-named one.
 logger = logging.getLogger("quorum_backend")
 
-# A real, deliberately simple, disclosed choice -- see this module's
-# own top-of-file docstring for the real bug this cooldown fixes. Long
-# enough to never spam a duplicate bare negotiation within this
-# module's own real 30-minute cron cadence (`enable_deadline_watch_
-# cron.sql`); short enough that one old, un-actionable detection can
-# never silence this trigger for a real user for more than a real day.
-BARE_NEGOTIATION_COOLDOWN_HOURS = 24
+# The real trigger_source (migration 0008) this module writes onto
+# every negotiation it creates -- see negotiation_trigger_support.py's
+# own top-of-file docstring for why this exact-match key is what keeps
+# this job's own idempotency check from colliding with any other real
+# autonomous trigger job's (this session's own spend_alert.py included).
+DEADLINE_WATCH_TRIGGER_SOURCE = "deadline_watch"
 
 
 class DeadlineWatchUserNotFoundError(Exception):
@@ -181,73 +175,6 @@ class DeadlineWatchResult:
     outcome_counts: dict[str, int]
 
 
-async def _fetch_nearest_upcoming_task_deadline(conn: asyncpg.Connection, *, user_id: str) -> datetime | None:
-    """The real user's nearest real, still-open, future task deadline --
-    the reference point every other real computation in this module
-    scopes to. Returns `None` honestly when no such real task exists,
-    never a fabricated default."""
-    row = await conn.fetchrow(
-        "SELECT MIN(deadline) AS nearest FROM tasks WHERE user_id = $1 AND status = 'open' AND deadline > now()",
-        uuid.UUID(user_id),
-    )
-    return row["nearest"] if row is not None else None
-
-
-def _available_hours_before_deadline_including_today(deadline: datetime, *, now: datetime | None = None) -> float:
-    """Real, corrected version of `retry_queue_drainer.py`'s own
-    `available_hours_before_deadline` -- see this module's own top-of-
-    file docstring for the real, live-proven bug this fixes and why the
-    shared function itself is left unchanged. A same-day deadline still
-    has today's own real working hours available (the same real
-    semantic `features/today.py::fetch_today_capacity` already uses),
-    not zero."""
-    reference_now = now or datetime.now(timezone.utc)
-    whole_days = max(0, (deadline.date() - reference_now.date()).days)
-    if whole_days == 0:
-        return TODAY_WORKING_HOURS_PER_DAY
-    return whole_days * TODAY_WORKING_HOURS_PER_DAY
-
-
-async def _fetch_month_to_date_spend(conn: asyncpg.Connection, *, user_id: str) -> float:
-    """Real, live query -- the same real logic `features/today.py::
-    fetch_today_budget` already applies, queried directly here since
-    that function returns an already-computed `BudgetState`, not the
-    raw spend figure this module's own `ResourceClaim` amount needs."""
-    row = await conn.fetchrow(
-        "SELECT COALESCE(SUM(amount), 0) AS spent FROM expenses "
-        "WHERE user_id = $1 AND date_trunc('month', occurred_at) = date_trunc('month', CURRENT_DATE)",
-        uuid.UUID(user_id),
-    )
-    return float(row["spent"])
-
-
-async def _has_unresolved_negotiation(conn: asyncpg.Connection, *, user_id: str) -> bool:
-    """Real, corrected idempotency guard -- see this module's own top-
-    of-file docstring for the real, live-proven permanent-silencing bug
-    this fixes. A negotiation with real options (genuinely actionable)
-    blocks unconditionally; a still-bare one blocks only within
-    `BARE_NEGOTIATION_COOLDOWN_HOURS` of its own real `started_at`."""
-    row = await conn.fetchrow(
-        "SELECT 1 FROM negotiations WHERE user_id = $1 AND resolved_at IS NULL "
-        "AND (options IS NOT NULL OR started_at > now() - ($2 * INTERVAL '1 hour')) LIMIT 1",
-        uuid.UUID(user_id),
-        BARE_NEGOTIATION_COOLDOWN_HOURS,
-    )
-    return row is not None
-
-
-async def _create_bare_negotiation(conn: asyncpg.Connection, *, user_id: str, conflicted_domains: list[str]) -> str:
-    negotiation_id = uuid.uuid4()
-    await conn.execute(
-        "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at) VALUES ($1, $2, $3, $4)",
-        negotiation_id,
-        uuid.UUID(user_id),
-        conflicted_domains,
-        datetime.now(timezone.utc),
-    )
-    return str(negotiation_id)
-
-
 async def scan_one_user(conn: asyncpg.Connection, *, user_id: str) -> tuple[ScanOutcome, str | None]:
     """Real, live, per-user scan -- the one real place this module's
     own claim-construction, trigger-scan, and idempotency logic lives;
@@ -255,32 +182,36 @@ async def scan_one_user(conn: asyncpg.Connection, *, user_id: str) -> tuple[Scan
     duplicating this logic inline. Returns `(outcome, negotiation_id)`
     -- `negotiation_id` is only ever real and non-`None` for
     `ScanOutcome.CREATED`."""
-    deadline = await _fetch_nearest_upcoming_task_deadline(conn, user_id=user_id)
-    if deadline is None:
+    tasks_claim_and_state = await build_tasks_claim_and_state(conn, user_id=user_id)
+    if tasks_claim_and_state is None:
         return ScanOutcome.NO_CLAIM, None
+    tasks_claim, tasks_state = tasks_claim_and_state
 
-    committed_hours = await fetch_committed_hours_before(conn, user_id=user_id, deadline=deadline)
-    available_hours = _available_hours_before_deadline_including_today(deadline)
-    spent_this_month = await _fetch_month_to_date_spend(conn, user_id=user_id)
+    # A single real query for the raw spend figure -- both this
+    # module's own real finance CLAIM (spent this month) and its real
+    # available capacity (remaining budget) derive from the same one
+    # real number, never fetched twice.
+    spent_this_month = await fetch_month_to_date_spend(conn, user_id=user_id)
     remaining_budget = max(0.0, TODAY_MONTHLY_BUDGET_LIMIT - spent_this_month)
 
     resource_claims = [
-        ResourceClaim(claim_type="effort", amount=committed_hours, unit="hours"),
+        tasks_claim,
         ResourceClaim(claim_type="money", amount=spent_this_month, unit="currency_minor_units"),
     ]
     domain_states = {
-        "tasks": DomainState(domain="tasks", available=available_hours, unit="hours"),
+        "tasks": tasks_state,
         "finance": DomainState(domain="finance", available=remaining_budget, unit="currency_minor_units"),
     }
     scan_result = scan_for_conflicts(resource_claims, domain_states)
     if not scan_result.triggers_negotiation:
         return ScanOutcome.NO_CONFLICT, None
 
-    if await _has_unresolved_negotiation(conn, user_id=user_id):
+    if await has_blocking_negotiation(conn, user_id=user_id, trigger_source=DEADLINE_WATCH_TRIGGER_SOURCE):
         return ScanOutcome.ALREADY_NEGOTIATING, None
 
-    negotiation_id = await _create_bare_negotiation(
-        conn, user_id=user_id, conflicted_domains=scan_result.conflicted_domains
+    negotiation_id = await create_bare_negotiation(
+        conn, user_id=user_id, conflicted_domains=scan_result.conflicted_domains,
+        trigger_source=DEADLINE_WATCH_TRIGGER_SOURCE,
     )
     return ScanOutcome.CREATED, negotiation_id
 

@@ -68,6 +68,7 @@ from quorum_backend.features.negotiation_detail import fetch_negotiation_detail
 from quorum_backend.features.retry_queue_drainer import drain_due_jobs
 from quorum_backend.features.search import search as run_search
 from quorum_backend.features.self_test_harness import ScenarioResult, run_self_test, summarize
+from quorum_backend.features.spend_alert import run_spend_alert
 from quorum_backend.features.subscription_detective import fetch_detected_subscriptions
 from quorum_backend.features.tasks import fetch_tasks
 from quorum_backend.features.today import (
@@ -824,6 +825,43 @@ async def deadline_watch_route(
     deployment calls it on any real cadence yet.
     """
     result = await run_deadline_watch(pool)
+    return {
+        "users_scanned": result.users_scanned,
+        "users_failed": result.users_failed,
+        "negotiations_created": result.negotiations_created,
+        "outcome_counts": result.outcome_counts,
+    }
+
+
+@app.post("/internal/spend-alert")
+async def spend_alert_route(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    _internal: None = Depends(_require_internal_secret),
+) -> dict:
+    """Real, live -- Phase 2 of `QUORUM_PRODUCTION_COMPLETION_PLAN.md`,
+    `DEC-13x`. The real, second autonomous negotiation-trigger job,
+    per `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md` §8.6's own real
+    "spontaneous-spend-vs-known-upcoming-cost" framing. Iterates every
+    real user via `features/spend_alert.py::run_spend_alert`: a real,
+    newly-detected recurring subscription's own ongoing cost, checked
+    against real remaining monthly budget, at the same real moment the
+    user's real tasks are also overcommitted -- zero LLM calls, same
+    shared `_require_internal_secret` auth as `/internal/drain-retry-
+    queue` and `/internal/deadline-watch` above.
+
+    A real, disclosed, honest scope boundary, matching `/internal/
+    deadline-watch`'s own precedent exactly: this route creates the
+    bare negotiation row only -- real Gemini-backed positions/options
+    are a genuine, separate, still-open item; see `features/spend_
+    alert.py`'s own top-of-file docstring for exactly why.
+
+    NOT YET CALLED BY A REAL SCHEDULE: `pg_cron`/`pg_net` are confirmed,
+    live, NOT currently enabled on the real Supabase project (`DEC-127`)
+    -- this route is real and independently callable today (by a real
+    operator, or by CI/manual verification), but nothing in this
+    deployment calls it on any real cadence yet.
+    """
+    result = await run_spend_alert(pool)
     return {
         "users_scanned": result.users_scanned,
         "users_failed": result.users_failed,

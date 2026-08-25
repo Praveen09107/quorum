@@ -129,8 +129,8 @@ async def test_scan_one_user_creates_a_real_negotiation_for_a_genuine_conflict(p
 
 async def test_scan_one_user_skips_when_a_real_unresolved_negotiation_already_exists(pool, user_id):
     await pool.execute(
-        "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at) VALUES ($1, $2, $3, $4)",
-        uuid.uuid4(), uuid.UUID(user_id), ["finance", "tasks"], datetime.now(timezone.utc),
+        "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at, trigger_source) VALUES ($1, $2, $3, $4, $5)",
+        uuid.uuid4(), uuid.UUID(user_id), ["finance", "tasks"], datetime.now(timezone.utc), "deadline_watch",
     )
     await _seed_task(pool, user_id=user_id, hours=12.0, deadline_offset_days=1)
     await _seed_expense(pool, user_id=user_id, amount=30000.0)
@@ -303,9 +303,9 @@ async def test_scan_one_user_a_real_stale_bare_negotiation_does_not_block_a_new_
     ago, still bare, must NOT block a new, genuine detection."""
     stale_negotiation_id = uuid.uuid4()
     await pool.execute(
-        "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at, trigger_source) VALUES ($1, $2, $3, $4, $5)",
         stale_negotiation_id, uuid.UUID(user_id), ["finance", "tasks"],
-        datetime.now(timezone.utc) - timedelta(hours=48),
+        datetime.now(timezone.utc) - timedelta(hours=48), "deadline_watch",
     )
     await _seed_task(pool, user_id=user_id, hours=12.0, deadline_offset_days=1)
     await _seed_expense(pool, user_id=user_id, amount=30000.0)
@@ -327,11 +327,12 @@ async def test_scan_one_user_a_real_negotiation_with_real_options_blocks_uncondi
     choice) blocks a new one unconditionally -- age never matters,
     since the user genuinely still has something real to act on."""
     await pool.execute(
-        "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at, options) "
-        "VALUES ($1, $2, $3, $4, $5::jsonb)",
+        "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at, options, trigger_source) "
+        "VALUES ($1, $2, $3, $4, $5::jsonb, $6)",
         uuid.uuid4(), uuid.UUID(user_id), ["finance", "tasks"],
         datetime.now(timezone.utc) - timedelta(hours=48),
         '[{"option_id": "do_nothing", "description": "Do nothing.", "source_domains": []}]',
+        "deadline_watch",
     )
     await _seed_task(pool, user_id=user_id, hours=12.0, deadline_offset_days=1)
     await _seed_expense(pool, user_id=user_id, amount=30000.0)
@@ -344,3 +345,28 @@ async def test_scan_one_user_a_real_negotiation_with_real_options_blocks_uncondi
 
     count = await pool.fetchval("SELECT COUNT(*) FROM negotiations WHERE user_id = $1", uuid.UUID(user_id))
     assert count == 1  # never duplicated
+
+
+async def test_scan_one_user_a_fresh_negotiation_from_a_different_real_trigger_source_never_blocks(pool, user_id):
+    """Real, direct proof of this session's own cross-job isolation
+    fix: a fresh, genuinely unresolved negotiation created by a
+    DIFFERENT real autonomous job (`spend_alert:Netflix`, this
+    session's own new module) must never block `deadline_watch`'s own,
+    genuinely unrelated real conflict from being detected -- the exact
+    real gap `features/negotiation_trigger_support.py`'s own top-of-
+    file docstring discloses fixing, proven here for real."""
+    await pool.execute(
+        "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at, trigger_source) VALUES ($1, $2, $3, $4, $5)",
+        uuid.uuid4(), uuid.UUID(user_id), ["finance", "tasks"], datetime.now(timezone.utc), "spend_alert:Netflix",
+    )
+    await _seed_task(pool, user_id=user_id, hours=12.0, deadline_offset_days=1)
+    await _seed_expense(pool, user_id=user_id, amount=30000.0)
+
+    async with pool.acquire() as conn:
+        outcome, negotiation_id = await scan_one_user(conn, user_id=user_id)
+
+    assert outcome is ScanOutcome.CREATED
+    assert negotiation_id is not None
+
+    count = await pool.fetchval("SELECT COUNT(*) FROM negotiations WHERE user_id = $1", uuid.UUID(user_id))
+    assert count == 2  # the real spend_alert one, plus this new, genuine deadline_watch one

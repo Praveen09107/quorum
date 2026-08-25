@@ -1,0 +1,22 @@
+-- Real, minimal, disclosed schema extension -- Phase 2, deadline-watch
+-- (`DEC-132`) already proved that two different autonomous jobs (that
+-- one, and this session's own spend-alert) can both create real,
+-- bare `negotiations` rows via the SAME real, generic mechanism, but
+-- there was no real way to tell WHICH real, live situation a given
+-- negotiation actually came from -- deadline-watch's own real
+-- idempotency guard could only check "does this user have ANY
+-- unresolved negotiation," not "does this user already have one for
+-- THIS specific real subscription/deadline." Without a real way to
+-- distinguish them, spend-alert's own per-payee idempotency (this
+-- session's own real design requirement, confirmed with Preethish
+-- before writing this migration) has nothing to key off.
+--
+-- `trigger_source` is nullable and free-text on purpose: existing real
+-- rows (the one hand-seeded demo negotiation, any real deadline-watch
+-- rows already created) are genuinely honestly `NULL`/unknown-origin,
+-- never backfilled with a guessed value. Real, structured values this
+-- session's own code writes: `'deadline_watch'`,
+-- `'spend_alert:<payee>'` -- a real, live, human-readable audit trail
+-- of which autonomous job created which real negotiation, not just a
+-- machine key.
+ALTER TABLE negotiations ADD COLUMN trigger_source TEXT;
