@@ -177,11 +177,24 @@ def _require_internal_secret(x_internal_secret: str | None = Header(default=None
     the same real 401, no path silently proceeds. `secrets.compare_digest`
     is used deliberately, not `==` -- a real, if narrow, timing-attack
     hardening for a value that genuinely gates a real, live database
-    write path."""
+    write path.
+
+    A REAL, DISCLOSED FIX, found by this session's own CRITICAL-tier
+    review: `secrets.compare_digest` raises `TypeError` on a non-ASCII
+    `str` -- and Starlette latin-1-decodes request headers, so a single
+    stray non-ASCII byte in a real, unauthenticated caller's header
+    reached it, live-proven to turn what should be a clean 401 into a
+    500 with a stack trace in this deployment's own real logs (still
+    fails CLOSED -- no scan ever ran, no write ever happened -- so this
+    was availability/log-noise, not an auth bypass). Compared as raw
+    UTF-8 bytes now, which `compare_digest` accepts for any real input,
+    ASCII or not."""
     settings = get_settings()
     if settings.internal_drain_secret is None:
         raise HTTPException(status_code=401, detail="Internal drain endpoint is not configured on this deployment.")
-    if x_internal_secret is None or not secrets.compare_digest(x_internal_secret, settings.internal_drain_secret):
+    if x_internal_secret is None or not secrets.compare_digest(
+        x_internal_secret.encode("utf-8"), settings.internal_drain_secret.encode("utf-8")
+    ):
         raise HTTPException(status_code=401, detail="Missing or invalid X-Internal-Secret header.")
 
 
@@ -842,8 +855,10 @@ async def spend_alert_route(
     `DEC-13x`. The real, second autonomous negotiation-trigger job,
     per `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md` §8.6's own real
     "spontaneous-spend-vs-known-upcoming-cost" framing. Iterates every
-    real user via `features/spend_alert.py::run_spend_alert`: a real,
-    newly-detected recurring subscription's own ongoing cost, checked
+    real user via `features/spend_alert.py::run_spend_alert`: every
+    currently-detected recurring subscription's own real, total ongoing
+    cost (not just a newly-appeared one -- a real, disclosed wording
+    correction, this session's own CRITICAL-tier review), checked
     against real remaining monthly budget, at the same real moment the
     user's real tasks are also overcommitted -- zero LLM calls, same
     shared `_require_internal_secret` auth as `/internal/drain-retry-

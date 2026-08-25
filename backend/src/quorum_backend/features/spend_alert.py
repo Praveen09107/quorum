@@ -7,12 +7,17 @@ everyday tensions including "spontaneous-spend-vs-known-upcoming-cost"
 proved out, a genuinely different real trigger condition.
 
 REAL, CONFIRMED DESIGN (Preethish, directly, before writing a line of
-this file): a NEW real recurring subscription's ongoing cost, checked
+this file): a real recurring subscription's ongoing cost, checked
 against real remaining monthly budget, at the same real moment the
 user's real tasks are also overcommitted -- reusing `subscription_
 detective.py`'s own already-real, already-tested detection algorithm
 (`detect_subscriptions()`, pure, unchanged, not duplicated), not a
 single-large-expense heuristic this session would have had to invent.
+**A REAL, DISCLOSED CORRECTION to this paragraph's own earlier wording:**
+this scan re-evaluates EVERY currently-detected subscription on every
+real run, not only a newly-appeared one -- "NEW" in an earlier draft of
+this docstring overclaimed a real notion of novelty the code never
+actually tracked.
 
 WHY THIS NEEDS `trigger_source` (migration `0008`), NOT JUST A
 GENERIC "unresolved negotiation" CHECK: `scan_for_conflicts` requires
@@ -20,20 +25,37 @@ GENERIC "unresolved negotiation" CHECK: `scan_for_conflicts` requires
 /trigger.py` before designing this) -- a finance-only signal alone can
 never create a real negotiation. This module's own real finance claim
 is the SUM of every real, currently-detected recurring subscription's
-own `average_amount` (not just the newest one -- a genuine, real
+own `average_amount` (not just the priciest one -- a genuine, real
 picture of total ongoing recurring burden, not a partial one), checked
 against the same real tasks-domain claim `deadline_watch.py` already
 computes (`features/negotiation_trigger_support.py::
-build_tasks_claim_and_state`, shared, not duplicated). The real,
-precise idempotency key is `spend_alert:<payee>` for the single most
-expensive real detected subscription (`detect_subscriptions()`'s own
-real, already-established sort order, confirmed before relying on it)
--- a real, deterministic, reasonable anchor for "was this same real
-financial picture already flagged," genuinely independent of `deadline
+build_tasks_claim_and_state`, shared, not duplicated).
+
+**A REAL, DISCLOSED CORRECTION, found by this session's own CRITICAL-
+tier review:** the real, precise idempotency key was originally
+`spend_alert:<payee>` for the single most expensive real detected
+subscription. Live-proven by the review to be the wrong real anchor:
+an entirely ordinary month-to-month shift in which real subscription
+happens to cost the most (a new bill arrives, a price changes) flips
+this key even though the user's real underlying financial strain is
+genuinely unchanged, silently defeating `BARE_NEGOTIATION_COOLDOWN_
+HOURS` and spamming a fresh, duplicate bare negotiation for the SAME
+real situation. Fixed: `SPEND_ALERT_TRIGGER_SOURCE` below is a single,
+job-wide key, not payee-scoped -- correct because the bare negotiation
+row this module creates carries no payee-specific content yet (real
+Gemini-backed detail generation, this module's own disclosed, still-
+open item below), so there is nothing payee-specific to lose by
+de-scoping the key. This key stays genuinely independent of `deadline
 _watch.py`'s own `'deadline_watch'`-keyed negotiations for the same
 user (`negotiation_trigger_support.py`'s own top-of-file docstring has
 the full real reasoning for why an exact `trigger_source` match is
-what keeps these two real jobs from suppressing each other).
+what keeps two DIFFERENT real jobs' own bare negotiations from
+suppressing each other -- a real, disclosed, deliberately NOT-yet-closed
+gap remains one level up from that: two DIFFERENT real jobs can still
+each independently create their own real, unresolved negotiation for
+what may be the same underlying real resource strain, rendering as two
+separate, un-mergeable cards on a real Today screen -- tracked as a
+genuine, still-open item, not silently assumed solved by this fix).
 
 A REAL, DELIBERATE SCOPE BOUNDARY, DISCLOSED HERE, matching `deadline_
 watch.py`'s own precedent exactly: this module creates the bare
@@ -67,6 +89,14 @@ from quorum_backend.negotiation.trigger import DomainState, scan_for_conflicts
 
 # Same real logger name main.py's own module-level logger already uses.
 logger = logging.getLogger("quorum_backend")
+
+# The real trigger_source (migration 0008) this module writes onto
+# every negotiation it creates -- a single, job-wide key, not payee-
+# scoped; see this module's own top-of-file docstring for the real,
+# disclosed correction that established this (a payee-scoped anchor
+# let an ordinary priciest-subscription change spam a duplicate bare
+# negotiation for an unchanged real situation).
+SPEND_ALERT_TRIGGER_SOURCE = "spend_alert"
 
 
 class SpendAlertUserNotFoundError(Exception):
@@ -116,11 +146,6 @@ async def scan_one_user(conn: asyncpg.Connection, *, user_id: str) -> tuple[Scan
     if not subscriptions:
         return ScanOutcome.NO_CLAIM, None
 
-    # detect_subscriptions() already sorts by average_amount descending
-    # (subscription_detective.py's own real, confirmed order) -- the
-    # single most expensive real recurring subscription is this real
-    # scan's own deterministic idempotency anchor.
-    primary_subscription = subscriptions[0]
     total_recurring_cost = sum(sub.average_amount for sub in subscriptions)
 
     remaining_budget = await fetch_remaining_monthly_budget(conn, user_id=user_id)
@@ -137,12 +162,11 @@ async def scan_one_user(conn: asyncpg.Connection, *, user_id: str) -> tuple[Scan
     if not scan_result.triggers_negotiation:
         return ScanOutcome.NO_CONFLICT, None
 
-    trigger_source = f"spend_alert:{primary_subscription.payee}"
-    if await has_blocking_negotiation(conn, user_id=user_id, trigger_source=trigger_source):
+    if await has_blocking_negotiation(conn, user_id=user_id, trigger_source=SPEND_ALERT_TRIGGER_SOURCE):
         return ScanOutcome.ALREADY_NEGOTIATING, None
 
     negotiation_id = await create_bare_negotiation(
-        conn, user_id=user_id, conflicted_domains=scan_result.conflicted_domains, trigger_source=trigger_source
+        conn, user_id=user_id, conflicted_domains=scan_result.conflicted_domains, trigger_source=SPEND_ALERT_TRIGGER_SOURCE
     )
     return ScanOutcome.CREATED, negotiation_id
 

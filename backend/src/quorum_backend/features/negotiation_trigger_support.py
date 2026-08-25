@@ -8,15 +8,27 @@ each, once a second real caller needed the exact same real logic
 makes the real, shared idempotency check PRECISE rather than a blunt,
 cross-job instrument: a real, live, human-readable audit trail of
 which autonomous job created a given negotiation (`'deadline_watch'`,
-`'spend_alert:<payee>'`), so one job's own real, unresolved negotiation
+`'spend_alert'`), so one job's own real, unresolved BARE negotiation
 never silently suppresses a genuinely different, unrelated real
-concern another job would otherwise raise. `has_blocking_negotiation()`
-below always requires an EXACT `trigger_source` match for this reason
--- a real, deliberate correction to `deadline_watch.py`'s own original
-idempotency check, which (before this session) blocked on ANY
-unresolved negotiation for a user regardless of source, a real gap
-this session's own design work for `spend_alert.py` found and closed
-for both jobs together, not just the new one.
+concern another job would otherwise raise.
+
+**A REAL, DISCLOSED CORRECTION, found by the CRITICAL-tier review of
+this very module (the `spend_alert.py` PR, same session):** an earlier
+version of `has_blocking_negotiation()` below required an EXACT
+`trigger_source` match UNCONDITIONALLY -- including for a negotiation
+that already carries real `options`. That silently regressed `DEC-132`'s
+own, separately-proven guarantee ("a negotiation with real options
+blocks unconditionally, full stop") down to "...blocks unconditionally,
+but only from the same job" -- live-proven by the review to let
+`deadline_watch` stack a fresh, un-actionable bare negotiation directly
+on top of a real, already-actionable one the user hadn't gotten to yet
+(reachable the moment `trigger_source` is `NULL` or a different job's,
+e.g. any row `scripts/seed_demo_dataset.py --with-negotiation-detail`
+writes, which never sets `trigger_source` at all). Fixed here: the
+EXACT `trigger_source` match now applies ONLY to a still-bare
+negotiation's own cooldown check (see below) -- a negotiation with
+real `options`, from ANY source, still blocks a new one unconditionally,
+exactly as `DEC-132` originally established.
 
 BARE-NEGOTIATION COOLDOWN, not a permanent block: a bare negotiation
 (no real, Gemini-backed `options` yet -- both real autonomous jobs'
@@ -26,9 +38,12 @@ requires real `options` to choose) -- `DEC-132`'s own CRITICAL-tier
 review found this live-proven to permanently silence `deadline_watch.
 py`'s trigger for a real user after its very first firing. `has_
 blocking_negotiation()` carries that real, live-proven fix here too,
-generalized: a negotiation with real `options` blocks unconditionally;
-a still-bare one blocks only within a real, bounded `cooldown_hours`
-of its own `started_at`.
+generalized: a negotiation with real `options` blocks unconditionally,
+regardless of which job created it; a still-bare one blocks only
+within a real, bounded `cooldown_hours` of its own `started_at`, AND
+only when it shares this scan's own EXACT `trigger_source` -- a bare
+negotiation from a genuinely different, unrelated autonomous job never
+blocks a new one, the real reason `trigger_source` exists at all.
 
 REAL, SHARED TASKS-DOMAIN CLAIM CONSTRUCTION: both `deadline_watch.py`
 and `spend_alert.py` need the exact same real computation for "how
@@ -75,14 +90,16 @@ BARE_NEGOTIATION_COOLDOWN_HOURS = 24
 async def has_blocking_negotiation(
     conn: asyncpg.Connection, *, user_id: str, trigger_source: str, cooldown_hours: float = BARE_NEGOTIATION_COOLDOWN_HOURS
 ) -> bool:
-    """Real, precise idempotency guard, scoped to an EXACT
-    `trigger_source` match -- see this module's own top-of-file
-    docstring for why an exact match, not a broad "any unresolved
-    negotiation" check, is the real, correct primitive shared across
-    every real autonomous trigger job."""
+    """Real, precise idempotency guard -- see this module's own top-of-
+    file docstring for the real, disclosed correction this query
+    represents: a negotiation with real `options` blocks unconditionally
+    regardless of source; a still-bare one blocks only within
+    `cooldown_hours` AND only when it shares this scan's own EXACT
+    `trigger_source`."""
     row = await conn.fetchrow(
-        "SELECT 1 FROM negotiations WHERE user_id = $1 AND trigger_source = $2 AND resolved_at IS NULL "
-        "AND (options IS NOT NULL OR started_at > now() - ($3 * INTERVAL '1 hour')) LIMIT 1",
+        "SELECT 1 FROM negotiations WHERE user_id = $1 AND resolved_at IS NULL "
+        "AND (options IS NOT NULL OR (trigger_source = $2 AND started_at > now() - ($3 * INTERVAL '1 hour'))) "
+        "LIMIT 1",
         uuid.UUID(user_id),
         trigger_source,
         cooldown_hours,

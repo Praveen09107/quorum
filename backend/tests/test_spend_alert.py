@@ -54,13 +54,22 @@ async def _seed_expense(pool, *, user_id: str, payee: str, amount: float, occurr
     )
 
 
-async def _seed_real_recurring_subscription(pool, *, user_id: str, payee: str, amount: float) -> None:
+async def _seed_real_recurring_subscription(
+    pool, *, user_id: str, payee: str, amount: float, occurrence_offsets: tuple[int, int, int] = (60, 30, 0)
+) -> None:
     # Real, detectable per subscription_detective.py's own real,
     # already-tested parameters (MIN_OCCURRENCES_TO_COUNT_AS_RECURRING
     # = 3, INTERVAL_TARGET_DAYS = 30.0, INTERVAL_TOLERANCE_DAYS = 5.0)
     # -- three real charges, 30 real days apart, the same real pattern
     # scripts/seed_demo_dataset.py's own real Spotify data already used.
-    for offset in (60, 30, 0):
+    # `occurrence_offsets` defaults to the same (60, 30, 0) every other
+    # test here uses; a caller that needs a subscription's own real
+    # charges to land entirely OUTSIDE the current real calendar month
+    # (see the sum-of-subscriptions test below) passes its own offsets
+    # -- subscription_detective.py's own real detection has no recency
+    # filter, only real gap-regularity, confirmed directly against that
+    # module before relying on this.
+    for offset in occurrence_offsets:
         await _seed_expense(pool, user_id=user_id, payee=payee, amount=amount, occurred_days_ago=offset)
 
 
@@ -119,17 +128,36 @@ async def test_scan_one_user_creates_a_real_negotiation_for_a_genuine_conflict(p
     assert row["resolved_at"] is None
     assert row["positions"] is None
     assert row["options"] is None
-    assert row["trigger_source"] == "spend_alert:Coworking"
+    assert row["trigger_source"] == "spend_alert"
 
 
 async def test_scan_one_user_uses_the_real_sum_of_every_detected_subscription_not_just_one(pool, user_id):
-    # Two real, individually-modest recurring subscriptions whose real
-    # SUM crosses the real remaining budget, even though neither alone
-    # would -- proves the real claim is the total recurring burden, not
-    # a single subscription's own amount.
-    await _seed_real_recurring_subscription(pool, user_id=user_id, payee="Gym", amount=3000.0)
-    await _seed_real_recurring_subscription(pool, user_id=user_id, payee="Cloud Storage", amount=2500.0)
-    await _seed_expense(pool, user_id=user_id, payee="BigOneOff", amount=46000.0, occurred_days_ago=0)
+    """A REAL, DISCLOSED CORRECTION TO THIS TEST'S OWN ORIGINAL SEED
+    DATA, found by this session's own CRITICAL-tier review: the
+    original seed's own -60/-30/0-day subscription occurrences and its
+    ₹46000 same-month one-off left a real remaining budget the review's
+    own live probe found was LESS than even the single cheapest
+    subscription alone -- so the real claim under test (total recurring
+    burden, not one subscription's own amount) was never actually
+    exercised. Mutating `total_recurring_cost` down to just `primary_
+    subscription.average_amount` left every test in this file passing.
+    Fixed: both real subscriptions' own charges now land entirely
+    OUTSIDE the current real calendar month (150/120/90 real days ago
+    -- still a real, regular ~30-day cadence `subscription_detective.py`
+    accepts; see `_seed_real_recurring_subscription`'s own comment for
+    why this is safe), so `fetch_month_to_date_spend` never sees them,
+    and a real ₹45500 one-off THIS month leaves a real, exact ₹4500
+    remaining budget -- MORE than either subscription alone (₹3000,
+    ₹2500) but LESS than their real SUM (₹5500), the one seed shape
+    that actually proves the real claim is total recurring burden, not
+    a single subscription's own amount."""
+    await _seed_real_recurring_subscription(
+        pool, user_id=user_id, payee="Gym", amount=3000.0, occurrence_offsets=(150, 120, 90)
+    )
+    await _seed_real_recurring_subscription(
+        pool, user_id=user_id, payee="Cloud Storage", amount=2500.0, occurrence_offsets=(150, 120, 90)
+    )
+    await _seed_expense(pool, user_id=user_id, payee="BigOneOff", amount=45500.0, occurred_days_ago=0)
     await _seed_task(pool, user_id=user_id, hours=12.0, deadline_offset_days=1)
 
     async with pool.acquire() as conn:
@@ -137,18 +165,31 @@ async def test_scan_one_user_uses_the_real_sum_of_every_detected_subscription_no
 
     assert outcome is ScanOutcome.CREATED
     assert negotiation_id is not None
-    # The real, deterministic anchor is the single MOST EXPENSIVE real
-    # detected subscription (Gym, ₹3000 > Cloud Storage's ₹2500).
     row = await pool.fetchrow("SELECT trigger_source FROM negotiations WHERE negotiation_id = $1", uuid.UUID(negotiation_id))
-    assert row["trigger_source"] == "spend_alert:Gym"
+    assert row["trigger_source"] == "spend_alert"
 
 
-async def test_scan_one_user_skips_when_a_real_unresolved_negotiation_for_the_same_payee_already_exists(pool, user_id):
+async def test_scan_one_user_skips_when_a_real_unresolved_spend_alert_negotiation_already_exists_even_if_the_priciest_payee_has_changed(
+    pool, user_id
+):
+    """Real regression test for a real bug this session's own
+    CRITICAL-tier review found: the original design keyed idempotency
+    on `spend_alert:<payee>` for whichever real detected subscription
+    happened to be most expensive -- so an entirely ordinary month-to-
+    month shift in which real subscription costs the most (a new bill
+    arrives, a price changes) silently produced a BRAND NEW bare
+    negotiation for the SAME, materially unchanged real financial
+    picture, live-proven by the review to accumulate duplicate,
+    un-dismissable cards. Fixed: `SPEND_ALERT_TRIGGER_SOURCE` is a
+    single, job-wide key -- an existing unresolved `spend_alert`
+    negotiation still blocks a new one here even though a genuinely
+    DIFFERENT real subscription ("Gym") is the priciest one THIS scan,
+    not whatever payee the pre-existing row happened to represent."""
     await pool.execute(
         "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at, trigger_source) VALUES ($1, $2, $3, $4, $5)",
-        uuid.uuid4(), uuid.UUID(user_id), ["finance", "tasks"], datetime.now(timezone.utc), "spend_alert:Coworking",
+        uuid.uuid4(), uuid.UUID(user_id), ["finance", "tasks"], datetime.now(timezone.utc), "spend_alert",
     )
-    await _seed_real_recurring_subscription(pool, user_id=user_id, payee="Coworking", amount=5000.0)
+    await _seed_real_recurring_subscription(pool, user_id=user_id, payee="Gym", amount=5000.0)
     await _seed_expense(pool, user_id=user_id, payee="BigOneOff", amount=46000.0, occurred_days_ago=0)
     await _seed_task(pool, user_id=user_id, hours=12.0, deadline_offset_days=1)
 
@@ -159,7 +200,7 @@ async def test_scan_one_user_skips_when_a_real_unresolved_negotiation_for_the_sa
     assert negotiation_id is None
 
     count = await pool.fetchval("SELECT COUNT(*) FROM negotiations WHERE user_id = $1", uuid.UUID(user_id))
-    assert count == 1  # never duplicated
+    assert count == 1  # never duplicated, regardless of which payee is now priciest
 
 
 async def test_scan_one_user_a_fresh_deadline_watch_negotiation_never_blocks_spend_alert(pool, user_id):

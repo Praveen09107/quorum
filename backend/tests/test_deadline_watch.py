@@ -274,15 +274,31 @@ async def test_scan_one_user_a_same_day_deadline_uses_a_real_full_working_day_no
     deadline`'s own same-day behavior, correct for `retry_queue_
     drainer.py`'s different real use case but wrong for this module's),
     causing a real false-positive conflict for even a tiny, 1-hour
-    same-day task. A light, 1-hour same-day task with light real
-    spending must NOT trigger a negotiation. Real, deliberate headroom
-    (6 hours out, not `deadline_offset_days=0`, which computes to
-    "right now" and can race `_fetch_nearest_upcoming_task_deadline`'s
-    own `deadline > now()` filter by the time the query actually
-    runs -- a real timing bug this session's own test run caught
-    directly, not a hypothetical)."""
+    same-day task. Real, deliberate headroom (6 hours out, not
+    `deadline_offset_days=0`, which computes to "right now" and can
+    race `_fetch_nearest_upcoming_task_deadline`'s own `deadline > now()`
+    filter by the time the query actually runs -- a real timing bug this
+    session's own test run caught directly, not a hypothetical).
+
+    A REAL, DISCLOSED CORRECTION TO THIS TEST'S OWN ORIGINAL SEED DATA,
+    found by this session's own CRITICAL-tier review (of the later
+    `spend_alert.py` PR, which shares this exact fix via `negotiation_
+    trigger_support.py`): the original ₹100 expense here was so light
+    that finance never conflicted either way, so this test's own
+    NO_CONFLICT assertion held true regardless of whether the real
+    same-day fix was even in place -- reverting the fix back to `0.0`
+    left every one of this file's own tests green, a silent false pass
+    this test's own comment claimed to guard against but did not.
+    Seeding a real, ALREADY-conflicted finance claim (₹30000, matching
+    every other genuine-conflict test's own convention) makes the
+    tasks-domain side of this scan the real, decisive factor: WITH the
+    fix, a 1-hour same-day task fits inside a real 8-hour available day
+    (no tasks conflict, so only ONE domain conflicts overall --
+    NO_CONFLICT); WITHOUT it, that same 1-hour task exceeds a real,
+    wrongly-computed `0.0` available hours (a SECOND domain conflicts --
+    a false-positive CREATED)."""
     await _seed_task(pool, user_id=user_id, hours=1.0, deadline=datetime.now(timezone.utc) + timedelta(hours=6))
-    await _seed_expense(pool, user_id=user_id, amount=100.0)
+    await _seed_expense(pool, user_id=user_id, amount=30000.0)
 
     async with pool.acquire() as conn:
         outcome, negotiation_id = await scan_one_user(conn, user_id=user_id)
@@ -349,15 +365,18 @@ async def test_scan_one_user_a_real_negotiation_with_real_options_blocks_uncondi
 
 async def test_scan_one_user_a_fresh_negotiation_from_a_different_real_trigger_source_never_blocks(pool, user_id):
     """Real, direct proof of this session's own cross-job isolation
-    fix: a fresh, genuinely unresolved negotiation created by a
-    DIFFERENT real autonomous job (`spend_alert:Netflix`, this
-    session's own new module) must never block `deadline_watch`'s own,
-    genuinely unrelated real conflict from being detected -- the exact
-    real gap `features/negotiation_trigger_support.py`'s own top-of-
-    file docstring discloses fixing, proven here for real."""
+    fix: a fresh, genuinely unresolved BARE negotiation created by a
+    DIFFERENT real autonomous job (`spend_alert`, this session's own
+    new module) must never block `deadline_watch`'s own, genuinely
+    unrelated real conflict from being detected -- the exact real gap
+    `features/negotiation_trigger_support.py`'s own top-of-file
+    docstring discloses fixing, proven here for real. (This guarantee
+    holds only for a still-BARE cross-source negotiation -- see the
+    next test below for the deliberately different real behavior once
+    that other negotiation carries real options.)"""
     await pool.execute(
         "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at, trigger_source) VALUES ($1, $2, $3, $4, $5)",
-        uuid.uuid4(), uuid.UUID(user_id), ["finance", "tasks"], datetime.now(timezone.utc), "spend_alert:Netflix",
+        uuid.uuid4(), uuid.UUID(user_id), ["finance", "tasks"], datetime.now(timezone.utc), "spend_alert",
     )
     await _seed_task(pool, user_id=user_id, hours=12.0, deadline_offset_days=1)
     await _seed_expense(pool, user_id=user_id, amount=30000.0)
@@ -370,3 +389,42 @@ async def test_scan_one_user_a_fresh_negotiation_from_a_different_real_trigger_s
 
     count = await pool.fetchval("SELECT COUNT(*) FROM negotiations WHERE user_id = $1", uuid.UUID(user_id))
     assert count == 2  # the real spend_alert one, plus this new, genuine deadline_watch one
+
+
+async def test_scan_one_user_a_real_negotiation_with_options_from_a_different_trigger_source_still_blocks_unconditionally(
+    pool, user_id
+):
+    """Real regression test for the real bug this session's own
+    CRITICAL-tier review found in `has_blocking_negotiation()`: an
+    intermediate version of the exact-`trigger_source`-match fix above
+    over-generalized and required an exact match even for a negotiation
+    that already carries real `options` -- silently regressing `DEC-132`'s
+    own, separately-proven "options blocks unconditionally" guarantee
+    down to "...unconditionally, but only from the same job." Live-
+    proven reachable: `trigger_source` is `NULL` for every negotiation
+    `scripts/seed_demo_dataset.py --with-negotiation-detail` has ever
+    written (that script predates migration `0008` and was never
+    updated to set it), and would be a genuinely different, non-`NULL`
+    value for any negotiation another real autonomous job created. A
+    real, actionable negotiation -- one the user genuinely still has to
+    resolve -- must always block a new autonomous trigger from stacking
+    an un-dismissable duplicate on top of it, regardless of which job
+    (or no job at all) created it."""
+    await pool.execute(
+        "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at, options, trigger_source) "
+        "VALUES ($1, $2, $3, $4, $5::jsonb, $6)",
+        uuid.uuid4(), uuid.UUID(user_id), ["finance", "tasks"], datetime.now(timezone.utc),
+        '[{"option_id": "do_nothing", "description": "Do nothing.", "source_domains": []}]',
+        None,  # trigger_source NULL -- the exact real shape seed_demo_dataset.py's own real output has
+    )
+    await _seed_task(pool, user_id=user_id, hours=12.0, deadline_offset_days=1)
+    await _seed_expense(pool, user_id=user_id, amount=30000.0)
+
+    async with pool.acquire() as conn:
+        outcome, negotiation_id = await scan_one_user(conn, user_id=user_id)
+
+    assert outcome is ScanOutcome.ALREADY_NEGOTIATING
+    assert negotiation_id is None
+
+    count = await pool.fetchval("SELECT COUNT(*) FROM negotiations WHERE user_id = $1", uuid.UUID(user_id))
+    assert count == 1  # never duplicated
