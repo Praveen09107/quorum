@@ -3003,4 +3003,20 @@ No finding required backing out of this PR's own core design (concurrency correc
 
 ---
 
-*Next entry: DEC-136*
+## DEC-136: Phase 2 closes -- the fourth real autonomous job scheduled, all four confirmed live
+
+**Infra/operations only, no application code** -- disclosed directly, matching `DEC-113`/`DEC-134`'s own established precedent for infra-only sessions.
+
+**Authorized directly ("go ahead with next").** Redeployed the live Cloud Run service from current `main` (`b8298a4`, revision `quorum-backend-00013-q95`) so `DEC-135`'s own new route wasn't left stale the way `DEC-134` found several prior sessions' work had been. Confirmed `GET /openapi.json` lists all four real `/internal/*` paths, then exercised `/internal/backfill-negotiation-detail` once by hand against the real, live database before scheduling anything (`200`, `negotiations_scanned: 0` -- the one real bare negotiation on this account has `trigger_source = NULL` from the manual seed script, correctly out of this job's own real scope, exactly as `DEC-135`'s own review confirmed).
+
+**Scheduled `backfill-negotiation-detail` live** via the corrected script `DEC-135` already wrote (`:12`/`:42` past the hour, `timeout_milliseconds := 60000` -- deliberately offset from the other three real jobs' `*/5`/`:00`/`:30` marks, per that PR's own CRITICAL-tier review finding). **All four real, autonomous Phase 2 jobs are now live and scheduled simultaneously for the first time in this project's history.** The first real, unattended fire (20:12:00 UTC) confirmed via `net._http_response.status_code = 200`, not just `cron.job_run_details`'s own weaker `'succeeded'` -- the exact distinction `DEC-134` found mattered, checked again here rather than assumed fixed once and forgotten.
+
+**`STATUS_INDEX.md`'s Product Reality section rewritten** to reflect this: the full autonomous loop (detect a real conflict -> create a real bare negotiation -> generate real Gemini-backed detail -> a real, actionable card) is now mechanically proven end to end, live, unattended. Honest limit disclosed in the same breath: the one real, live account's current data doesn't cross any trigger's threshold right now, so this hasn't yet been *witnessed* firing for a real reason -- proven mechanically, not yet observed organically.
+
+**This closes Phase 2 of `QUORUM_PRODUCTION_COMPLETION_PLAN.md` as far as it can go without further scope:** of the plan's original four named jobs (briefing, deadline-watch, follow-up, spend-alert), deadline-watch and spend-alert are real, live, and scheduled; a functionally-equivalent detail-generation job (not one of the original four, but closing the real gap that made the two live jobs' own output actionable) is also real, live, and scheduled. `briefing` remains genuinely unspecified in this project's own real corpus (`DEC-135`'s own research already confirmed no destination table/route/mobile consumer exists for it) and `follow-up` remains genuinely blocked on Phase 4's Email `sent_messages` table -- both correctly deferred, not silently dropped.
+
+**Affects:** Live infra only -- Cloud Run revision `quorum-backend-00013-q95`, a new `cron.job` row (`backfill-negotiation-detail`), `specs/tier3_verification/STATUS_INDEX.md`, this log.
+
+---
+
+*Next entry: DEC-137*
