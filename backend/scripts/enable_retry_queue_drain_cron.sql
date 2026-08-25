@@ -1,24 +1,41 @@
 -- Real, ready-to-run SQL for scheduling `POST /internal/drain-retry-queue`
--- (`DEC-127`) via pg_cron/pg_net -- NOT YET RUN OR VERIFIED LIVE.
+-- (`DEC-127`) via pg_cron/pg_net.
 --
--- HONEST DISCLOSURE: confirmed directly against the real, live Supabase
--- project (`dxfeutkeofnbismljhsb`) before writing this file --
--- `SELECT extname FROM pg_extension` returns only `vector`. Neither
--- `pg_cron` nor `pg_net` is currently enabled, despite
--- `IMPL_10_INFRA_SUPABASE_UPSTASH.md`'s own real setup instructions
--- naming this as a real step ("Enable pg_cron and pg_net in the
--- Supabase dashboard's extensions panel") -- that step was apparently
--- never actually done. Enabling them needs Preethish's own real,
--- manual action in the Supabase dashboard's Database -> Extensions
--- panel; no CLI or service-role SQL connection this environment has
--- can flip that toggle. This script is real and correct SQL, ready to
--- run once the extensions are enabled, but genuinely UNVERIFIED live --
--- run it, then verify with the two checks at the bottom, don't assume
--- it works from reading it alone.
+-- **REAL, LIVE, CONFIRMED AS OF THIS SESSION (`DEC-134`):** this job is
+-- now genuinely scheduled and running unattended against the real,
+-- deployed Supabase project (`dxfeutkeofnbismljhsb`) -- `SELECT * FROM
+-- cron.job` shows all three real Phase 2 jobs `active = true`, and
+-- `cron.job_run_details`/`net._http_response` show real, unattended
+-- fires succeeding with genuine `200` responses. The earlier disclosure
+-- here ("neither pg_cron nor pg_net is enabled, needs Preethish's own
+-- dashboard action") was a real, corrected assumption: this session
+-- found the connected service-role connection already has sufficient
+-- privilege to `CREATE EXTENSION` both directly -- no dashboard toggle
+-- was actually required. This script remains the real, re-runnable
+-- source of truth for what's live (e.g. after a real `cron.unschedule`),
+-- not a still-pending setup step.
+--
+-- **A REAL, LIVE BUG FOUND AND FIXED THE SAME SESSION THIS WAS FIRST
+-- SCHEDULED:** all three Phase 2 cron jobs share `*/5` or `*/30` minute
+-- marks, so every `:00`/`:30` real clock minute fires this job
+-- simultaneously with `deadline-watch` and `spend-alert`. Cloud Run's
+-- own `--concurrency=1` (deliberate, `.claude/CLAUDE.md`, never to be
+-- raised) serializes those three real, simultaneous requests across at
+-- most two real instances -- and `net.http_post`'s own DEFAULT
+-- `timeout_milliseconds` is a hardcoded `5000`, live-proven too short:
+-- the very first real, unattended 3-way collision (17:30:00 UTC) left
+-- one of the three real HTTP calls `timed_out = true` in `net.
+-- _http_response`, with `cron.job_run_details` still showing that job
+-- as `'succeeded'` (pg_cron only confirms the async `net.http_post`
+-- call was ACCEPTED, not that a real HTTP response ever came back) --
+-- a systemic, permanent, silent-until-you-check gap, not a one-off,
+-- since these three schedules collide every real half hour, forever.
+-- Fixed here: `timeout_milliseconds := 30000` on every real call below,
+-- live-verified by firing all three simultaneously by hand and
+-- confirming all three now return real `200`s within the new window.
+-- Cloud Run's own `--concurrency=1` was deliberately left untouched.
 
--- Step 1: enable both extensions (may already show "Enabled" in the
--- dashboard by the time this runs -- CREATE EXTENSION IF NOT EXISTS is
--- safe either way).
+-- Step 1: enable both extensions (safe to repeat).
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 CREATE EXTENSION IF NOT EXISTS pg_net;
 
@@ -30,7 +47,7 @@ CREATE EXTENSION IF NOT EXISTS pg_net;
 --   <INTERNAL_DRAIN_SECRET>    -- the real value of INTERNAL_DRAIN_SECRET
 --                                 from backend/.env on this machine --
 --                                 never commit the real value into this
---                                 file or any other tracked file.
+--                                 or any other tracked file.
 SELECT cron.schedule(
     'drain-retry-queue',
     '*/5 * * * *',
@@ -38,7 +55,8 @@ SELECT cron.schedule(
     SELECT net.http_post(
         url := '<CLOUD_RUN_URL>/internal/drain-retry-queue',
         headers := jsonb_build_object('X-Internal-Secret', '<INTERNAL_DRAIN_SECRET>'),
-        body := '{}'::jsonb
+        body := '{}'::jsonb,
+        timeout_milliseconds := 30000
     );
     $$
 );
@@ -51,6 +69,11 @@ SELECT cron.schedule(
 --      A real 401 status in net's own response body here means the
 --      secret placeholder above wasn't actually replaced correctly --
 --      check that before assuming the endpoint itself is broken.
+--   3. THE REAL CHECK THIS SESSION'S OWN BUG TAUGHT: 'succeeded' in
+--      job_run_details is NOT sufficient -- also check
+--      SELECT id, status_code, timed_out, error_msg FROM net._http_response
+--      ORDER BY id DESC LIMIT 5; and confirm status_code = 200 for real,
+--      not timed_out = true with a null status_code.
 
 -- To remove the real, scheduled job later:
 -- SELECT cron.unschedule('drain-retry-queue');
