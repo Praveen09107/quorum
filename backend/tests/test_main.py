@@ -1532,3 +1532,91 @@ def test_spend_alert_real_secret_and_matching_header_reaches_the_real_route_wiri
         }
     finally:
         get_settings.cache_clear()
+
+
+# --- POST /internal/backfill-negotiation-detail (Phase 2, DEC-134) ---
+
+
+def test_backfill_negotiation_detail_is_401_when_no_internal_secret_is_configured_at_all(monkeypatch):
+    monkeypatch.delenv("INTERNAL_DRAIN_SECRET", raising=False)
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/backfill-negotiation-detail")
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_backfill_negotiation_detail_is_401_with_a_real_configured_secret_but_no_header(monkeypatch):
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/backfill-negotiation-detail")
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_backfill_negotiation_detail_is_401_with_a_real_configured_secret_but_the_wrong_header_value(monkeypatch):
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/backfill-negotiation-detail", headers={"X-Internal-Secret": "not-the-real-secret"})
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_backfill_negotiation_detail_is_503_when_the_secret_is_real_but_gemini_is_not_configured(monkeypatch):
+    """Real, honest `503` when the Gemini provider isn't configured --
+    matching `GET /search`'s own already-established pattern for the
+    same real dependency, checked BEFORE this route's own auth-passing
+    logic ever reaches `run_negotiation_detail_backfill()`. Uses `GET
+    /search`'s own real, disclosed `model_copy()` fix directly (see that
+    test's own docstring): `monkeypatch.delenv("GEMINI_API_KEY")` alone
+    has no effect since pydantic-settings reads `backend/.env` as a
+    file, not this shell's own OS environment."""
+    from quorum_backend import main as main_module
+
+    fake_settings = get_settings().model_copy(update={"gemini_api_key": None, "internal_drain_secret": "a-real-configured-secret"})
+    monkeypatch.setattr(main_module, "get_settings", lambda: fake_settings)
+    with TestClient(app) as client:
+        response = client.post("/internal/backfill-negotiation-detail", headers={"X-Internal-Secret": "a-real-configured-secret"})
+    assert response.status_code == 503
+
+
+def test_backfill_negotiation_detail_real_secret_and_matching_header_reaches_the_real_route_wiring(monkeypatch):
+    """Proves this route's own real auth dependency, real Gemini-
+    configured precondition, and real response mapping, WITHOUT a real,
+    unscoped call to `run_negotiation_detail_backfill()` -- the same
+    real safety precedent every other `/internal/*` route test in this
+    file already established. That function's own real, deep logic is
+    covered directly and safely in `test_negotiation_detail_backfill.py`,
+    scoped to real, test-owned negotiation_ids only."""
+    from quorum_backend.features.negotiation_detail_backfill import NegotiationDetailBackfillResult
+
+    async def _fake_run_negotiation_detail_backfill(pool, *, api_key):
+        return NegotiationDetailBackfillResult(
+            negotiations_scanned=2, negotiations_failed=0, negotiations_detailed=1,
+            outcome_counts={"UNKNOWN_TRIGGER_SOURCE": 0, "SITUATION_RESOLVED": 1, "ALREADY_DETAILED": 0, "DETAILED": 1},
+        )
+
+    monkeypatch.setattr("quorum_backend.main.run_negotiation_detail_backfill", _fake_run_negotiation_detail_backfill)
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    monkeypatch.setenv("GEMINI_API_KEY", "a-real-configured-gemini-key")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/backfill-negotiation-detail", headers={"X-Internal-Secret": "a-real-configured-secret"})
+        assert response.status_code == 200
+        assert response.json() == {
+            "negotiations_scanned": 2,
+            "negotiations_failed": 0,
+            "negotiations_detailed": 1,
+            "outcome_counts": {"UNKNOWN_TRIGGER_SOURCE": 0, "SITUATION_RESOLVED": 1, "ALREADY_DETAILED": 0, "DETAILED": 1},
+        }
+    finally:
+        get_settings.cache_clear()

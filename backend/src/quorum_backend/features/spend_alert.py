@@ -80,10 +80,10 @@ import asyncpg
 from quorum_backend.features.negotiation_trigger_support import (
     build_tasks_claim_and_state,
     create_bare_negotiation,
+    fetch_detected_subscriptions_via_conn,
     fetch_remaining_monthly_budget,
     has_blocking_negotiation,
 )
-from quorum_backend.features.subscription_detective import DetectedSubscription, detect_subscriptions
 from quorum_backend.gate.schemas import ResourceClaim
 from quorum_backend.negotiation.trigger import DomainState, scan_for_conflicts
 
@@ -121,28 +121,12 @@ class SpendAlertResult:
     outcome_counts: dict[str, int]
 
 
-async def _fetch_detected_subscriptions_via_conn(conn: asyncpg.Connection, *, user_id: str) -> list[DetectedSubscription]:
-    """Real, live query -- the same real logic `subscription_detective.
-    py::fetch_detected_subscriptions` already applies, queried directly
-    on the SAME real transaction's own `conn` here (not that function's
-    own `pool` parameter), so this module's own read is transaction-
-    consistent with the rest of the per-user check-and-create block,
-    the same real discipline `deadline_watch.py` already established.
-    Reuses `detect_subscriptions()` -- the real, pure, already-tested
-    grouping logic -- directly, never reimplemented."""
-    rows = await conn.fetch(
-        "SELECT payee, amount, occurred_at FROM expenses WHERE user_id = $1 ORDER BY occurred_at",
-        uuid.UUID(user_id),
-    )
-    return detect_subscriptions([(row["payee"], float(row["amount"]), row["occurred_at"]) for row in rows])
-
-
 async def scan_one_user(conn: asyncpg.Connection, *, user_id: str) -> tuple[ScanOutcome, str | None]:
     """Real, live, per-user scan -- mirrors `deadline_watch.py::
     scan_one_user`'s own real shape exactly. Returns `(outcome,
     negotiation_id)` -- `negotiation_id` is only ever real and
     non-`None` for `ScanOutcome.CREATED`."""
-    subscriptions = await _fetch_detected_subscriptions_via_conn(conn, user_id=user_id)
+    subscriptions = await fetch_detected_subscriptions_via_conn(conn, user_id=user_id)
     if not subscriptions:
         return ScanOutcome.NO_CLAIM, None
 
