@@ -40,6 +40,7 @@ plausible-looking result.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Awaitable, Callable
 
@@ -64,7 +65,19 @@ async def _call_gemini_json(prompt: str, *, response_schema: dict, api_key: str,
     """Real, live call to Gemini's `generateContent`, structured JSON
     output, with real retry on transient failure. Returns the already-
     parsed real JSON body -- callers validate/construct real Pydantic
-    objects from it, never trust it blindly."""
+    objects from it, never trust it blindly.
+
+    A REAL, DISCLOSED FIX, found by `features/negotiation_detail_
+    backfill.py`'s own CRITICAL-tier review (`DEC-135`): this retry loop
+    previously had no real delay between attempts at all -- harmless for
+    a single, human-triggered call (`scripts/seed_demo_dataset.py`), but
+    that module is the first real, autonomous, REPEATING caller this
+    function has ever had, and a real `429` rate-limit response answered
+    with an immediate, undelayed retry doubles the real request rate
+    into the same limit that just rejected it. A short, real, linear
+    backoff (`attempt` seconds before the `attempt`-th retry) is enough
+    for this one real call site -- not elaborate exponential/jitter
+    machinery this small a `max_retries` doesn't need."""
     last_error: Exception | None = None
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -73,7 +86,9 @@ async def _call_gemini_json(prompt: str, *, response_schema: dict, api_key: str,
             "responseSchema": response_schema,
         },
     }
-    for _attempt in range(max_retries):
+    for attempt in range(max_retries):
+        if attempt > 0:
+            await asyncio.sleep(attempt)
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(_GENERATE_URL, headers={"x-goog-api-key": api_key}, json=body)

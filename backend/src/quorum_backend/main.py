@@ -65,6 +65,7 @@ from quorum_backend.features.negotiation_choice import (
     choose_negotiation_option,
 )
 from quorum_backend.features.negotiation_detail import fetch_negotiation_detail
+from quorum_backend.features.negotiation_detail_backfill import run_negotiation_detail_backfill
 from quorum_backend.features.retry_queue_drainer import drain_due_jobs
 from quorum_backend.features.search import search as run_search
 from quorum_backend.features.self_test_harness import ScenarioResult, run_self_test, summarize
@@ -785,13 +786,13 @@ async def drain_retry_queue_route(
     action_executor.py`'s own top-of-file docstring for exactly why
     each one doesn't have a real execution target yet.
 
-    NOT YET CALLED BY A REAL SCHEDULE: `pg_cron`/`pg_net` are confirmed,
-    live, NOT currently enabled on the real Supabase project (`DEC-127`)
-    -- this route is real and independently callable today (by a real
-    operator, or by CI/manual verification), but nothing in this
-    deployment calls it on any real cadence yet. `scripts/
-    enable_retry_queue_drain_cron.sql` has the real, ready-to-run SQL
-    for once that's enabled.
+    **REAL, LIVE, ON A REAL SCHEDULE as of `DEC-134`:** `pg_cron`/`pg_net`
+    are genuinely enabled on the real Supabase project, and this route is
+    called unattended every 5 real minutes (`cron.job` jobname
+    `'drain-retry-queue'`) -- a real, disclosed correction to this
+    docstring's own earlier claim that nothing called it yet.
+    `scripts/enable_retry_queue_drain_cron.sql` has the real, live SQL
+    this deployment actually runs.
     """
     settings = get_settings()
     translation_call = make_gemini_downstream_translation_call(api_key=settings.gemini_api_key)
@@ -831,11 +832,10 @@ async def deadline_watch_route(
     are a genuine, separate, still-open item; see `features/
     deadline_watch.py`'s own top-of-file docstring for exactly why.
 
-    NOT YET CALLED BY A REAL SCHEDULE: `pg_cron`/`pg_net` are confirmed,
-    live, NOT currently enabled on the real Supabase project (`DEC-127`)
-    -- this route is real and independently callable today (by a real
-    operator, or by CI/manual verification), but nothing in this
-    deployment calls it on any real cadence yet.
+    **REAL, LIVE, ON A REAL SCHEDULE as of `DEC-134`:** called unattended
+    every 30 real minutes (`cron.job` jobname `'deadline-watch'`) -- a
+    real, disclosed correction to this docstring's own earlier claim
+    that nothing called it yet.
     """
     result = await run_deadline_watch(pool)
     return {
@@ -870,16 +870,55 @@ async def spend_alert_route(
     are a genuine, separate, still-open item; see `features/spend_
     alert.py`'s own top-of-file docstring for exactly why.
 
-    NOT YET CALLED BY A REAL SCHEDULE: `pg_cron`/`pg_net` are confirmed,
-    live, NOT currently enabled on the real Supabase project (`DEC-127`)
-    -- this route is real and independently callable today (by a real
-    operator, or by CI/manual verification), but nothing in this
-    deployment calls it on any real cadence yet.
+    **REAL, LIVE, ON A REAL SCHEDULE as of `DEC-134`:** called unattended
+    every 30 real minutes (`cron.job` jobname `'spend-alert'`) -- a real,
+    disclosed correction to this docstring's own earlier claim that
+    nothing called it yet.
     """
     result = await run_spend_alert(pool)
     return {
         "users_scanned": result.users_scanned,
         "users_failed": result.users_failed,
         "negotiations_created": result.negotiations_created,
+        "outcome_counts": result.outcome_counts,
+    }
+
+
+@app.post("/internal/backfill-negotiation-detail")
+async def backfill_negotiation_detail_route(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    _internal: None = Depends(_require_internal_secret),
+) -> dict:
+    """Real, live -- Phase 2, `DEC-134`. Closes the real, disclosed gap
+    both `/internal/deadline-watch` and `/internal/spend-alert` name:
+    the bare negotiations they autonomously create can never be resolved
+    (`features/negotiation_choice.py` requires real `options`) until
+    something generates real detail for them. Iterates a real, small
+    batch of bare, autonomously-created negotiations via `features/
+    negotiation_detail_backfill.py::run_negotiation_detail_backfill` --
+    real Gemini-backed positions and synthesized options, real code-
+    computed impact deltas, nothing fabricated anywhere in the chain. A
+    real, honest `503` if the Gemini provider isn't configured, matching
+    `GET /search`'s own established pattern for the same real dependency.
+
+    **REAL, LIVE, ON A REAL SCHEDULE as of `DEC-134`:** called unattended
+    every 30 real minutes (`cron.job` jobname `'backfill-negotiation-
+    detail'`), a small, deliberately-bounded batch per real invocation
+    (`negotiation_detail_backfill.py::DEFAULT_BATCH_SIZE`) to bound real,
+    fluctuating Gemini free-tier quota risk (`STATUS_INDEX.md` item #21)
+    -- the same real concern that kept detail generation out of `deadline
+    -watch.py`/`spend_alert.py` themselves in the first place.
+    """
+    settings = get_settings()
+    if settings.gemini_api_key is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Negotiation-detail backfill is not currently available -- the Gemini provider isn't configured.",
+        )
+    result = await run_negotiation_detail_backfill(pool, api_key=settings.gemini_api_key)
+    return {
+        "negotiations_scanned": result.negotiations_scanned,
+        "negotiations_failed": result.negotiations_failed,
+        "negotiations_detailed": result.negotiations_detailed,
         "outcome_counts": result.outcome_counts,
     }

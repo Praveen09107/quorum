@@ -74,6 +74,7 @@ from datetime import datetime, timezone
 import asyncpg
 
 from quorum_backend.features.retry_queue_drainer import fetch_committed_hours_before
+from quorum_backend.features.subscription_detective import DetectedSubscription, detect_subscriptions
 from quorum_backend.features.today import TODAY_MONTHLY_BUDGET_LIMIT, TODAY_WORKING_HOURS_PER_DAY
 from quorum_backend.gate.schemas import ResourceClaim
 from quorum_backend.negotiation.trigger import DomainState
@@ -174,6 +175,26 @@ async def fetch_remaining_monthly_budget(conn: asyncpg.Connection, *, user_id: s
     remaining budget, not a nonsensical negative number)."""
     spent = await fetch_month_to_date_spend(conn, user_id=user_id)
     return max(0.0, TODAY_MONTHLY_BUDGET_LIMIT - spent)
+
+
+async def fetch_detected_subscriptions_via_conn(conn: asyncpg.Connection, *, user_id: str) -> list[DetectedSubscription]:
+    """Real, live query -- the same real logic `subscription_detective.
+    py::fetch_detected_subscriptions` already applies, queried directly
+    on the SAME real transaction's own `conn` here (not that function's
+    own `pool` parameter), so a caller's own read stays transaction-
+    consistent with the rest of its per-user check-and-create block.
+    Reuses `detect_subscriptions()` -- the real, pure, already-tested
+    grouping logic -- directly, never reimplemented. Promoted here from
+    `spend_alert.py`'s own original, module-private version once this
+    session's own negotiation-detail-generation work needed the exact
+    same real logic as a second real caller -- the same "factor out once
+    a second caller needs it" precedent this whole shared module already
+    follows."""
+    rows = await conn.fetch(
+        "SELECT payee, amount, occurred_at FROM expenses WHERE user_id = $1 ORDER BY occurred_at",
+        uuid.UUID(user_id),
+    )
+    return detect_subscriptions([(row["payee"], float(row["amount"]), row["occurred_at"]) for row in rows])
 
 
 async def build_tasks_claim_and_state(conn: asyncpg.Connection, *, user_id: str) -> tuple[ResourceClaim, DomainState] | None:
