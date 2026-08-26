@@ -17,14 +17,21 @@ calls `features/action_executor.py::execute_approved_action()` on the
 SAME connection/transaction, so the real write and the real decision
 that authorized it commit or roll back together. `CREATE_TASK`/
 `LOG_EXPENSE` genuinely execute (a real `INSERT INTO tasks`/`expenses`).
-Every other real `ActionType` -- `UPDATE_BUDGET`, both real calendar
-types, `SEND_EMAIL` -- still returns a real, honest `executed=False`;
-see `action_executor.py`'s own top-of-file docstring for exactly why
-each one doesn't have a real execution target yet (a missing
-`budgets`/`calendar_events` table, or a genuine external API call this
-project deliberately treats as separate, Rule-5-gated scope). Never
-called for `reject`/`revise`/`escalate_to_human` -- only a genuine
-`approve` verdict.
+`SEND_EMAIL`/`ARCHIVE_EMAIL`/`LABEL_EMAIL` also have real execution
+targets now (`DEC-142`, real Gmail API calls) -- but this module's own
+call site below deliberately never passes the Google credentials or
+`human_approved` flag those need, so they still always return a real,
+honest `executed=False` THROUGH THIS SPECIFIC PATH, for a genuinely
+different reason than before: `email` is not a real negotiation domain
+(`Position.domain` only ever resolves to `calendar`/`tasks`/`finance`),
+so this drainer can never actually produce one of these three action
+types to begin with -- see `action_executor.py`'s own top-of-file
+docstring for the full account, including the real S3 human-approval
+backstop `SEND_EMAIL` specifically requires. `UPDATE_BUDGET` and both
+real calendar types still have no real execution target at all (a
+missing `budgets`/`calendar_events` table, or Phase 5's own separate,
+Rule-5-gated scope). Never called for `reject`/`revise`/
+`escalate_to_human` -- only a genuine `approve` verdict.
 
 STAGE A SCOPE, A REAL, DELIBERATE, PREETHISH-CONFIRMED CHOICE (`DEC-127`):
 `budget_check`/`availability_check` need real ground-truth adapters this

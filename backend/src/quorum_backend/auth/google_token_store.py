@@ -110,7 +110,7 @@ async def store_google_tokens(
 
 
 async def update_access_token_after_refresh(
-    pool: asyncpg.Pool,
+    pool: asyncpg.Pool | asyncpg.Connection,
     *,
     internal_user_id: str,
     access_token: str,
@@ -138,12 +138,18 @@ async def update_access_token_after_refresh(
 
 
 async def fetch_google_tokens(
-    pool: asyncpg.Pool, *, internal_user_id: str, encryption_key: str
+    pool: asyncpg.Pool | asyncpg.Connection, *, internal_user_id: str, encryption_key: str
 ) -> GoogleTokenRecord | None:
     """Returns `None` honestly when this user has never granted Google
     access, or their real tokens were already revoked/deleted -- never
     a fabricated record. Real, live decryption happens here, not at the
-    caller -- ciphertext never leaves this module."""
+    caller -- ciphertext never leaves this module.
+
+    Accepts a real, single `asyncpg.Connection` as well as a `Pool` --
+    both expose the same real `fetchrow()` interface this function
+    actually uses, and `features/action_executor.py` (Phase 4's real
+    execution layer) only ever has a `Connection` already checked out
+    of a transaction, never a whole `Pool`, to pass through here."""
     row = await pool.fetchrow(
         "SELECT encrypted_access_token, encrypted_refresh_token, access_token_expires_at, granted_scopes "
         "FROM google_oauth_tokens WHERE user_id = $1",
@@ -176,7 +182,7 @@ GOOGLE_ACCESS_TOKEN_REFRESH_MARGIN_SECONDS = 300
 
 
 async def get_valid_google_access_token(
-    pool: asyncpg.Pool,
+    pool: asyncpg.Pool | asyncpg.Connection,
     *,
     internal_user_id: str,
     client_id: str,
@@ -189,6 +195,12 @@ async def get_valid_google_access_token(
     expired or about to be. Returns `None` honestly when no real Google
     tokens are stored for this user at all (never granted, or already
     revoked) -- never a fabricated token.
+
+    Accepts a real, single `asyncpg.Connection` as well as a `Pool` --
+    see `fetch_google_tokens()`'s own docstring for why. `features/
+    action_executor.py`'s own real `SEND_EMAIL`/`ARCHIVE_EMAIL`/
+    `LABEL_EMAIL` execution (Phase 4) is the first real caller that
+    only ever has a `Connection` to pass.
 
     A REAL, DISCLOSED, LOW-SEVERITY GAP, found by this PR's own
     CRITICAL-tier review, not fixed here: if `refresh_google_access_
