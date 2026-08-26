@@ -3066,4 +3066,16 @@ No finding required backing out of this PR's own core design (concurrency correc
 
 ---
 
-*Next entry: DEC-138*
+## DEC-138: Phase 3 deployed -- real Google token storage live in production
+
+**Infra only, no application code** -- disclosed directly, matching `DEC-113`/`DEC-134`/`DEC-136`'s own established precedent for infra-only sessions.
+
+Redeployed the live Cloud Run service from current `main` (`9c4a6cb`, revision `quorum-backend-00014-9x6`) so `DEC-137`'s own real code wasn't left stale the way `DEC-134` found several prior sessions' work had been. Set the real, live `GOOGLE_TOKEN_ENCRYPTION_KEY` on the deployed service -- the same real value already used locally throughout `DEC-137`'s own testing (this project's local development and production deployment share the one real, live Supabase database, so a single real key, not environment-specific ones, is the correct real choice -- any row encrypted during local testing must stay decryptable in production and vice versa). Verified live: `GET /health` 200, `DELETE /account` still correctly 401s without a real token, and `POST /internal/drain-retry-queue` (an existing, unrelated route) still returns a real, clean 200 -- confirming the redeploy didn't regress anything already live.
+
+**Genuinely still open, unchanged from `DEC-137`:** no real, live, human-completed mobile consent flow with the new Gmail/Calendar scopes has happened yet. That real verification needs a real device/emulator and a real person completing Google's real consent screen -- the next real step for Phase 3, not something this session's own tooling can complete alone.
+
+**Affects:** Live infra only -- Cloud Run revision `quorum-backend-00014-9x6` (redeployed from `main` `9c4a6cb`, `GOOGLE_TOKEN_ENCRYPTION_KEY` now set), this log.
+
+---
+
+*Next entry: DEC-139*
