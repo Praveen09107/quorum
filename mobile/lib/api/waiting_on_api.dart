@@ -60,7 +60,16 @@ Future<List<WaitingOnItem>> Function() createWaitingOnFetcher({
       throw const ApiException('Quorum sent back something this app could not understand.');
     }
 
-    return json.map((raw) => _parseWaitingOnItem(raw as Map<String, dynamic>)).toList();
+    // A real, disclosed CRITICAL-tier review finding (DEC-140, L1):
+    // an earlier version left the item-level parse unguarded -- a
+    // malformed item (a missing field, a bad `sent_at` format) threw a
+    // raw Dart TypeError/FormatException straight into the UI instead
+    // of the same honest ApiException every other failure here uses.
+    try {
+      return json.map((raw) => _parseWaitingOnItem(raw as Map<String, dynamic>)).toList();
+    } catch (e) {
+      throw const ApiException('Quorum sent back something this app could not understand.');
+    }
   };
 }
 

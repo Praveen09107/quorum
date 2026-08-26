@@ -1070,10 +1070,22 @@ async def email_ingestion_route(
     `_require_internal_secret` auth as every other `/internal/*` route.
 
     A real, honest skip, not a failure, for a real user who never
-    granted Google access at all or whose grant was later revoked --
-    Gmail integration is a real, additive capability, not a
-    precondition for this route running cleanly across every real user.
-    """
+    granted Google access at all (`users_skipped_no_token`) -- Gmail
+    integration is a real, additive capability, not a precondition for
+    this route running cleanly across every real user. A real, DISTINCT,
+    also-honest skip (`users_token_refresh_failed`) for a real user
+    whose stored grant currently can't be refreshed -- genuinely
+    revoked, or Google's own endpoint degraded, this route does not
+    guess which; a real CRITICAL-tier review finding (`DEC-140`)
+    against an earlier version that collapsed this into `users_failed`
+    forever, with no way for an operator to tell it apart from a real
+    code bug.
+
+    Holds a real, job-level Postgres advisory lock for the whole real
+    batch (`features/email_ingestion.py::EMAIL_INGESTION_JOB_LOCK_KEY`)
+    -- a real, overlapping `pg_cron` fire is a real, honest no-op
+    (`already_running: true`, every other field a real `0`), not a
+    second, wasteful concurrent scan."""
     settings = get_settings()
     if not settings.google_oauth_client_id or not settings.google_oauth_client_secret or not settings.google_token_encryption_key:
         raise HTTPException(status_code=503, detail="Email ingestion is not currently available -- Google OAuth isn't fully configured on this deployment.")
@@ -1087,6 +1099,9 @@ async def email_ingestion_route(
         "users_scanned": result.users_scanned,
         "users_failed": result.users_failed,
         "users_skipped_no_token": result.users_skipped_no_token,
+        "users_token_refresh_failed": result.users_token_refresh_failed,
+        "messages_failed": result.messages_failed,
         "new_sent_messages": result.new_sent_messages,
         "new_replies_detected": result.new_replies_detected,
+        "already_running": result.already_running,
     }

@@ -161,5 +161,25 @@ void main() {
 
       await expectLater(fetch(), throwsA(isA<ApiException>()));
     });
+
+    test('a real, well-formed list containing one malformed item throws ApiException, not a raw type error', () async {
+      // DEC-140 review finding L1: a valid JSON list whose body is
+      // still well-formed at the top level, but one item is missing a
+      // required real field, must fail the same honest way every other
+      // parse failure here does.
+      final client = MockClient((request) async {
+        return http.Response(
+          jsonEncode([
+            {'recipient': 'a@x.com', 'subject': 'fine', 'sent_at': '2026-08-10T09:00:00Z'},
+            {'recipient': 'b@x.com', 'subject': 'missing sent_at'},
+          ]),
+          200,
+        );
+      });
+
+      final fetch = createWaitingOnFetcher(getAccessToken: () async => 't', client: client);
+
+      await expectLater(fetch(), throwsA(isA<ApiException>()));
+    });
   });
 }

@@ -1873,7 +1873,8 @@ def test_email_ingestion_real_secret_and_matching_header_reaches_the_real_route_
 
     async def _fake_run_email_ingestion(pool, *, client_id, client_secret, encryption_key, user_ids=None):
         return EmailIngestionResult(
-            users_scanned=3, users_failed=0, users_skipped_no_token=1, new_sent_messages=2, new_replies_detected=1,
+            users_scanned=3, users_failed=0, users_skipped_no_token=1, users_token_refresh_failed=1,
+            messages_failed=0, new_sent_messages=2, new_replies_detected=1,
         )
 
     monkeypatch.setattr("quorum_backend.main.run_email_ingestion", _fake_run_email_ingestion)
@@ -1890,8 +1891,11 @@ def test_email_ingestion_real_secret_and_matching_header_reaches_the_real_route_
             "users_scanned": 3,
             "users_failed": 0,
             "users_skipped_no_token": 1,
+            "users_token_refresh_failed": 1,
+            "messages_failed": 0,
             "new_sent_messages": 2,
             "new_replies_detected": 1,
+            "already_running": False,
         }
     finally:
         get_settings.cache_clear()

@@ -126,11 +126,12 @@ async def test_mark_thread_replied_marks_every_real_unreplied_message_in_the_sam
 
 
 async def test_mark_thread_replied_never_touches_a_different_real_thread(pool, user_id):
-    now = datetime.now(timezone.utc)
-    await record_sent_message(pool, user_id=user_id, message_id="m1", thread_id="thread-a", recipient="a@x.com", subject="a", sent_at=now)
-    await record_sent_message(pool, user_id=user_id, message_id="m2", thread_id="thread-b", recipient="b@x.com", subject="b", sent_at=now)
+    sent_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    replied_at = datetime.now(timezone.utc)
+    await record_sent_message(pool, user_id=user_id, message_id="m1", thread_id="thread-a", recipient="a@x.com", subject="a", sent_at=sent_at)
+    await record_sent_message(pool, user_id=user_id, message_id="m2", thread_id="thread-b", recipient="b@x.com", subject="b", sent_at=sent_at)
 
-    await mark_thread_replied(pool, user_id=user_id, thread_id="thread-a", replied_at=now)
+    await mark_thread_replied(pool, user_id=user_id, thread_id="thread-a", replied_at=replied_at)
 
     remaining = await fetch_unreplied_sent_messages(pool, user_id=user_id)
     assert [m.subject for m in remaining] == ["b"]
@@ -140,15 +141,57 @@ async def test_mark_thread_replied_returns_zero_for_a_thread_with_no_real_unrepl
     assert await mark_thread_replied(pool, user_id=user_id, thread_id="never-existed", replied_at=datetime.now(timezone.utc)) == 0
 
 
+async def test_mark_thread_replied_never_marks_a_real_send_that_happened_after_the_real_incoming_message(pool, user_id):
+    """The real, live BLOCKER this session's own CRITICAL-tier review
+    found (`DEC-140`): a real, old inbound message still sitting in the
+    inbox must never be mistaken for a reply to a real send that came
+    AFTER it. `sent_at < replied_at` is the real guard that makes this
+    correct regardless of which order `email_ingestion.py`'s own
+    received-message loop happens to process real Gmail results in."""
+    now = datetime.now(timezone.utc)
+    old_inbound_arrived_at = now - timedelta(days=20)  # a real, long-unarchived inbound message
+    newer_send_sent_at = now - timedelta(days=5)        # the user's own, later real send, same thread
+    await record_sent_message(
+        pool, user_id=user_id, message_id="newer-send", thread_id="shared-thread", recipient="a@x.com",
+        subject="a later real send", sent_at=newer_send_sent_at,
+    )
+
+    updated_count = await mark_thread_replied(pool, user_id=user_id, thread_id="shared-thread", replied_at=old_inbound_arrived_at)
+
+    assert updated_count == 0  # the old inbound message must NOT close out the newer real send
+    remaining = await fetch_unreplied_sent_messages(pool, user_id=user_id)
+    assert [m.subject for m in remaining] == ["a later real send"]
+
+
+async def test_mark_thread_replied_correctly_closes_only_the_real_sends_that_predate_a_genuine_reply(pool, user_id):
+    """The real, deliberate contrast to the regression test above: a
+    genuinely NEWER real incoming message must still correctly close
+    out every real, earlier unreplied send in the same thread -- the
+    ordering guard must never become so strict it stops matching the
+    real, ordinary case."""
+    now = datetime.now(timezone.utc)
+    await record_sent_message(
+        pool, user_id=user_id, message_id="earlier-send", thread_id="shared-thread", recipient="a@x.com",
+        subject="an earlier real send", sent_at=now - timedelta(days=5),
+    )
+    real_reply_arrived_at = now - timedelta(days=1)
+
+    updated_count = await mark_thread_replied(pool, user_id=user_id, thread_id="shared-thread", replied_at=real_reply_arrived_at)
+
+    assert updated_count == 1
+    assert await fetch_unreplied_sent_messages(pool, user_id=user_id) == []
+
+
 async def test_mark_thread_replied_never_touches_a_different_real_users_thread(pool, user_id):
     other_google_sub = f"test-waiting-on-bystander-{uuid.uuid4()}"
     other_user_id = await get_or_create_user(pool, google_sub=other_google_sub, email=None)
-    now = datetime.now(timezone.utc)
+    sent_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    replied_at = datetime.now(timezone.utc)
     try:
-        await record_sent_message(pool, user_id=user_id, message_id="m1", thread_id="shared-thread-id", recipient="a@x.com", subject="mine", sent_at=now)
-        await record_sent_message(pool, user_id=other_user_id, message_id="m2", thread_id="shared-thread-id", recipient="b@x.com", subject="bystanders", sent_at=now)
+        await record_sent_message(pool, user_id=user_id, message_id="m1", thread_id="shared-thread-id", recipient="a@x.com", subject="mine", sent_at=sent_at)
+        await record_sent_message(pool, user_id=other_user_id, message_id="m2", thread_id="shared-thread-id", recipient="b@x.com", subject="bystanders", sent_at=sent_at)
 
-        await mark_thread_replied(pool, user_id=user_id, thread_id="shared-thread-id", replied_at=now)
+        await mark_thread_replied(pool, user_id=user_id, thread_id="shared-thread-id", replied_at=replied_at)
 
         mine_remaining = await fetch_unreplied_sent_messages(pool, user_id=user_id)
         bystander_remaining = await fetch_unreplied_sent_messages(pool, user_id=other_user_id)

@@ -36,6 +36,13 @@ Gmail, not this module's job) calls `record_sent_message()` for every
 real message THIS USER sent, and `mark_thread_replied()` the moment a
 NEW real message arrives in a `thread_id` that already has a real,
 unreplied `sent_messages` row -- the real signal an actual reply landed.
+
+`mark_thread_replied()`'s own real `sent_at < replied_at` ordering
+guard (added `DEC-140`, a real CRITICAL-tier-review-found BLOCKER) is
+load-bearing, not decorative: a real thread can genuinely contain an
+old, still-unarchived inbound message alongside a much newer real
+send, and only a real incoming message that postdates a given send may
+ever close it out.
 """
 from __future__ import annotations
 
@@ -129,15 +136,37 @@ async def record_sent_message(
 async def mark_thread_replied(pool: asyncpg.Pool, *, user_id: str, thread_id: str, replied_at: datetime) -> int:
     """Real, live update -- the real signal a reply landed. Marks
     EVERY real, still-unreplied `sent_messages` row in this real
-    thread (not just the most recent one) as replied, since a single
-    real incoming message in a thread genuinely answers every prior
-    real message this user sent in that same thread, not just the
-    latest. Returns the real count of rows actually updated -- `0` is
-    a real, honest, common case (a reply arrived in a thread this user
-    never sent the first message in, or every message in the thread
-    was already marked replied)."""
+    thread that was genuinely sent BEFORE `replied_at` (not just the
+    most recent one) as replied, since a single real incoming message
+    in a thread genuinely answers every prior real message this user
+    sent before it in that same thread, not just the latest. Returns
+    the real count of rows actually updated -- `0` is a real, honest,
+    common case (a reply arrived in a thread this user never sent the
+    first message in, every message in the thread was already marked
+    replied, or the only candidate rows were sent AFTER `replied_at`
+    -- see the `sent_at < $1` guard below.
+
+    **A REAL, LIVE BLOCKER FOUND BY THIS PR'S OWN CRITICAL-TIER REVIEW,
+    fixed here (`DEC-140`):** an earlier version of this query had no
+    ordering guard at all -- `WHERE user_id = $2 AND thread_id = $3 AND
+    replied_at IS NULL`. `email_ingestion.py`'s own phase 2 re-scans a
+    real inbox's most recent messages every poll, which genuinely
+    includes messages that arrived long before the user's own latest
+    send in that thread (a real, long-lived inbound message that was
+    simply never archived). Without this guard, that OLD inbound
+    message would incorrectly close out a NEWER real send in the same
+    thread the very first time it was ever checked -- live-reproduced:
+    user sends Aug 20, an inbound message from Aug 1 in the same
+    thread is still sitting in the inbox, the old message is (wrongly)
+    treated as "the reply," and Waiting On never shows the Aug 20 send
+    at all. The `sent_at < $1` guard here makes this correct
+    REGARDLESS of what order `email_ingestion.py`'s own received-
+    message loop processes real Gmail results in -- each real
+    incoming message can only close out real sends that genuinely
+    predate it, never one sent afterward, so there is no longer any
+    real reliance on Gmail's own result ordering for correctness."""
     tag = await pool.execute(
-        "UPDATE sent_messages SET replied_at = $1 WHERE user_id = $2 AND thread_id = $3 AND replied_at IS NULL",
+        "UPDATE sent_messages SET replied_at = $1 WHERE user_id = $2 AND thread_id = $3 AND replied_at IS NULL AND sent_at < $1",
         replied_at,
         uuid.UUID(user_id),
         thread_id,
