@@ -3078,4 +3078,18 @@ Redeployed the live Cloud Run service from current `main` (`9c4a6cb`, revision `
 
 ---
 
-*Next entry: DEC-139*
+## DEC-139: Phase 3's real, final open item closed -- a real, live consent flow confirms every new scope grants cleanly
+
+**Real, live verification, no code changes.** The one thing `DEC-137`/`DEC-138` couldn't verify from this environment alone: whether Google's real, live authorization endpoint would actually grant `gmail.readonly`/`gmail.send`/`gmail.modify`/`calendar.events` to this project's real OAuth client without further Google Cloud Console configuration.
+
+**Real, live, human-completed today:** Preethish created a real, dedicated sandbox Google account (`quorum.dev.sandbox@gmail.com`, never his personal Gmail -- Rule 5), rebuilt and installed the current `main` onto the real physical device from `DEC-117`/`DEC-118` (the previously-installed build predated this session's own scope changes), and completed a real sign-in. The real, live "Google hasn't verified this app" interstitial appeared first -- confirmed as the expected, correct signal for a real OAuth client still in Testing publish status with an authorized test user, not an error (an unlisted account would have been rejected before ever reaching that screen). Continuing through it reached the real consent screen, which he approved.
+
+**Confirmed directly against the real, live database, not assumed from the app's own "signed in" state:** a real `google_oauth_tokens` row now exists for this identity, with `granted_scopes` listing all six real scopes Google actually granted -- `openid`, `userinfo.email`, `gmail.readonly`, `gmail.send`, `gmail.modify`, `calendar.events` -- every single one requested, none silently dropped. The real, live decryption round-trip against the real, deployed `GOOGLE_TOKEN_ENCRYPTION_KEY` was also confirmed directly: `fetch_google_tokens()` genuinely decrypts the stored row, and the real access token has Google's own real, live `ya29.` prefix -- confirmed without ever printing the real token value itself, the same real-secret-handling discipline this project holds everywhere else.
+
+**This closes the real, honest possibility `DEC-137` disclosed rather than assumed away** -- Google's OAuth consent-screen configuration did NOT need any further real, external, human Cloud Console action beyond what already existed. Phase 3 (`QUORUM_PRODUCTION_COMPLETION_PLAN.md`) is now genuinely, fully closed: built, reviewed, deployed, and live-verified end to end.
+
+**Affects:** No code. `specs/tier1_foundation/QUORUM_PRODUCTION_COMPLETION_PLAN.md` (Phase 3 marked closed), `specs/tier3_verification/STATUS_INDEX.md`, this log.
+
+---
+
+*Next entry: DEC-140*
