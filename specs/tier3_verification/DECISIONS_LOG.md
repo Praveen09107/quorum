@@ -3222,4 +3222,33 @@ Rebuilt via `gcloud builds submit` from current `main` (`294a6e9`, image tag `de
 
 ---
 
-*Next entry: DEC-145*
+## DEC-145: real Honesty Log -- the permanently-dead "Log" tab closes
+
+**Standard tier** -- real, per-user database queries, zero external calls, zero Gate/security/external-action code touched.
+
+**Authorized directly ("go ahead with NEXT"), redirected from Phase 5 to Phase 6.** Both of Phase 5's own remaining pieces (real on-device `CalendarProvider` integration, real `CREATE_CALENDAR_EVENT_EXTERNAL` execution) would have added more real, tested backend capability with zero real user-visible effect -- the exact drift pattern `QUORUM_PRODUCTION_COMPLETION_PLAN.md` itself exists to stop recurring. `honesty_log.py` is a Phase 6 item the plan's own text calls "arguably the single most visible fix in this entire plan" -- a permanent bottom-nav tab, dead for every real user, every time, with its real mobile screen already built and waiting (Batch 8, `DEC-087`). Picked over Phase 5's remaining pieces for that reason, disclosed rather than silently following the numbered phase order.
+
+**What was built:** `features/honesty_log.py` (new) -- `build_honesty_feed()` (pure grouping) and `fetch_honesty_feed()` (real, per-user-scoped live query), backing a new, real `GET /honesty_log` (`QUORUM_DATA_CONTRACTS.md` §5.13). Confirmed directly before writing a query: the real, live `action_events` table already carries exactly the closed-vocabulary `outcome` CHECK constraint this needed (`'approved_unchanged' | 'caught_by_gate' | 'corrected_by_user' | 'uncertain_no_data'`, migration `0001`) -- no new column, no new table. `retry_queue_drainer.py::map_verdict_to_outcome()` is the one real, live producer today, and only ever writes the first two; `corrected_by_user`/`uncertain_no_data` are real, valid, closed-schema values with no real producer yet, the same disclosed "schema ready, no real caller yet" shape `SEND_EMAIL` execution already carries (`DEC-142`). `success_rate` is real, deliberately nullable (never a real `0.0` standing in for "nothing to compute from"), mirroring `trust_digest.py`'s own already-established precedent exactly: `uncertain_no_data` rows are excluded from both `total` and the success-rate denominator, since counting "we don't know" as an attempt that merely didn't succeed would collapse two genuinely different real states into one.
+
+**A real, new design decision this module makes, disclosed rather than silently invented:** `QUORUM_DATA_CONTRACTS.md` §5.13 names a real `description` field in its own JSON example but never specifies how to construct one -- `action_events` has no dedicated description column, only `action_type`/`payload`. `_describe_action()` is a real, honest, human-readable rendering built directly from those two real, already-stored fields, with an open, defensive fallback for any `ActionType` this module doesn't have a specific sentence for yet.
+
+**A real, related gap found while reading this module's own real precedent, disclosed here rather than silently fixed (out of this session's own scope):** `main.py`'s real `GET /trust_digest` route still carries a comment claiming "`action_events` itself has no `user_id` column" -- true when that route was first built, but `action_events.user_id` has existed since migration `0004` (`DEC-119`), predating this comment's own claim. `fetch_trust_digest()` still aggregates every real user's `action_events` together with no real per-user filter at all -- a real, live, currently-deployed cross-user aggregation gap in a route that's been live since `DEC-100`, not just a stale comment. `honesty_log.py` does NOT repeat this mistake (real, per-user scoped from its first line) but the `/trust_digest` gap itself is left exactly as found -- a separate, real, disclosed open item for a future session.
+
+**A standard fresh-context review ran before merge (same model family -- no cross-model requirement applies to this non-Gate, non-security, non-external-action module). No BLOCKER/HIGH. Two real LOW findings, one fixed, one disclosed as intentional:**
+
+1. **LOW, fixed -- the "most-recent-first ordering" live-DB test proved less than it claimed.** An earlier version put exactly one row in each bucket, so the assertion passed trivially regardless of whether ordering was preserved WITHIN a bucket containing 2+ rows of the same outcome -- the underlying code was already correct, only the test's own coverage was thin. **Fixed:** a third real row added, giving `successes` two real entries at different real timestamps to genuinely prove within-bucket ordering.
+2. **LOW, disclosed, not fixed -- `_describe_action()`'s generic fallback produces cosmetically awkward text** for the 6 real `ActionType`s it has no specific sentence for yet (e.g. `"Create calendar event external"`). Never raises, matches this module's own disclosed, intentional design -- a real UX nit for whichever future session builds real execution for those types, not a defect in this one.
+
+The review also independently re-derived the `uncertain_no_data` exclusion formula against `trust_digest.py`'s own real query and found no divergence; traced cross-user isolation end to end through the real SQL and both the unit and route-level tests; confirmed a still-unresolved `escalate_to_human` row (`outcome IS NULL`) is genuinely excluded from every bucket; and confirmed `_describe_action()` never raises on a missing payload key or an unrecognized `ActionType`.
+
+**Tests:** 13 in `test_honesty_log.py` (pure grouping + real, live per-user DB tests, one strengthened per the review's own finding) + 4 new route-level tests in `test_main.py` (auth, live round-trip, cross-user isolation, 503) + 9 in `honesty_log_api_test.dart` (the mobile fetcher).
+
+**Verified live:** `ruff check backend` clean. 104 backend tests across `test_honesty_log.py`/`test_main.py` passing together. Mobile: `flutter analyze` clean, full `flutter test` suite clean (353/353). Wiring `fetchHonestyFeed` into `main.dart` genuinely unlocks the already-built Honesty Log screen (`_HonestyLogTab` in `main_shell.dart`, gated on a null check that's now satisfied) for the first time since it was written years ahead of any real backend to call.
+
+**Genuinely still open, not resolved by this entry:** the `/trust_digest` cross-user aggregation gap disclosed above. `corrected_by_user`/`uncertain_no_data` have no real producer yet -- a human-correction endpoint and a Stage-A `no_data_found` Finding propagating to the action-event level are both real, separate, future work.
+
+**Affects:** `backend/src/quorum_backend/features/honesty_log.py` (new), `backend/src/quorum_backend/main.py`, `backend/tests/test_honesty_log.py` (new), `backend/tests/test_main.py`, `mobile/lib/api/honesty_log_api.dart` (new), `mobile/lib/main.dart`, `mobile/test/honesty_log_api_test.dart` (new), this log.
+
+---
+
+*Next entry: DEC-146*

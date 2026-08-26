@@ -1012,6 +1012,103 @@ def test_waiting_on_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
             app.state.db_pool = real_pool
 
 
+def test_honesty_log_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.get("/honesty_log")
+    assert response.status_code == 401
+
+
+async def test_honesty_log_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
+    """Real, end-to-end: real-provisions a real user (DEC-110), inserts
+    real, distinctly-outcomed rows directly into the real, live
+    `action_events` table scoped to that same exact real user, confirms
+    `GET /honesty_log` genuinely round-trips through `fetch_honesty_
+    feed()` with a real, valid access token, then cleans up."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    success_id, catch_id, uncertain_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    now = datetime.now(timezone.utc)
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        success_id, "create_task", "S1", '{"title": "A real end-to-end task"}', "approve", "approved_unchanged",
+        f"trace-{success_id}", uuid.UUID(internal_user_id), now,
+    )
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        catch_id, "send_email", "S3", '{"to": "a@x.com"}', "revise", "caught_by_gate",
+        f"trace-{catch_id}", uuid.UUID(internal_user_id), now,
+    )
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        uncertain_id, "send_email", "S3", '{"to": "b@x.com"}', "approve", "uncertain_no_data",
+        f"trace-{uncertain_id}", uuid.UUID(internal_user_id), now,
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/honesty_log", headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 2  # the uncertain row is excluded, per fetch_honesty_feed()'s own real rule
+        assert body["success_rate"] == 0.5
+        assert set(body.keys()) == {"total", "success_rate", "successes", "failures_and_catches", "genuinely_uncertain"}
+        assert len(body["successes"]) == 1
+        assert body["successes"][0]["description"] == "Created task: A real end-to-end task"
+        assert len(body["failures_and_catches"]) == 1
+        assert body["failures_and_catches"][0]["outcome"] == "caught_by_gate"
+        assert len(body["genuinely_uncertain"]) == 1
+    finally:
+        await pool.execute(
+            "DELETE FROM action_events WHERE proposal_id = ANY($1::uuid[])", [success_id, catch_id, uncertain_id]
+        )
+
+
+async def test_honesty_log_endpoint_never_leaks_another_real_users_rows(pool, provisioned_users):
+    headers_a, user_a = await _provisioned_auth_header(pool, provisioned_users)
+    _headers_b, user_b = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_a, proposal_b = uuid.uuid4(), uuid.uuid4()
+
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        proposal_a, "create_task", "S1", '{"title": "User A real task"}', "approve", "approved_unchanged",
+        f"trace-{proposal_a}", uuid.UUID(user_a), datetime.now(timezone.utc),
+    )
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        proposal_b, "create_task", "S1", '{"title": "User B real task"}', "approve", "approved_unchanged",
+        f"trace-{proposal_b}", uuid.UUID(user_b), datetime.now(timezone.utc),
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/honesty_log", headers=headers_a)
+
+        body = response.json()
+        ids_seen = {a["action_id"] for a in body["successes"]}
+        assert str(proposal_a) in ids_seen
+        assert str(proposal_b) not in ids_seen
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = ANY($1::uuid[])", [proposal_a, proposal_b])
+
+
+def test_honesty_log_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
+    with TestClient(app) as client:
+        real_pool = app.state.db_pool
+        app.state.db_pool = None
+        try:
+            honesty_log_response = client.get("/honesty_log", headers=_auth_header())
+            health_response = client.get("/health")
+            assert honesty_log_response.status_code == 503
+            assert health_response.status_code == 200
+        finally:
+            app.state.db_pool = real_pool
+
+
 def test_finance_subscriptions_requires_real_auth_missing_header_is_401():
     with TestClient(app) as client:
         response = client.get("/finance/subscriptions")

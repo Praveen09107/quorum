@@ -47,6 +47,11 @@
 /// You tab's already-built, already-tested Waiting On screen (`_WaitingOnLoader`
 /// in `you_screen.dart`) for the first time since it was written years
 /// ahead of any real backend to call.
+/// `fetchHonestyFeed` joins them as of Phase 6 (`features/honesty_log.py`)
+/// -- real, live, per-user-scoped `GET /honesty_log`, closing the real,
+/// permanently-dead "Log" bottom-nav tab for the first time since
+/// `honesty_log_logic.dart`/`honesty_log_screen.dart` were built years
+/// ahead of any real backend to call (Batch 8, `DEC-087`).
 /// `confirmDelete` is real and live too, as of `DEC-113` -- the real,
 /// irreversible `DELETE /account`, unblocked only once real user
 /// provisioning existed (`DEC-110`) to make a correctly per-user-scoped
@@ -62,6 +67,7 @@ import 'package:http/http.dart' as http;
 import 'package:quorum_mobile/api/account_api.dart';
 import 'package:quorum_mobile/api/career_pipeline_api.dart';
 import 'package:quorum_mobile/api/finance_api.dart';
+import 'package:quorum_mobile/api/honesty_log_api.dart';
 import 'package:quorum_mobile/api/negotiation_api.dart';
 import 'package:quorum_mobile/api/search_api.dart';
 import 'package:quorum_mobile/api/tasks_api.dart';
@@ -205,6 +211,10 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             fetchWaitingOn: createWaitingOnFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            fetchHonestyFeed: createHonestyLogFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
