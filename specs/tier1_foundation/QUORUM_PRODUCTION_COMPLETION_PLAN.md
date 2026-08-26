@@ -106,10 +106,12 @@ Added `.claude/CLAUDE.md`'s new "Whole-system verification checkpoint" section, 
 
 **Goal:** finish what Phases 2–5 didn't reach, closing the rest of the dead-end screens and unbuilt ADD features.
 
+**✅ `features/honesty_log.py` CLOSED, `DEC-145`, picked ahead of finishing Phase 5** — both of Phase 5's own remaining pieces would have added more real, tested backend capability with zero real user-visible effect (the exact drift pattern this whole plan exists to stop), while this item is the plan's own text calling it "arguably the single most visible fix in this entire plan." A real, related gap found and disclosed, not fixed: `GET /trust_digest` still aggregates every real user's `action_events` together despite the per-user column existing since `DEC-119`. Full detail: `DECISIONS_LOG.md` `DEC-145`.
+
 - Real `UPDATE_BUDGET` execution — needs a genuine, small budgets-ceiling concept (a new column/table), the real gap `action_executor.py`'s own docstring already names.
 - Build `features/predictive_risk.py` for real (doesn't exist) — parameters already specified (≥0.5 historical correction rate, ±1 deadline tolerance).
 - Build `features/career_digest.py` for real (doesn't exist) — the real Tavily integration is already decided (`DEC-004`) and just needs implementing against the real, current Tavily API.
-- Build `features/honesty_log.py` for real (doesn't exist) — a real route + wiring `fetchHonestyFeed` closes the permanently-dead "Log" bottom-nav tab, arguably the single most visible fix in this entire plan.
+- ~~Build `features/honesty_log.py` for real~~ — **done, `DEC-145`.**
 - Wire real Memory Transparency (`security/memory_transparency.py` already exists) — needs a real route plus Preethish's own mem0 signup (external, disclosed, his action, not ours).
 - Close Gate Reveal for real: real `findings`/`objections` persistence on `action_events` (or a companion table) plus a real route — the drainer (Phase 2 onward) is now actually producing real Gate verdicts worth revealing.
 

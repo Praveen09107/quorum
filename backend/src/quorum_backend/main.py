@@ -60,6 +60,7 @@ from quorum_backend.core.embeddings import EmbeddingError
 from quorum_backend.features.career_pipeline import fetch_career_pipeline
 from quorum_backend.features.deadline_watch import run_deadline_watch
 from quorum_backend.features.email_ingestion import run_email_ingestion
+from quorum_backend.features.honesty_log import fetch_honesty_feed
 from quorum_backend.features.negotiation_choice import (
     InvalidChosenOption,
     NegotiationAlreadyResolved,
@@ -569,6 +570,48 @@ async def waiting_on(
     internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
     messages = await fetch_stale_waiting_on(pool, user_id=internal_user_id)
     return [{"recipient": message.recipient, "subject": message.subject, "sent_at": message.sent_at} for message in messages]
+
+
+@app.get("/honesty_log")
+async def honesty_log(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live -- Phase 6, `QUORUM_PRODUCTION_COMPLETION_PLAN.md`.
+    Queries the real, live `action_events` table via `fetch_honesty_
+    feed()`, real per-user scoped from its first line. Response shape
+    matches `QUORUM_DATA_CONTRACTS.md` §5.13 exactly (`total`,
+    `success_rate`, `successes`, `failures_and_catches`,
+    `genuinely_uncertain`, each `LoggedAction` real-serialized as
+    `action_id`/`timestamp`/`outcome`/`description`) -- never filters
+    anything out, `failures_and_catches` and `genuinely_uncertain` are
+    given the same real structural prominence as `successes`, per that
+    section's own explicit requirement.
+
+    Closes the real, permanently-dead "Log" bottom-nav tab -- the
+    mobile screen and logic have existed since Batch 8 (`DEC-087`)
+    with zero real backend behind them until now."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    feed = await fetch_honesty_feed(pool, user_id=internal_user_id)
+
+    def _serialize(actions: list) -> list[dict]:
+        return [
+            {
+                "action_id": action.action_id,
+                "timestamp": action.timestamp,
+                "outcome": action.outcome,
+                "description": action.description,
+            }
+            for action in actions
+        ]
+
+    return {
+        "total": feed.total,
+        "success_rate": feed.success_rate,
+        "successes": _serialize(feed.successes),
+        "failures_and_catches": _serialize(feed.failures_and_catches),
+        "genuinely_uncertain": _serialize(feed.genuinely_uncertain),
+    }
 
 
 @app.get("/finance/subscriptions")
