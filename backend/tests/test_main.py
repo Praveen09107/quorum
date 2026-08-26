@@ -1242,6 +1242,46 @@ async def test_delete_account_genuinely_purges_real_data_and_revokes_real_sessio
         await rotate_refresh_token(raw_refresh, revocation_store)
 
 
+async def test_delete_account_genuinely_revokes_real_google_oauth_tokens_too(pool):
+    """Phase 3, `QUORUM_PRODUCTION_COMPLETION_PLAN.md`. Real, end-to-end,
+    through the actual `DELETE /account` route: seeds a real, encrypted
+    Google token row for this user (a real, deliberately-invalid token
+    value, since no real, valid Google-issued one is available to this
+    test suite -- see `test_google_token_refresh.py`'s own docstring),
+    then confirms the real route reports a real, nonzero `oauth_tokens_
+    revoked` count and the real row is genuinely gone -- not the honest
+    `0` every prior version of this test asserted before Phase 3 closed
+    this gap."""
+    google_sub = f"test-deletion-oauth-{uuid.uuid4()}"
+    internal_user_id = await get_or_create_user(pool, google_sub=google_sub, email=None)
+    revocation_store = SupabaseRevocationStore(pool)
+    await issue_refresh_token(google_sub, revocation_store)
+    settings = get_settings()
+    access_token = create_access_token(google_sub, settings.jwt_signing_key)
+
+    from quorum_backend.auth.google_token_store import store_google_tokens
+
+    assert settings.google_token_encryption_key is not None, (
+        "This test needs a real GOOGLE_TOKEN_ENCRYPTION_KEY configured in backend/.env to mean anything."
+    )
+    await store_google_tokens(
+        pool,
+        internal_user_id=internal_user_id,
+        access_token="deliberately-fake-access-token-for-a-real-test",
+        refresh_token="deliberately-fake-refresh-token-for-a-real-test",
+        access_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        granted_scopes="openid email",
+        encryption_key=settings.google_token_encryption_key,
+    )
+
+    with TestClient(app) as client:
+        response = client.delete("/account", headers={"Authorization": f"Bearer {access_token}"})
+
+    assert response.status_code == 200
+    assert response.json()["oauth_tokens_revoked"] == 1
+    assert await pool.fetchrow("SELECT 1 FROM google_oauth_tokens WHERE user_id = $1", uuid.UUID(internal_user_id)) is None
+
+
 async def test_delete_account_never_touches_a_different_real_users_data(pool):
     victim_sub = f"test-deletion-victim-{uuid.uuid4()}"
     bystander_sub = f"test-deletion-bystander-{uuid.uuid4()}"

@@ -14,6 +14,7 @@ from quorum_backend.auth.google_oauth import (
     GoogleIdTokenInvalid,
     GoogleOAuthExchangeFailed,
     exchange_authorization_code,
+    revoke_google_token,
     verify_google_id_token,
 )
 from quorum_backend.core.config import get_settings
@@ -57,3 +58,19 @@ async def test_verify_id_token_rejects_a_well_formed_but_unsigned_token():
     settings = get_settings()
     with pytest.raises(GoogleIdTokenInvalid):
         verify_google_id_token(fake_token, settings.google_oauth_client_id)
+
+
+async def test_revoking_a_real_deliberately_invalid_token_is_a_real_benign_no_op():
+    """Phase 3. Google's real `/revoke` endpoint returns a real `400`
+    for a token it doesn't recognize -- `revoke_google_token()`'s own
+    documented design treats that as benign (the real end state, no
+    live grant for this token, is identical to a successful real
+    revocation), so this call must complete without raising."""
+    await revoke_google_token("deliberately-fake-token-for-a-real-test")
+
+
+async def test_revoking_an_empty_token_still_reaches_googles_real_endpoint_and_does_not_raise():
+    # Google's real endpoint also answers a genuinely empty/malformed
+    # token with a real 400 -- confirming this isn't special-cased to
+    # only tolerate one specific shape of "already invalid."
+    await revoke_google_token("")

@@ -25,6 +25,7 @@ import uuid
 from urllib.parse import urlencode
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator
 
 import asyncpg
@@ -40,6 +41,7 @@ from quorum_backend.auth.access_token import (
     decode_access_token,
 )
 from quorum_backend.auth.google_oauth import GoogleIdTokenInvalid, GoogleOAuthExchangeFailed, exchange_authorization_code, verify_google_id_token
+from quorum_backend.auth.google_token_store import store_google_tokens
 from quorum_backend.auth.refresh_token import (
     TokenExpired,
     TokenInvalid,
@@ -641,6 +643,17 @@ async def auth_token(
     every per-user domain table needs a real internal UUID mapped to
     it, and this is the one real place in the whole system where a
     genuinely new identity is first seen.
+
+    **Phase 3, `QUORUM_PRODUCTION_COMPLETION_PLAN.md`:** this route now
+    also persists Google's own real `access_token`/`refresh_token`
+    (encrypted, `auth/google_token_store.py`) -- the real gap `auth/
+    google_oauth.py`'s own docstring named since it was first written.
+    A real, deliberate resilience choice: if `GOOGLE_TOKEN_ENCRYPTION_
+    KEY` isn't configured on this deployment, storage is honestly
+    skipped (logged, not raised) rather than failing the entire real
+    sign-in over a feature this specific session doesn't need -- the
+    internal Quorum session this route's own core job is to issue never
+    depended on Google's own tokens to begin with.
     """
     settings = get_settings()
     if not settings.google_oauth_client_id or not settings.google_oauth_client_secret:
@@ -672,7 +685,34 @@ async def auth_token(
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
     user_id = payload["sub"]
-    await get_or_create_user(pool, google_sub=user_id, email=payload.get("email"))
+    internal_user_id = await get_or_create_user(pool, google_sub=user_id, email=payload.get("email"))
+
+    if settings.google_token_encryption_key is None:
+        logger.warning("GOOGLE_TOKEN_ENCRYPTION_KEY is not configured -- skipping real Google token storage for this sign-in.")
+    else:
+        google_refresh_token = google_tokens.get("refresh_token")
+        if google_refresh_token is None:
+            # Real, expected on a real re-consent Google doesn't re-grant
+            # a fresh refresh_token for (see google_token_store.py's own
+            # docstring) -- store_google_tokens()'s own COALESCE keeps
+            # whatever real refresh_token is already on record, so this
+            # is only ever a genuine problem on this user's real FIRST
+            # sign-in, logged rather than silently ignored.
+            logger.warning(
+                "Google did not return a refresh_token for user_id=%s -- the mobile app's own "
+                "authorization request may be missing access_type=offline/prompt=consent.",
+                internal_user_id,
+            )
+        await store_google_tokens(
+            pool,
+            internal_user_id=internal_user_id,
+            access_token=google_tokens["access_token"],
+            refresh_token=google_refresh_token,
+            access_token_expires_at=datetime.now(timezone.utc) + timedelta(seconds=int(google_tokens.get("expires_in", 3600))),
+            granted_scopes=google_tokens.get("scope", ""),
+            encryption_key=settings.google_token_encryption_key,
+        )
+
     access_token = create_access_token(user_id, settings.jwt_signing_key)
     refresh_token = await issue_refresh_token(user_id, store)
     return TokenPairResponse(access_token=access_token, refresh_token=refresh_token)
@@ -737,14 +777,15 @@ async def delete_account_route(
     calls the real, CRITICAL-tier `delete_account()` with both real
     identifiers it now genuinely needs (`DEC-113`): `google_sub` for
     real session revocation, the resolved internal UUID for the real
-    `SupabaseDeletionStore` purge. Two of the four real store counts
-    are honest, disclosed zeros regardless of what this account
-    actually contains -- see `SupabaseDeletionStore`'s own docstring
-    for the full account of why `purge_memories`/`revoke_oauth_tokens`
-    can never be anything else in this backend today.
+    `SupabaseDeletionStore` purge. **A real, disclosed correction to
+    this docstring's own earlier claim:** `revoke_oauth_tokens()` is now
+    real as of Phase 3 (`QUORUM_PRODUCTION_COMPLETION_PLAN.md`) -- only
+    `purge_memories` remains an honest, disclosed zero, since no real
+    `mem0` integration exists anywhere in this backend.
     """
     internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
-    deletion_store = SupabaseDeletionStore(pool)
+    settings = get_settings()
+    deletion_store = SupabaseDeletionStore(pool, google_token_encryption_key=settings.google_token_encryption_key)
 
     result = await delete_account(
         google_sub=google_sub,

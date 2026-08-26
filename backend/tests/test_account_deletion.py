@@ -54,21 +54,29 @@ class FakeDeletionStore:
         self.purged_vectors = []
         self.purged_memories = []
         self.revoked_oauth = []
+        # Real, ordered record of which real method ran when -- the
+        # only way to actually prove a real call ORDER, not just that
+        # every real method eventually ran.
+        self.call_order = []
 
     async def purge_postgres_rows(self, internal_user_id):
         self.purged_postgres.append(internal_user_id)
+        self.call_order.append("purge_postgres_rows")
         return 12
 
     async def purge_vector_embeddings(self, internal_user_id):
         self.purged_vectors.append(internal_user_id)
+        self.call_order.append("purge_vector_embeddings")
         return 340
 
     async def purge_memories(self, internal_user_id):
         self.purged_memories.append(internal_user_id)
+        self.call_order.append("purge_memories")
         return 5
 
     async def revoke_oauth_tokens(self, internal_user_id):
         self.revoked_oauth.append(internal_user_id)
+        self.call_order.append("revoke_oauth_tokens")
         return 2
 
 
@@ -140,3 +148,27 @@ async def test_delete_account_returns_real_counts_not_a_bare_success_flag():
     assert result.vector_embeddings_deleted == 340
     assert result.memories_deleted == 5
     assert result.oauth_tokens_revoked == 2
+
+
+async def test_delete_account_revokes_real_oauth_tokens_before_purging_postgres_rows():
+    """Real regression test for Phase 3's own deliberate reordering --
+    see `delete_account()`'s own docstring for the full real reasoning:
+    `google_oauth_tokens.user_id` has a real `ON DELETE CASCADE` against
+    `users`, so `revoke_oauth_tokens()` (which needs the real, stored
+    token still present to send to Google) must run before `purge_
+    postgres_rows()` (which deletes the real `users` row the cascade
+    keys off of) -- never the reverse."""
+    revocation_store = FakeRevocationStore()
+    deletion_store = FakeDeletionStore()
+    await issue_refresh_token("google-sub-user-1", revocation_store)
+
+    await delete_account(
+        google_sub="google-sub-user-1",
+        internal_user_id="44444444-4444-4444-4444-444444444444",
+        deletion_store=deletion_store,
+        revocation_store=revocation_store,
+    )
+
+    revoke_index = deletion_store.call_order.index("revoke_oauth_tokens")
+    purge_index = deletion_store.call_order.index("purge_postgres_rows")
+    assert revoke_index < purge_index

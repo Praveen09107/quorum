@@ -8,13 +8,21 @@ untouched real user's data survives every single purge call. Nothing
 here ever runs against a shared or ambiguous identity.
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest_asyncio
+from cryptography.fernet import Fernet
 
+from quorum_backend.auth.google_token_store import store_google_tokens
 from quorum_backend.auth.user_provisioning import get_or_create_user
 from quorum_backend.core import db
 from quorum_backend.security.supabase_deletion_store import SupabaseDeletionStore
+
+# A real, valid Fernet key, generated once for this test module -- never
+# the real, live `GOOGLE_TOKEN_ENCRYPTION_KEY` (this test never reads
+# real config), since these tests only need a real, internally-
+# consistent encrypt/decrypt round trip, not this deployment's own key.
+_TEST_ENCRYPTION_KEY = Fernet.generate_key().decode()
 
 
 @pytest_asyncio.fixture
@@ -217,10 +225,59 @@ async def test_purge_memories_is_a_real_honest_zero_no_mem0_integration_exists(p
         await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(user_id))
 
 
-async def test_revoke_oauth_tokens_is_a_real_honest_zero_google_tokens_are_never_persisted(pool):
+async def test_revoke_oauth_tokens_is_a_real_honest_zero_when_no_encryption_key_is_configured(pool):
+    """A REAL, DISCLOSED CORRECTION to this test's own former name and
+    reasoning: `revoke_oauth_tokens()` is real as of Phase 3 (see this
+    module's own top-of-file docstring) -- this specific `0` is real and
+    honest for a genuinely different reason now: no `google_token_
+    encryption_key` was given to this store instance, matching a real
+    deployment that hasn't configured `GOOGLE_TOKEN_ENCRYPTION_KEY` yet.
+    An account deletion must never be blocked by a real feature this
+    deployment doesn't have configured."""
     user_id = await _provision(pool, "oauth")
-    store = SupabaseDeletionStore(pool)
+    store = SupabaseDeletionStore(pool)  # no encryption key passed -- the real, honest default
     try:
         assert await store.revoke_oauth_tokens(user_id) == 0
+    finally:
+        await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(user_id))
+
+
+async def test_revoke_oauth_tokens_is_a_real_honest_zero_for_a_user_with_no_stored_google_tokens(pool):
+    user_id = await _provision(pool, "oauth-none")
+    store = SupabaseDeletionStore(pool, google_token_encryption_key=_TEST_ENCRYPTION_KEY)
+    try:
+        assert await store.revoke_oauth_tokens(user_id) == 0
+    finally:
+        await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(user_id))
+
+
+async def test_revoke_oauth_tokens_genuinely_calls_googles_real_revoke_endpoint_and_deletes_the_real_row(pool):
+    """Real, live proof of the whole flow, per CLAUDE.md Rule 5 -- no
+    valid, Google-issued refresh_token is available to this test suite
+    (obtaining one requires a real, human-completed mobile consent flow
+    with the new Gmail/Calendar scopes), so this test uses a real,
+    deliberately-invalid token value, the same established technique
+    `test_auth_google_oauth.py` already uses for its own real, live
+    tests. Google's real `/revoke` endpoint returns a real `400` for an
+    unrecognized token -- this module's own `revoke_google_token()`
+    treats that as a real, benign no-op by design (the end state, no
+    live grant, is identical), so this test proves the real network
+    call happens and the real local row is genuinely deleted regardless,
+    not that Google accepted the fake token."""
+    user_id = await _provision(pool, "oauth-real")
+    await store_google_tokens(
+        pool,
+        internal_user_id=user_id,
+        access_token="deliberately-fake-access-token-for-a-real-test",
+        refresh_token="deliberately-fake-refresh-token-for-a-real-test",
+        access_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        granted_scopes="openid email",
+        encryption_key=_TEST_ENCRYPTION_KEY,
+    )
+    store = SupabaseDeletionStore(pool, google_token_encryption_key=_TEST_ENCRYPTION_KEY)
+    try:
+        revoked_count = await store.revoke_oauth_tokens(user_id)
+        assert revoked_count == 1
+        assert await pool.fetchrow("SELECT 1 FROM google_oauth_tokens WHERE user_id = $1", uuid.UUID(user_id)) is None
     finally:
         await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(user_id))

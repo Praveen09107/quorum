@@ -13,16 +13,18 @@ for the token modules themselves). This module is a real, reasoned
 construction against standard OAuth 2.0 Authorization Code + PKCE
 practice, not a recalled spec value.
 
-Deliberately narrow scope, disclosed rather than silently expanded:
-this module verifies the caller's real Google identity (via the
-returned, signature-verified `id_token`) and returns just enough to
-issue a Quorum session -- it does NOT persist Google's own access/
-refresh tokens for later Gmail/Calendar API calls. That's a real,
-separate, currently-open gap (see `STATUS_INDEX.md`) belonging to
-whichever session builds the real email/calendar agent's live Google
-API integration -- `IMPL_12`'s own scope was strictly session
-management, never Google token storage, and this session doesn't
-silently expand that.
+**RESOLVED, Phase 3 (`QUORUM_PRODUCTION_COMPLETION_PLAN.md`):** this
+module's own docstring previously described a deliberately narrow scope
+-- verifying identity only, never persisting Google's own access/
+refresh tokens. That gap is now closed: `main.py`'s own `/auth/token`
+route persists them (encrypted, `auth/google_token_store.py`) right
+after this module's real exchange succeeds. This module's own real
+job is unchanged -- the real network call to Google and the real
+`id_token` verification -- storage is a genuinely separate concern,
+layered on top here, not folded into this file. `revoke_google_token`
+below is the one real addition: Google's own token-family lifecycle
+(exchange, revoke) belongs together in one file even though storage
+does not.
 """
 from __future__ import annotations
 
@@ -31,6 +33,7 @@ import jwt
 from jwt import PyJWKClient
 
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 # Google documents both forms as valid real issuer values for an id_token
 # -- https://developers.google.com/identity/openid-connect/openid-connect#validatinganidtoken
@@ -89,6 +92,28 @@ async def exchange_authorization_code(
         # own client credentials are broken."
         raise GoogleOAuthExchangeFailed(f"Google token exchange failed ({response.status_code}): {response.text}")
     return response.json()
+
+
+async def revoke_google_token(token: str) -> None:
+    """Real, live POST to Google's actual revoke endpoint (Phase 3) --
+    backs `security/supabase_deletion_store.py::revoke_oauth_tokens()`.
+    Revoking either a real `access_token` or `refresh_token` works per
+    Google's own documentation; callers here pass the `refresh_token`
+    specifically, since revoking it also invalidates every real
+    `access_token` issued under it -- one real call closes the entire
+    real grant, not just its current, possibly-already-expired half.
+
+    A real 400 from Google most commonly means the token was already
+    invalid or previously revoked (independently, at Google's own
+    account settings, or by a prior, partially-completed real deletion
+    attempt) -- treated as a real, benign no-op here, since the real end
+    state (no live Google grant for this token) is identical either
+    way, and a real account deletion must never be blocked by Google
+    reporting that its own job is already done."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(GOOGLE_REVOKE_URL, data={"token": token})
+    if response.status_code not in (200, 400):
+        raise GoogleOAuthExchangeFailed(f"Google token revocation failed ({response.status_code}): {response.text}")
 
 
 def verify_google_id_token(id_token: str, client_id: str) -> dict:
