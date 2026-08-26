@@ -925,6 +925,93 @@ def test_career_pipeline_returns_503_not_a_crash_when_the_real_pool_is_unavailab
             app.state.db_pool = real_pool
 
 
+def test_waiting_on_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.get("/waiting_on")
+    assert response.status_code == 401
+
+
+async def test_waiting_on_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
+    """Real, end-to-end: real-provisions a real user (DEC-110), inserts
+    a real, genuinely stale row directly into `sent_messages` (Phase 4)
+    scoped to that exact user, confirms `GET /waiting_on` genuinely
+    round-trips through the real `fetch_stale_waiting_on()` query with
+    a real, valid access token for that same real identity, then cleans
+    up. A second, genuinely fresh row proves the real, server-side
+    staleness filter (`find_stale_waiting_on()`) is actually applied,
+    not just plumbing that returns everything unfiltered."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    stale_id, fresh_id = "stale-msg", "fresh-msg"
+    now = datetime.now(timezone.utc)
+    await pool.execute(
+        "INSERT INTO sent_messages (user_id, message_id, thread_id, recipient, subject, sent_at) VALUES ($1, $2, $3, $4, $5, $6)",
+        uuid.UUID(internal_user_id), stale_id, "thread-stale", "a@x.com", "A real end-to-end stale message", now - timedelta(days=10),
+    )
+    await pool.execute(
+        "INSERT INTO sent_messages (user_id, message_id, thread_id, recipient, subject, sent_at) VALUES ($1, $2, $3, $4, $5, $6)",
+        uuid.UUID(internal_user_id), fresh_id, "thread-fresh", "b@x.com", "A real end-to-end fresh message", now - timedelta(hours=1),
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/waiting_on", headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert isinstance(body, list)
+        subjects_seen = {m["subject"] for m in body}
+        assert "A real end-to-end stale message" in subjects_seen
+        assert "A real end-to-end fresh message" not in subjects_seen  # too fresh to be genuinely "waiting on"
+        match = next(m for m in body if m["subject"] == "A real end-to-end stale message")
+        assert set(match.keys()) == {"recipient", "subject", "sent_at"}
+        assert match["recipient"] == "a@x.com"
+    finally:
+        await pool.execute("DELETE FROM sent_messages WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
+async def test_waiting_on_endpoint_never_leaks_another_real_users_rows(pool, provisioned_users):
+    """The real, load-bearing correctness property DEC-110 exists to
+    guarantee, proven here for `sent_messages` too: two distinct real
+    users, two distinct real stale messages -- a request as user A must
+    see only user A's message."""
+    headers_a, user_a = await _provisioned_auth_header(pool, provisioned_users)
+    _headers_b, user_b = await _provisioned_auth_header(pool, provisioned_users)
+    now = datetime.now(timezone.utc)
+
+    await pool.execute(
+        "INSERT INTO sent_messages (user_id, message_id, thread_id, recipient, subject, sent_at) VALUES ($1, $2, $3, $4, $5, $6)",
+        uuid.UUID(user_a), "msg-a", "thread-a", "a@x.com", "User A's real, private stale message", now - timedelta(days=10),
+    )
+    await pool.execute(
+        "INSERT INTO sent_messages (user_id, message_id, thread_id, recipient, subject, sent_at) VALUES ($1, $2, $3, $4, $5, $6)",
+        uuid.UUID(user_b), "msg-b", "thread-b", "b@x.com", "User B's real, private stale message", now - timedelta(days=10),
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/waiting_on", headers=headers_a)
+
+        body = response.json()
+        subjects_seen = {m["subject"] for m in body}
+        assert "User A's real, private stale message" in subjects_seen
+        assert "User B's real, private stale message" not in subjects_seen
+    finally:
+        await pool.execute("DELETE FROM sent_messages WHERE user_id = ANY($1::uuid[])", [uuid.UUID(user_a), uuid.UUID(user_b)])
+
+
+def test_waiting_on_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
+    with TestClient(app) as client:
+        real_pool = app.state.db_pool
+        app.state.db_pool = None
+        try:
+            waiting_on_response = client.get("/waiting_on", headers=_auth_header())
+            health_response = client.get("/health")
+            assert waiting_on_response.status_code == 503
+            assert health_response.status_code == 200
+        finally:
+            app.state.db_pool = real_pool
+
+
 def test_finance_subscriptions_requires_real_auth_missing_header_is_401():
     with TestClient(app) as client:
         response = client.get("/finance/subscriptions")
@@ -1716,6 +1803,99 @@ def test_backfill_negotiation_detail_real_secret_and_matching_header_reaches_the
             "negotiations_failed": 0,
             "negotiations_detailed": 1,
             "outcome_counts": {"UNKNOWN_TRIGGER_SOURCE": 0, "SITUATION_RESOLVED": 1, "ALREADY_DETAILED": 0, "DETAILED": 1},
+        }
+    finally:
+        get_settings.cache_clear()
+
+
+def test_email_ingestion_is_401_when_no_internal_secret_is_configured_at_all(monkeypatch):
+    monkeypatch.delenv("INTERNAL_DRAIN_SECRET", raising=False)
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/email-ingestion")
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_email_ingestion_is_401_with_a_real_configured_secret_but_no_header(monkeypatch):
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/email-ingestion")
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_email_ingestion_is_401_with_a_real_configured_secret_but_the_wrong_header_value(monkeypatch):
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/email-ingestion", headers={"X-Internal-Secret": "not-the-real-secret"})
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_email_ingestion_is_503_when_the_secret_is_real_but_google_oauth_is_not_fully_configured(monkeypatch):
+    """Real, honest `503` when Google OAuth isn't fully configured on
+    this deployment -- matching `/internal/backfill-negotiation-detail`'s
+    own already-established pattern for its own real Gemini dependency,
+    checked BEFORE this route's own auth-passing logic ever reaches
+    `run_email_ingestion()`. Uses the same real, disclosed `model_copy()`
+    fix (see that test's own docstring): `monkeypatch.delenv(...)` alone
+    has no effect since pydantic-settings reads `backend/.env` as a
+    file, not this shell's own OS environment."""
+    from quorum_backend import main as main_module
+
+    fake_settings = get_settings().model_copy(
+        update={"google_oauth_client_id": None, "internal_drain_secret": "a-real-configured-secret"}
+    )
+    monkeypatch.setattr(main_module, "get_settings", lambda: fake_settings)
+    with TestClient(app) as client:
+        response = client.post("/internal/email-ingestion", headers={"X-Internal-Secret": "a-real-configured-secret"})
+    assert response.status_code == 503
+
+
+def test_email_ingestion_real_secret_and_matching_header_reaches_the_real_route_wiring(monkeypatch):
+    """Proves this route's own real auth dependency, real Google-OAuth-
+    configured precondition, and real response mapping, WITHOUT a real,
+    unscoped call to `run_email_ingestion()` -- the same real safety
+    precedent every other `/internal/*` route test in this file already
+    established. That function's own real, deep logic (including the
+    one real, live Gmail capstone test) is covered directly and safely
+    in `test_email_ingestion.py`, scoped to real, test-owned users only."""
+    from quorum_backend.features.email_ingestion import EmailIngestionResult
+
+    async def _fake_run_email_ingestion(pool, *, client_id, client_secret, encryption_key, user_ids=None):
+        return EmailIngestionResult(
+            users_scanned=3, users_failed=0, users_skipped_no_token=1, users_token_refresh_failed=1,
+            messages_failed=0, new_sent_messages=2, new_replies_detected=1,
+        )
+
+    monkeypatch.setattr("quorum_backend.main.run_email_ingestion", _fake_run_email_ingestion)
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "a-real-configured-client-id")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "a-real-configured-client-secret")
+    monkeypatch.setenv("GOOGLE_TOKEN_ENCRYPTION_KEY", "a-real-configured-encryption-key")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/email-ingestion", headers={"X-Internal-Secret": "a-real-configured-secret"})
+        assert response.status_code == 200
+        assert response.json() == {
+            "users_scanned": 3,
+            "users_failed": 0,
+            "users_skipped_no_token": 1,
+            "users_token_refresh_failed": 1,
+            "messages_failed": 0,
+            "new_sent_messages": 2,
+            "new_replies_detected": 1,
+            "already_running": False,
         }
     finally:
         get_settings.cache_clear()

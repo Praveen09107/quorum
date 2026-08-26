@@ -179,6 +179,23 @@ class SupabaseDeletionStore:
                 # last here simply to keep the identity valid for as much
                 # of this real operation as possible, in case a later
                 # step needs to look it up for a real diagnostic.
+                #
+                # A SECOND real table also rides this same cascade,
+                # genuinely passively this time: `sent_messages.user_id`
+                # (migration 0011, Phase 4) holds its own real `ON
+                # DELETE CASCADE` FK against this table too. Unlike
+                # `google_oauth_tokens`, it has no external side effect
+                # to revoke first (it is local bookkeeping only, never a
+                # live external grant), so it needs no dedicated
+                # `revoke_*` method of its own -- this single `DELETE`
+                # genuinely purges it, real-database-verified by this
+                # session's own CRITICAL-tier review (`DEC-140`,
+                # finding M3) via a dedicated cascade test in `test_
+                # supabase_deletion_store.py`. Not counted in `total`
+                # below, the same as `google_oauth_tokens`'s own cascade
+                # -- Postgres's own `DELETE` command tag only reports
+                # rows removed from the target table directly, never
+                # cascade-affected rows in other tables.
                 total += _parse_deleted_count(await conn.execute("DELETE FROM users WHERE user_id = $1", user_uuid))
 
         return total

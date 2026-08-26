@@ -146,6 +146,42 @@ async def test_purge_postgres_rows_never_touches_another_real_users_rows(pool):
         await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(bystander_id))
 
 
+async def test_purge_postgres_rows_cascades_a_real_sent_messages_row_via_the_users_row_delete(pool):
+    """DEC-140 review finding M3: `sent_messages` (migration 0011,
+    Phase 4) is a new real per-user PII table (real recipients and
+    subject lines) added since `purge_postgres_rows()` was last
+    touched. It has no dedicated `DELETE` statement of its own here --
+    it relies entirely on its own real `ON DELETE CASCADE` FK against
+    `users`, the same real mechanism `google_oauth_tokens` already
+    uses. This is the real, live-database proof that reliance is
+    actually correct, matching DEC-124's own precedent of never
+    trusting a real per-user table's deletion story without a real
+    test -- a second, untouched real user's own row must also survive."""
+    victim_id = await _provision(pool, "sent-messages-victim")
+    bystander_id = await _provision(pool, "sent-messages-bystander")
+    store = SupabaseDeletionStore(pool)
+
+    await pool.execute(
+        "INSERT INTO sent_messages (user_id, message_id, thread_id, recipient, subject, sent_at) VALUES ($1, $2, $3, $4, $5, $6)",
+        uuid.UUID(victim_id), "victim-msg", "victim-thread", "a@x.com", "Victim's real sent message", datetime.now(timezone.utc),
+    )
+    await pool.execute(
+        "INSERT INTO sent_messages (user_id, message_id, thread_id, recipient, subject, sent_at) VALUES ($1, $2, $3, $4, $5, $6)",
+        uuid.UUID(bystander_id), "bystander-msg", "bystander-thread", "b@x.com", "Bystander's real, untouched sent message", datetime.now(timezone.utc),
+    )
+
+    try:
+        await store.purge_postgres_rows(victim_id)
+
+        assert await pool.fetchrow("SELECT 1 FROM sent_messages WHERE message_id = 'victim-msg'") is None
+        assert await pool.fetchrow("SELECT 1 FROM sent_messages WHERE message_id = 'bystander-msg'") is not None
+        assert not await _real_user_exists(pool, victim_id)
+        assert await _real_user_exists(pool, bystander_id)
+    finally:
+        await pool.execute("DELETE FROM sent_messages WHERE message_id = 'bystander-msg'")
+        await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(bystander_id))
+
+
 async def test_purge_postgres_rows_returns_zero_for_a_real_user_with_no_domain_data(pool):
     # A freshly-provisioned real user with zero real tasks/expenses/
     # applications -- only the real users row itself is deleted.
