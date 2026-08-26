@@ -89,6 +89,8 @@ Added `.claude/CLAUDE.md`'s new "Whole-system verification checkpoint" section, 
 
 ## Phase 5 — Real Calendar domain (on-device primary, narrow cloud slice)
 
+**🟡 BEGUN, `DEC-144`.** `features/meeting_load.py` is real, built, and tested — the concrete backend slice this section's own third bullet names, using the already-specified parameters. A real, pre-existing gap closed as part of the same work: `today.py`'s own working-hours constant previously duplicated the real `8.0` locally with an aspirational comment about reusing a module that didn't exist yet; it now genuinely imports from `meeting_load.py`. **Deliberately not started this same session, disclosed rather than silently narrowed:** the real on-device `CalendarProvider` integration (substantial, separate mobile work), real `CREATE_CALENDAR_EVENT_EXTERNAL` execution (a new Rule-5/6-gated external API call, the same shape as `DEC-142`'s Gmail work), and the `calendar_events` table decision below (deferred to whichever session actually builds the execution path, since that's the first real, concrete need for it). Full detail: `DECISIONS_LOG.md` `DEC-144`.
+
 **Goal:** build calendar the way `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md` §9.2 actually specifies it — **not** a second full server-side Google Calendar integration. Ground truth is on-device.
 
 - **Mobile-side, on-device:** integrate the `device_calendar` Flutter package (zero OAuth) to read whatever's already synced to the phone. This is what finally backs a real `CalendarAdapter` for `gate/validators.py`'s `availability_check`/`temporal_fact_check` — both currently untestable against real ground truth for lack of exactly this.
