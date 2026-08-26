@@ -3130,4 +3130,20 @@ Redeployed the live Cloud Run service from current `main` (`9c4a6cb`, revision `
 
 ---
 
-*Next entry: DEC-141*
+## DEC-141: Phase 4 (ingestion half) deployed and scheduled -- the fifth real autonomous job confirmed firing unattended
+
+**Infra only, no application code** -- disclosed directly, matching `DEC-113`/`DEC-134`/`DEC-136`/`DEC-138`'s own established precedent for infra-only sessions.
+
+Rebuilt via `gcloud builds submit` from current `main` (`6055f81`, image tag `dec140-20260826`) and redeployed via `gcloud run deploy`, preserving every real, load-bearing flag already live (`--concurrency=1 --min-instances=0 --max-instances=2 --allow-unauthenticated`, region `asia-south1`) -- revision `quorum-backend-00015-bpq`. Live-verified: `GET /health` real `200`; `GET /openapi.json` now lists both `/waiting_on` and `/internal/email-ingestion`.
+
+**A real, live smoke test against production, before scheduling anything:** called `POST /internal/email-ingestion` directly with the real `INTERNAL_DRAIN_SECRET` -- genuinely scanned 1 real user with a stored Google grant (the sandbox account) and recorded 5 real sent messages for the first time in production; every other real provisioned user in this deployment correctly honestly skipped (`users_skipped_no_token`, no Google grant on file). An immediate repeat call correctly returned `new_sent_messages: 0` -- real, live proof of idempotency in production, not just in tests.
+
+**The real cron job is now scheduled and confirmed:** ran `enable_email_ingestion_cron.sql` against the real, live database (jobid `8`, schedule `7,22,37,52 * * * *`, `active = true`). **The first real, unattended fire (16:52:00 UTC) was directly observed and confirmed via the stronger real signal `DEC-134` established** -- `net._http_response.status_code = 200`, `timed_out = false` -- not just `cron.job_run_details`'s own weaker `'succeeded'`. This is now the fifth real, live, autonomous job in this deployment, alongside `drain-retry-queue`/`deadline-watch`/`spend-alert`/`backfill-negotiation-detail`.
+
+**Genuinely still open, unchanged from `DEC-140`:** the two disclosed-not-fixed LOW findings; real `SEND_EMAIL`/`ARCHIVE_EMAIL`/`LABEL_EMAIL` execution, deliberately deferred. A new, honest limit worth naming: the 5 real sent messages recorded in production during this session's own smoke test are fresh, so none will appear on a real Waiting On screen until the real 4-day staleness threshold is genuinely crossed -- not yet observed.
+
+**Affects:** Live infra only -- Cloud Run revision `quorum-backend-00015-bpq` (redeployed from `main` `6055f81`), `pg_cron` job `email-ingestion` (jobid `8`, now scheduled and confirmed firing), `specs/tier1_foundation/QUORUM_PRODUCTION_COMPLETION_PLAN.md`, `specs/tier3_verification/STATUS_INDEX.md`, this log.
+
+---
+
+*Next entry: DEC-142*
