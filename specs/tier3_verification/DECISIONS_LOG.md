@@ -3184,4 +3184,16 @@ Rebuilt via `gcloud builds submit` from current `main` (`6055f81`, image tag `de
 
 ---
 
-*Next entry: DEC-143*
+## DEC-143: Phase 4 execution half deployed -- production kept in sync with `main`, per `DEC-134`'s own lesson
+
+**Infra only, no application code** -- matches `DEC-113`/`DEC-134`/`DEC-136`/`DEC-138`/`DEC-141`'s own established precedent.
+
+Rebuilt via `gcloud builds submit` from current `main` (`294a6e9`, image tag `dec142-20260827`) and redeployed via `gcloud run deploy`, preserving every real, load-bearing flag already live -- revision `quorum-backend-00016-f9m`. Live-verified: `GET /health` real `200`; `POST /internal/drain-retry-queue` (the one real caller of `action_executor.py`, unaffected functionally by `DEC-142`'s own new Gmail branches) still returns a real, clean `200` with an honest `jobs_seen: 0` (no due job right now, not a regression).
+
+**A real, deliberate choice, disclosed rather than silently skipped:** this deploy changes zero real, observable behavior for any real user -- `DEC-142`'s new `SEND_EMAIL`/`ARCHIVE_EMAIL`/`LABEL_EMAIL` execution has no real caller anywhere in this backend yet (email is not a real negotiation domain), so deploying it is purely inert today. Done anyway, immediately, specifically to avoid the exact drift `DEC-134` found and disclosed as a real, confirmed incident this project already lived through once: several real, merged, reviewed sessions' worth of backend work silently never reaching production for months. Keeping `main` and the live deployment in sync is now treated as a real, standing discipline, not something to defer until a feature has a real caller.
+
+**Affects:** Live infra only -- Cloud Run revision `quorum-backend-00016-f9m` (redeployed from `main` `294a6e9`), this log.
+
+---
+
+*Next entry: DEC-144*
