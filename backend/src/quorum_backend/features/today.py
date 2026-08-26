@@ -35,11 +35,17 @@ from datetime import datetime, timezone
 
 import asyncpg
 
-# Reuses the real, already-defined constant from QUORUM_CONFIGURATION_
-# CONSTANTS.md §4 ("Meeting-load working hours/day"), not a second,
-# duplicate 8.0 -- the same real working-day concept, one source of
-# truth.
-TODAY_WORKING_HOURS_PER_DAY = 8.0
+from quorum_backend.features.meeting_load import WORKING_HOURS_PER_DAY as TODAY_WORKING_HOURS_PER_DAY
+
+# A REAL, DISCLOSED CORRECTION TO THIS FILE'S OWN EARLIER COMMENT, closed
+# by `features/meeting_load.py` (Phase 5, `DEC-144`): this line used to
+# define a second, local `8.0` with a comment claiming it "reuses the
+# real, already-defined constant from QUORUM_CONFIGURATION_CONSTANTS.md
+# §4" -- true of the real, specified VALUE, but `meeting_load.py` (the
+# module that constant actually belongs to) did not exist anywhere in
+# this repository yet, so there was no real constant to import, only a
+# duplicate `8.0` with an aspirational comment. Now a real import, not
+# a coincidence of two files agreeing on the same number.
 
 # A real, disclosed, reasoned default -- no per-user budget-
 # configuration feature exists anywhere in this app yet, so this is a

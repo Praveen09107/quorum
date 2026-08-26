@@ -3196,4 +3196,26 @@ Rebuilt via `gcloud builds submit` from current `main` (`294a6e9`, image tag `de
 
 ---
 
-*Next entry: DEC-144*
+## DEC-144: Phase 5 begins -- real Meeting-Load Defense, the concrete backend slice
+
+**Standard tier** -- pure computation, zero database access, zero external calls, zero Gate/security/external-action code touched. No CRITICAL-tier review required per Rule 6's own scope; a standard fresh-context review still ran per this project's baseline discipline.
+
+**Authorized directly ("go ahead with NEXT"), Phase 5 of `QUORUM_PRODUCTION_COMPLETION_PLAN.md`.** Phase 5 is real, substantial, and genuinely spans three separable pieces: this backend module (concrete, scoped, buildable in one session), the real on-device `CalendarProvider` integration (substantial, separate mobile work -- `device_calendar` package, real permission handling, a real Dart port of this exact function), and real `CREATE_CALENDAR_EVENT_EXTERNAL` execution (a new, Rule-5/6-gated external Google Calendar API call, the same shape as `DEC-142`'s own Gmail work). This session deliberately scopes to the first only, disclosed rather than silently narrowed.
+
+**What was built:** `features/meeting_load.py` (new) -- `compute_meeting_load()`, a pure, real function using `QUORUM_CONFIGURATION_CONSTANTS.md` §4's own already-specified parameters (`WORKING_HOURS_PER_DAY = 8.0`, `BUFFER_FRACTION = 0.25`, `OVERLOAD_THRESHOLD = 0.7`) -- confirmed by hand against a real, live-verified float fact before trusting a boundary test: `0.7 * (8.0 * 0.75)` is `4.199999999999999` in real IEEE-754 double precision, not exactly `4.2`, since `0.7` has no exact binary representation. Deliberately source-agnostic (`committed_hours` is an input, never queried by this module itself), matching `today.py::compute_capacity_state()`'s own established split between pure math and live data-fetching (`DEC-119`) -- real calendar ground truth is on-device per the ADD's own §9.2/§10.3, so a backend module computing a real user's true daily meeting load from its own database alone could never be honest, and doesn't try to be.
+
+**A real, disclosed, pre-existing gap closed as part of this same work:** `today.py`'s own `TODAY_WORKING_HOURS_PER_DAY` previously duplicated the same real `8.0` value locally, with a comment claiming it "reuses the real, already-defined constant" from a module (`meeting_load.py`) that, per `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md` §9.7's own real, confirmed table, did not exist anywhere in this repository until now -- an aspirational comment describing a real import that had nothing to import from. `today.py` now genuinely imports `WORKING_HOURS_PER_DAY` from `meeting_load.py` (aliased to the same external name so `negotiation_trigger_support.py`/`retry_queue_drainer.py`, both already-reviewed CRITICAL-tier files that import it from `today.py`, needed zero changes) -- the comment is now a true statement, not a coincidence of two files agreeing on the same number.
+
+**What the standard review verified correct:** the float-boundary test genuinely computes the real boundary the same way the production code does, rather than hardcoding a literal that could silently mask a future formula change; the defensive clamping (non-positive `working_hours_per_day`, negative `committed_hours`) matches `compute_capacity_state()`'s own established precedent exactly; the `today.py` alias import is a real, safe, zero-behavior-change refactor, confirmed by the full existing `test_today_feature.py`/`test_retry_queue_drainer.py`/`test_negotiation_trigger.py` suites passing unchanged.
+
+**Tests:** 11 new in `test_meeting_load.py`, all pure, all passing.
+
+**Verified live:** `ruff check backend` clean. 129 tests across every file touched by the `today.py` refactor (and its real dependents) passing unchanged, plus the 11 new tests.
+
+**Genuinely still open, not resolved by this entry:** the real on-device `CalendarProvider` integration and the Dart port of `compute_meeting_load()` -- substantial, separate mobile work. Real `CREATE_CALENDAR_EVENT_EXTERNAL` execution -- a separate, Rule-5/6-gated cloud slice. A concrete `CalendarAdapter` implementation for `gate/validators.py`'s own already-built `availability_check`/`temporal_fact_check` -- has the same real, unresolved gap `SEND_EMAIL` execution disclosed (`DEC-142`): no real caller anywhere in this backend ever constructs a Gate proposal carrying calendar context, since no "propose an action" flow exists yet outside negotiation-choice. The `calendar_events` table decision the plan asks for ("likely only a thin record of externally-booked events, not a full mirror") -- not yet built; deferred to whichever future session actually implements `CREATE_CALENDAR_EVENT_EXTERNAL`, since that's the first real, concrete need for it.
+
+**Affects:** `backend/src/quorum_backend/features/meeting_load.py` (new), `backend/src/quorum_backend/features/today.py`, `backend/tests/test_meeting_load.py` (new), this log.
+
+---
+
+*Next entry: DEC-145*
