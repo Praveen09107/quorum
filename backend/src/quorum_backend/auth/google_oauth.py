@@ -103,17 +103,37 @@ async def revoke_google_token(token: str) -> None:
     `access_token` issued under it -- one real call closes the entire
     real grant, not just its current, possibly-already-expired half.
 
-    A real 400 from Google most commonly means the token was already
-    invalid or previously revoked (independently, at Google's own
-    account settings, or by a prior, partially-completed real deletion
-    attempt) -- treated as a real, benign no-op here, since the real end
-    state (no live Google grant for this token) is identical either
-    way, and a real account deletion must never be blocked by Google
-    reporting that its own job is already done."""
+    A REAL, DISCLOSED FIX (this PR's own CRITICAL-tier review): an
+    earlier version treated EVERY real `400` as the benign "already
+    invalid or previously revoked" case. Live probing of Google's real
+    `/revoke` endpoint found `400` genuinely covers TWO different real
+    errors, distinguishable only by the response body's own `error`
+    field -- `"invalid_token"` (Google looked at the token and it's
+    genuinely already dead -- the real, intended benign case) versus
+    `"invalid_request"` (Google never evaluated a token at all -- an
+    empty/missing/malformed real request, which a real, undetected bug
+    in how this function builds its own POST body could produce just as
+    easily as a caller passing bad real input). Live-proven the
+    difference is consequential, not academic: treating a real
+    `invalid_request` as benign would let `revoke_oauth_tokens()` delete
+    the real local token row while the real external Google grant (live
+    `gmail.send`/`gmail.modify`/`calendar.events` access) was NEVER
+    actually revoked -- exactly the plausible-looking-but-false success
+    this project's own "honest count, never a fabricated one" discipline
+    exists to prevent, on a real, S3-equivalent irreversible path. Only
+    a real, confirmed `invalid_token` is now treated as benign."""
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post(GOOGLE_REVOKE_URL, data={"token": token})
-    if response.status_code not in (200, 400):
-        raise GoogleOAuthExchangeFailed(f"Google token revocation failed ({response.status_code}): {response.text}")
+    if response.status_code == 200:
+        return
+    if response.status_code == 400:
+        try:
+            error = response.json().get("error")
+        except ValueError:
+            error = None
+        if error == "invalid_token":
+            return
+    raise GoogleOAuthExchangeFailed(f"Google token revocation failed ({response.status_code}): {response.text}")
 
 
 def verify_google_id_token(id_token: str, client_id: str) -> dict:

@@ -41,39 +41,59 @@ async def store_google_tokens(
     granted_scopes: str,
     encryption_key: str,
 ) -> None:
-    """Real, atomic upsert. `refresh_token` is `None` in exactly one
-    real caller: `google_token_refresh.py`'s own refresh flow, whose
-    Google `grant_type=refresh_token` response never includes a fresh
-    one (confirmed against Google's own documentation before relying on
-    this) -- the real prior, still-valid encrypted refresh_token must
-    survive that call intact, never overwritten with `NULL`.
+    """Real, atomic upsert for a genuine consent exchange (a real
+    sign-in or re-consent, always carrying a real `refresh_token` since
+    `auth_controller.dart` always requests `access_type=offline`+
+    `prompt=consent`) -- never for a refresh-only write; see `update_
+    access_token_after_refresh()` below for that genuinely different
+    real case.
 
-    A REAL, LIVE, POSTGRES-SPECIFIC BUG FOUND AND FIXED WHILE WRITING
-    THIS MODULE'S OWN TESTS, before any review: an earlier version
-    resolved the `NULL`-refresh_token fallback inside the `ON CONFLICT
-    DO UPDATE SET ... COALESCE(EXCLUDED.x, table.x)` clause -- syntactically
-    correct-looking SQL that fails LIVE, every time, with a real
-    `NotNullViolationError`. Confirmed via a real, minimal, unrelated
-    reproduction table before trusting the explanation: Postgres checks
-    a `NOT NULL` constraint against the raw `VALUES(...)` list BEFORE
-    `ON CONFLICT` resolution ever runs -- a real `NULL` literal passed
-    into the `VALUES` clause for a `NOT NULL` column raises immediately,
-    even when the `DO UPDATE SET` clause would have replaced it with a
-    real, non-null value via `COALESCE`. Fixed by moving the `COALESCE`
-    INTO the `VALUES` clause itself, resolved against a real subquery
-    for the existing row's own current value -- the constraint check
-    then sees an already-non-null, already-resolved value, not a raw
-    `NULL` headed for a conflict that hasn't been decided yet."""
-    encrypted_refresh = encrypt_token(refresh_token, encryption_key=encryption_key) if refresh_token else None
+    **TWO REAL, LIVE BUGS FOUND AND FIXED, THE SECOND BY THIS PR'S OWN
+    CRITICAL-TIER REVIEW (the first, before any review):**
+
+    1. An earlier version accepted `refresh_token=None` here and
+       resolved a fallback to the existing row's own value inside the
+       `ON CONFLICT DO UPDATE SET ... COALESCE(EXCLUDED.x, table.x)`
+       clause -- syntactically correct-looking SQL that fails LIVE,
+       every time, with a real `NotNullViolationError`. Confirmed via a
+       real, minimal, unrelated reproduction table before trusting the
+       explanation: Postgres checks a `NOT NULL` constraint against the
+       raw `VALUES(...)` list BEFORE `ON CONFLICT` resolution ever runs.
+    2. The review's own fix for (1) -- moving the `COALESCE` into the
+       `VALUES` clause via a real subquery -- introduced a real, live,
+       reproduced TOCTOU race: under real concurrency (a sign-in racing
+       a refresh, both real, both possible under Cloud Run's own
+       `--concurrency=1`/`--max-instances=2`), the subquery could read
+       a real, soon-to-be-stale `encrypted_refresh_token` just before a
+       concurrent writer committed a newer one, silently persisting the
+       OLD value -- live-proven: 3 of 25 real concurrent races ended
+       with the stale token, zero exceptions raised, completely silent.
+       And a genuinely fresh row (no existing subquery match) with
+       `refresh_token=None` still hit bug (1)'s own `NotNullViolationError`
+       under concurrent first-inserts.
+
+    **THE REAL FIX: this function no longer accepts `refresh_token=None`
+    at all.** It always requires and writes a real one -- a plain,
+    unconditional `INSERT ... ON CONFLICT DO UPDATE SET x = EXCLUDED.x`
+    for every column, no subquery, no COALESCE, no read-before-write of
+    any kind -- which is trivially race-free under real concurrency
+    (two concurrent real writers each write their own fully self-
+    consistent real values; last-committed-wins is the correct real
+    semantic for two genuine, near-simultaneous consents by the same
+    real user). The refresh-only case that needed `None` before now
+    calls `update_access_token_after_refresh()` instead, which never
+    touches `encrypted_refresh_token` at all -- eliminating both real
+    bugs by construction, not by patching the symptom a second time."""
+    if not refresh_token:
+        raise ValueError(
+            "store_google_tokens() requires a real refresh_token -- for a refresh-only write with no "
+            "new refresh_token, call update_access_token_after_refresh() instead."
+        )
     await pool.execute(
         """
         INSERT INTO google_oauth_tokens
             (user_id, encrypted_access_token, encrypted_refresh_token, access_token_expires_at, granted_scopes, updated_at)
-        VALUES (
-            $1, $2,
-            COALESCE($3, (SELECT encrypted_refresh_token FROM google_oauth_tokens WHERE user_id = $1)),
-            $4, $5, now()
-        )
+        VALUES ($1, $2, $3, $4, $5, now())
         ON CONFLICT (user_id) DO UPDATE SET
             encrypted_access_token = EXCLUDED.encrypted_access_token,
             encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
@@ -83,9 +103,37 @@ async def store_google_tokens(
         """,
         uuid.UUID(internal_user_id),
         encrypt_token(access_token, encryption_key=encryption_key),
-        encrypted_refresh,
+        encrypt_token(refresh_token, encryption_key=encryption_key),
         access_token_expires_at,
         granted_scopes,
+    )
+
+
+async def update_access_token_after_refresh(
+    pool: asyncpg.Pool,
+    *,
+    internal_user_id: str,
+    access_token: str,
+    access_token_expires_at: datetime,
+    encryption_key: str,
+) -> None:
+    """The real, ONLY write `get_valid_google_access_token()`'s own
+    refresh path uses -- a plain, unconditional `UPDATE` that never
+    reads or touches `encrypted_refresh_token` at all, so there is no
+    real value to race on and no `NULL` that could ever reach the
+    column's own `NOT NULL` constraint. Assumes a real row already
+    exists (the caller just read one via `fetch_google_tokens` to reach
+    this point at all) -- a genuinely vanished row (deleted concurrently
+    by a real account deletion) is a real, honest no-op here (`UPDATE 0`),
+    never an error; the caller's own next real call simply finds nothing
+    to fetch and returns `None` again, exactly as if the row had never
+    existed."""
+    await pool.execute(
+        "UPDATE google_oauth_tokens SET encrypted_access_token = $1, access_token_expires_at = $2, updated_at = now() "
+        "WHERE user_id = $3",
+        encrypt_token(access_token, encryption_key=encryption_key),
+        access_token_expires_at,
+        uuid.UUID(internal_user_id),
     )
 
 
@@ -140,7 +188,22 @@ async def get_valid_google_access_token(
     currently-usable real access token, refreshing it first if it's
     expired or about to be. Returns `None` honestly when no real Google
     tokens are stored for this user at all (never granted, or already
-    revoked) -- never a fabricated token."""
+    revoked) -- never a fabricated token.
+
+    A REAL, DISCLOSED, LOW-SEVERITY GAP, found by this PR's own
+    CRITICAL-tier review, not fixed here: if `refresh_google_access_
+    token()` succeeds but the subsequent `update_access_token_after_
+    refresh()` write fails (a dropped connection, a transient real DB
+    error), this function still raises (never silently returns an
+    unpersisted token as if it were durable) -- but the stored `access_
+    token_expires_at` never advances, so the NEXT real caller re-derives
+    "still expired" and issues ANOTHER real Google refresh call. A real,
+    repeatedly-retrying caller (a `pg_cron` job against a degraded
+    database) could burn several real Google refresh grants with zero
+    forward progress. Bounded by this project's own real cron cadences
+    (at most a handful of real calls per hour, not unbounded), disclosed
+    as a real, accepted risk rather than added complexity this specific
+    failure mode doesn't yet warrant."""
     record = await fetch_google_tokens(pool, internal_user_id=internal_user_id, encryption_key=encryption_key)
     if record is None:
         return None
@@ -153,13 +216,11 @@ async def get_valid_google_access_token(
     new_access_token, new_expires_at = await refresh_google_access_token(
         refresh_token=record.refresh_token, client_id=client_id, client_secret=client_secret
     )
-    await store_google_tokens(
+    await update_access_token_after_refresh(
         pool,
         internal_user_id=internal_user_id,
         access_token=new_access_token,
-        refresh_token=None,
         access_token_expires_at=new_expires_at,
-        granted_scopes=record.granted_scopes,
         encryption_key=encryption_key,
     )
     return new_access_token

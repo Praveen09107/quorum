@@ -60,17 +60,27 @@ async def test_verify_id_token_rejects_a_well_formed_but_unsigned_token():
         verify_google_id_token(fake_token, settings.google_oauth_client_id)
 
 
-async def test_revoking_a_real_deliberately_invalid_token_is_a_real_benign_no_op():
-    """Phase 3. Google's real `/revoke` endpoint returns a real `400`
-    for a token it doesn't recognize -- `revoke_google_token()`'s own
-    documented design treats that as benign (the real end state, no
-    live grant for this token, is identical to a successful real
-    revocation), so this call must complete without raising."""
+async def test_revoking_a_real_deliberately_invalid_but_well_formed_token_is_a_real_benign_no_op():
+    """Phase 3. Google's real `/revoke` endpoint answers a real,
+    well-formed-but-unrecognized token with a real `400` and
+    `{"error": "invalid_token"}` -- `revoke_google_token()`'s own
+    documented design treats specifically THAT real error as benign
+    (the real end state, no live grant for this token, is identical to
+    a successful real revocation), so this call must complete without
+    raising."""
     await revoke_google_token("deliberately-fake-token-for-a-real-test")
 
 
-async def test_revoking_an_empty_token_still_reaches_googles_real_endpoint_and_does_not_raise():
-    # Google's real endpoint also answers a genuinely empty/malformed
-    # token with a real 400 -- confirming this isn't special-cased to
-    # only tolerate one specific shape of "already invalid."
-    await revoke_google_token("")
+async def test_revoking_an_empty_token_is_a_real_invalid_request_and_must_raise():
+    """A REAL, DISCLOSED CORRECTION to this test's own former name and
+    assertion, found by this PR's own CRITICAL-tier review: an earlier
+    version of this test asserted an empty token must NOT raise,
+    enshrining the wrong real behavior. Google's real `/revoke` endpoint
+    answers a genuinely empty token with `400` and `{"error":
+    "invalid_request", "error_description": "Bad Request"}` -- a
+    GENUINELY DIFFERENT real error than `invalid_token`: Google never
+    evaluated a real token at all, so this can never be treated as "the
+    grant is already gone." `revoke_google_token()` must raise here,
+    not silently report a real revocation that never happened."""
+    with pytest.raises(GoogleOAuthExchangeFailed, match="invalid_request"):
+        await revoke_google_token("")

@@ -1099,6 +1099,52 @@ def test_auth_token_with_a_fake_code_fails_loud_with_a_real_400():
     assert "invalid_grant" in response.json()["detail"]
 
 
+async def test_auth_token_a_real_sign_in_missing_a_refresh_token_never_500s(pool, monkeypatch):
+    """Real regression test for this PR's own CRITICAL-tier review,
+    BLOCKER 1: a real, live-proven 500 that made sign-in permanently
+    impossible whenever Google's own token response omitted
+    `refresh_token` -- reachable for every currently-signed-in real
+    user's very first sign-in after `auth_controller.dart`'s own real
+    `access_type=offline` change first ships, since before that no real
+    authorization request ever carried it. Mocks only the two real
+    network calls to Google this route can't complete without a live
+    browser (`exchange_authorization_code`, `verify_google_id_token`);
+    every other real code path -- user provisioning, the new branching
+    logic, session issuance -- runs for real."""
+    from quorum_backend import main as main_module
+
+    google_sub = f"test-auth-token-no-refresh-{uuid.uuid4()}"
+
+    async def _fake_exchange(**kwargs):
+        return {"access_token": "a-real-looking-access-token", "id_token": "irrelevant", "expires_in": 3600, "scope": "openid email"}
+
+    def _fake_verify(id_token, client_id):
+        return {"sub": google_sub, "email": "test@example.com"}
+
+    monkeypatch.setattr(main_module, "exchange_authorization_code", _fake_exchange)
+    monkeypatch.setattr(main_module, "verify_google_id_token", _fake_verify)
+
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/auth/token",
+                json={"code": "irrelevant", "code_verifier": "irrelevant", "redirect_uri": "https://example.com/callback"},
+            )
+
+        assert response.status_code == 200  # the real, load-bearing fix -- this used to be a real 500
+        body = response.json()
+        assert body["access_token"]
+        assert body["refresh_token"]
+
+        internal_user_id = await pool.fetchval("SELECT user_id FROM users WHERE google_sub = $1", google_sub)
+        assert internal_user_id is not None  # the real user was still genuinely provisioned
+        # No real Google token row was ever created -- genuinely nothing
+        # to store, honestly skipped, not fabricated.
+        assert await pool.fetchrow("SELECT 1 FROM google_oauth_tokens WHERE user_id = $1", internal_user_id) is None
+    finally:
+        await pool.execute("DELETE FROM users WHERE google_sub = $1", google_sub)
+
+
 def test_auth_callback_real_url_encodes_special_characters_in_state():
     # A real, deliberate correctness check: state values can legitimately
     # contain characters (&, =, spaces) that manual string concatenation

@@ -117,7 +117,23 @@ async def delete_account(
     the real, external thing before destroying the local record that
     makes revoking it possible" reasoning this function already applies
     to session revocation above, extended to Google's own real grant.
-    """
+
+    **A REAL, DISCLOSED ATOMICITY GAP, found by this same Phase 3
+    session's own CRITICAL-tier review, of the EXACT same shape `DEC-113`
+    already disclosed for `purge_postgres_rows`/`purge_vector_embeddings`
+    below -- not silently treated as new or different:** `revoke_oauth_
+    tokens()` and `purge_postgres_rows()` are two independently-awaited
+    real calls, not one shared transaction. If the real Google revoke
+    and the real local token-row delete both succeed, but `purge_
+    postgres_rows()` then fails (a dropped connection, a transient real
+    DB error), the real account still exists, fully intact, EXCEPT its
+    own real Google tokens are already gone -- a real, live, still-open
+    risk. Deliberately not fixed here, for the same real reason `DEC-113`'s
+    own gap wasn't: a shared transaction can't span a slow, real external
+    HTTP call to Google held under a database lock the whole time
+    without incurring a real, new problem (an open transaction blocking
+    on a real network round trip). Tracked as a real, open, low-
+    probability follow-up, the same standing `DEC-113`'s own gap has."""
     await revoke_all_for_user(google_sub, revocation_store)
     oauth_tokens_revoked = await deletion_store.revoke_oauth_tokens(internal_user_id)
 

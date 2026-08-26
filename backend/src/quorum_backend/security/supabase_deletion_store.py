@@ -88,12 +88,16 @@ architecture change beyond what this session's real scope called for.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 
 import asyncpg
 
-from quorum_backend.auth.google_oauth import revoke_google_token
+from quorum_backend.auth.google_oauth import GoogleOAuthExchangeFailed, revoke_google_token
 from quorum_backend.auth.google_token_store import delete_google_tokens, fetch_google_tokens
+from quorum_backend.security.google_token_encryption import GoogleTokenDecryptionFailed
+
+logger = logging.getLogger("quorum_backend")
 
 
 def _parse_deleted_count(command_status: str) -> int:
@@ -198,13 +202,68 @@ class SupabaseDeletionStore:
         never granted Google access at all, or `GOOGLE_TOKEN_ENCRYPTION_
         KEY` isn't configured on this deployment -- an account deletion
         must never be blocked by a real feature this specific real user
-        never actually used."""
+        never actually used.
+
+        **TWO REAL, LIVE BUGS FOUND BY THIS PR'S OWN CRITICAL-TIER
+        REVIEW, BOTH FIXED HERE:** an earlier version let a real
+        `GoogleTokenDecryptionFailed` (a real encryption-key rotation
+        with no real migration path for rows encrypted under the old
+        key) or a real `GoogleOAuthExchangeFailed` (a genuine Google
+        `/revoke` outage or network failure) propagate straight out of
+        this method, through `delete_account()`, and out of the real
+        `DELETE /account` route as an unhandled `500` -- live-proven to
+        leave the account PERMANENTLY undeletable: session revocation
+        had already run by the time this method is reached (`delete_
+        account()`'s own real ordering), so the user is logged out with
+        no working retry path, and this real, S3-equivalent irreversible
+        operation has no other real entry point. Both real failure modes
+        are now caught, logged loudly, and never block the rest of this
+        real account deletion -- the same "an account deletion must
+        never be blocked by a real feature this specific real user never
+        actually used" principle, extended to "...or a real, external
+        failure this specific real user has no control over."
+
+        **A REAL, DISCLOSED, NOT-FULLY-CLOSED GAP, found by the same
+        review, matching `DEC-113`'s own already-disclosed atomicity
+        gap for `purge_postgres_rows`/`purge_vector_embeddings`:** this
+        method's own real local delete and `purge_postgres_rows()` are
+        independently awaited, not one shared transaction. If Google's
+        real revoke call and this method's own local delete both
+        succeed, but `purge_postgres_rows()` then fails, the account
+        still exists but its stored Google tokens are already gone --
+        a real, live, still-open risk, not silently treated as closed
+        by the fixes above. Also honest, not hidden: on a real Google-
+        side failure, the real local row is still deleted (so this
+        method never re-attempts the same failing real revoke call
+        forever), but the real external Google grant may still be live
+        until it naturally expires or the user revokes it manually at
+        Google's own account settings -- `oauth_tokens_revoked` in this
+        case reports the real LOCAL deletion count, not a guarantee the
+        real external grant was confirmed revoked."""
         if self._google_token_encryption_key is None:
             return 0
-        record = await fetch_google_tokens(
-            self._pool, internal_user_id=internal_user_id, encryption_key=self._google_token_encryption_key
-        )
+        try:
+            record = await fetch_google_tokens(
+                self._pool, internal_user_id=internal_user_id, encryption_key=self._google_token_encryption_key
+            )
+        except GoogleTokenDecryptionFailed:
+            logger.exception(
+                "Real Google token ciphertext for user_id=%s failed to decrypt during account deletion -- "
+                "deleting the real, undecryptable row locally without a real Google revoke call (nothing "
+                "could be recovered from it to revoke), never blocking the rest of this real account deletion.",
+                internal_user_id,
+            )
+            return await delete_google_tokens(self._pool, internal_user_id=internal_user_id)
         if record is None:
             return 0
-        await revoke_google_token(record.refresh_token)
+        try:
+            await revoke_google_token(record.refresh_token)
+        except GoogleOAuthExchangeFailed:
+            logger.exception(
+                "Real Google token revocation failed for user_id=%s during account deletion (a real Google "
+                "outage or network failure) -- the real local row is still deleted so this never blocks the "
+                "rest of deletion, but the real external Google grant may still be live until it naturally "
+                "expires or the user revokes it manually at Google's own account settings.",
+                internal_user_id,
+            )
         return await delete_google_tokens(self._pool, internal_user_id=internal_user_id)
