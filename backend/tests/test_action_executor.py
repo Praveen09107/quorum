@@ -5,6 +5,7 @@ DEC-142) -- real inserts against the real, live database for
 5), and a real, exhaustive proof that every other real `ActionType`
 returns an honest, non-executing result, per CLAUDE.md Rule 5.
 """
+import base64
 import uuid
 from datetime import datetime, timezone
 
@@ -16,13 +17,26 @@ from quorum_backend.auth.user_provisioning import get_or_create_user
 from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
 from quorum_backend.features.action_executor import execute_approved_action
-from quorum_backend.gate.schemas import ActionType
+from quorum_backend.gate.schemas import ActionType, Stakes
+from quorum_backend.router import STAKES_TABLE
 
 _HAS_REAL_GOOGLE_CONFIG = (
     get_settings().google_oauth_client_id is not None
     and get_settings().google_oauth_client_secret is not None
     and get_settings().google_token_encryption_key is not None
 )
+
+# The real, live, dedicated sandbox account (DEC-139) -- the ONLY real
+# account every capstone test below is ever allowed to send from or
+# modify. A real, disclosed CRITICAL-tier review finding (DEC-142,
+# H3): an earlier version of these capstone tests selected whichever
+# `google_oauth_tokens` row was most recently updated -- harmless only
+# while the sandbox account is the sole real grant in this deployment.
+# The moment any real (non-sandbox) user connects Google, that query
+# would send a real, irreversible email from THEIR account and trash
+# messages in THEIR mailbox. Selecting by this real, hardcoded, known
+# sandbox address closes that off structurally.
+_SANDBOX_EMAIL = "quorum.dev.sandbox@gmail.com"
 
 
 class _FakeResponse:
@@ -43,7 +57,7 @@ class _FakePostClient:
 
     def __init__(self, *, status_code: int = 200, body: dict | None = None):
         self.status_code = status_code
-        self.body = body or {"id": "fake-message-id", "threadId": "fake-thread-id", "labelIds": []}
+        self.body = body or {"id": "fake-message-id", "threadId": "fake-thread-id", "labelIds": ["SENT"]}
         self.calls: list[tuple[str, dict, dict]] = []
 
     async def post(self, url, json=None, headers=None):
@@ -51,11 +65,27 @@ class _FakePostClient:
         return _FakeResponse(self.status_code, self.body)
 
 
-def _patch_valid_token(monkeypatch, token: str = "fake-access-token") -> None:
-    async def _fake_valid_token(*args, **kwargs):
-        return token
+class _FakeTimeoutPostClient:
+    """A real double for a genuine TRANSPORT-level failure -- never
+    reaches a real HTTP response at all, the one case where this
+    module's own `ExecutionResult.executed` is honestly `None`
+    (genuinely unknown), not `False`."""
 
-    monkeypatch.setattr("quorum_backend.features.action_executor.get_valid_google_access_token", _fake_valid_token)
+    async def post(self, url, json=None, headers=None):
+        raise httpx.ConnectTimeout("fake: connection timed out")
+
+
+async def _real_sandbox_user_id(pool) -> str | None:
+    """Resolves the real, internal `user_id` for the real, dedicated
+    sandbox account specifically -- never "whichever token was updated
+    most recently." Returns `None` (a real, honest skip signal) if the
+    sandbox account has no real, live Google grant stored in this
+    environment yet."""
+    row = await pool.fetchrow(
+        "SELECT t.user_id FROM google_oauth_tokens t JOIN users u ON u.user_id = t.user_id WHERE u.email = $1",
+        _SANDBOX_EMAIL,
+    )
+    return str(row["user_id"]) if row is not None else None
 
 
 @pytest_asyncio.fixture
@@ -156,109 +186,190 @@ async def test_execute_approved_action_fails_safely_not_loudly_on_a_real_malform
     assert await pool.fetchrow("SELECT 1 FROM tasks WHERE user_id = $1", uuid.UUID(user_id)) is None
 
 
+# --- The real, structural S3 backstop, dynamically tied to STAKES_TABLE ---
+
+
+def test_real_s3_action_types_are_exactly_send_email_and_calendar_external():
+    """A real, disclosed CRITICAL-tier review finding (DEC-142, M2):
+    `execute_approved_action()`'s own S3 backstop is computed fresh
+    from `router.get_stakes()` every call, which is the right design
+    (never a second, hand-maintained set to drift out of sync) -- but
+    that same dynamism means a real `STAKES_TABLE` reclassification
+    would silently change what requires human approval, with nothing
+    forcing anyone to notice. This test is the real, live guard: it
+    fails loudly the moment the real set of S3 action types changes at
+    all, so a reclassification is a real, visible decision, never a
+    silent one."""
+    real_s3_types = {action_type for action_type, stakes in STAKES_TABLE.items() if stakes is Stakes.S3}
+    assert real_s3_types == {ActionType.SEND_EMAIL, ActionType.CREATE_CALENDAR_EVENT_EXTERNAL}
+
+
 # --- SEND_EMAIL: the real S3 backstop, DEC-142's own review finding ---
 
 
 async def test_execute_approved_action_send_email_refuses_without_real_human_approval(pool, user_id):
     """The real, structural backstop this session's own review found
     missing from `gate/orchestration.py` itself -- see action_executor.
-    py's own top-of-file docstring. Refuses BEFORE ever touching Google
-    config or a real access token."""
+    py's own top-of-file docstring. Refuses BEFORE ever touching a real
+    Gmail call -- proven here by never even providing an `http_client`,
+    and asserting zero calls would have been possible."""
     async with pool.acquire() as conn:
         result = await execute_approved_action(
             conn, action_type=ActionType.SEND_EMAIL, payload={"to": "a@x.com", "body": "hi"}, user_id=user_id,
-            google_client_id="unused", google_client_secret="unused", google_token_encryption_key="unused",
+            google_access_token="fake-access-token",
         )
     assert result.executed is False
     assert "S3" in result.detail
-    assert "human_approved" in result.detail
+    assert "approved_by_user_id" in result.detail
 
 
-async def test_execute_approved_action_send_email_refuses_without_real_google_config_even_when_human_approved(pool, user_id):
+async def test_execute_approved_action_send_email_refuses_when_approved_by_a_different_real_user(pool, user_id):
+    """`approved_by_user_id` must match THIS exact user -- never a bare
+    truthy flag a future caller could accidentally derive from
+    `verdict.decision == "approve"` (the exact confusion this design
+    exists to prevent, per DEC-142 review finding M1)."""
+    fake_client = _FakePostClient()
     async with pool.acquire() as conn:
         result = await execute_approved_action(
             conn, action_type=ActionType.SEND_EMAIL, payload={"to": "a@x.com", "body": "hi"}, user_id=user_id,
-            human_approved=True,
+            approved_by_user_id=str(uuid.uuid4()),  # a real, different user id -- not a match
+            google_access_token="fake-access-token", http_client=fake_client,
         )
     assert result.executed is False
-    assert "Google OAuth configuration" in result.detail
+    assert "S3" in result.detail
+    assert fake_client.calls == []  # genuinely never reached a real Gmail call
 
 
-async def test_execute_approved_action_send_email_refuses_for_a_user_with_no_real_google_grant(pool, user_id, monkeypatch):
-    async def _fake_none(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr("quorum_backend.features.action_executor.get_valid_google_access_token", _fake_none)
+async def test_execute_approved_action_send_email_refuses_without_a_real_access_token_even_when_approved(pool, user_id):
     async with pool.acquire() as conn:
         result = await execute_approved_action(
             conn, action_type=ActionType.SEND_EMAIL, payload={"to": "a@x.com", "body": "hi"}, user_id=user_id,
-            human_approved=True, google_client_id="x", google_client_secret="y", google_token_encryption_key="z",
+            approved_by_user_id=user_id,
         )
     assert result.executed is False
-    assert "no real, stored Google grant" in result.detail
+    assert "no real Google access token" in result.detail
 
 
-async def test_execute_approved_action_send_email_a_real_malformed_payload_is_honest_not_a_crash(pool, user_id, monkeypatch):
-    _patch_valid_token(monkeypatch)
+async def test_execute_approved_action_send_email_a_real_header_injection_attempt_is_refused_not_carried_out(pool, user_id):
+    """A real, disclosed CRITICAL-tier review BLOCKER (DEC-142, B1): a
+    real `to`/`subject` value containing an embedded CR/LF could inject
+    an arbitrary header (a silent `Bcc:`, or terminate the header block
+    and replace the whole body) into a real, irreversible S3 send.
+    Reachable via `agents/email_agent.py`'s own real, untrusted
+    `recipient`, or a Judge-authored `revised_payload` with no schema
+    guarantee. Must be refused before any real network call."""
+    fake_client = _FakePostClient()
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.SEND_EMAIL,
+            payload={"to": "victim@example.com\r\nBcc: exfil@attacker.tld", "body": "hi"},
+            user_id=user_id, approved_by_user_id=user_id,
+            google_access_token="fake-access-token", http_client=fake_client,
+        )
+    assert result.executed is False
+    assert "malformed" in result.detail.lower()
+    assert fake_client.calls == []  # genuinely never reached a real Gmail call
+
+
+async def test_execute_approved_action_send_email_a_real_subject_injection_attempt_is_refused_too(pool, user_id):
+    fake_client = _FakePostClient()
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.SEND_EMAIL,
+            payload={"to": "a@x.com", "subject": "hi\r\nBcc: exfil@attacker.tld", "body": "hi"},
+            user_id=user_id, approved_by_user_id=user_id,
+            google_access_token="fake-access-token", http_client=fake_client,
+        )
+    assert result.executed is False
+    assert fake_client.calls == []
+
+
+async def test_execute_approved_action_send_email_a_real_malformed_payload_is_honest_not_a_crash(pool, user_id):
     async with pool.acquire() as conn:
         result = await execute_approved_action(
             conn, action_type=ActionType.SEND_EMAIL, payload={"to": "a@x.com"}, user_id=user_id,  # missing "body"
-            human_approved=True, google_client_id="x", google_client_secret="y", google_token_encryption_key="z",
-            http_client=_FakePostClient(),
+            approved_by_user_id=user_id, google_access_token="fake-access-token", http_client=_FakePostClient(),
         )
     assert result.executed is False
     assert "malformed" in result.detail.lower()
 
 
-async def test_execute_approved_action_send_email_a_real_gmail_failure_is_honest_not_a_crash(pool, user_id, monkeypatch):
-    _patch_valid_token(monkeypatch)
+async def test_execute_approved_action_send_email_a_real_gmail_rejection_is_a_definite_false(pool, user_id):
     fake_client = _FakePostClient(status_code=500, body={"error": "fake failure"})
     async with pool.acquire() as conn:
         result = await execute_approved_action(
             conn, action_type=ActionType.SEND_EMAIL, payload={"to": "a@x.com", "body": "hi"}, user_id=user_id,
-            human_approved=True, google_client_id="x", google_client_secret="y", google_token_encryption_key="z",
-            http_client=fake_client,
+            approved_by_user_id=user_id, google_access_token="fake-access-token", http_client=fake_client,
         )
     assert result.executed is False
-    assert "Google's real API" in result.detail
+    assert "genuinely rejected" in result.detail
 
 
-async def test_execute_approved_action_send_email_sends_a_real_raw_mime_message_with_the_real_existing_payload_shape(pool, user_id, monkeypatch):
+async def test_execute_approved_action_send_email_a_real_transport_failure_is_genuinely_unknown_not_a_definite_false(pool, user_id):
+    """A real, disclosed CRITICAL-tier review BLOCKER (DEC-142, B2): a
+    genuine TRANSPORT-level failure (a timeout, a dropped connection)
+    settles NOTHING about whether Gmail actually processed a real send
+    -- collapsing it into a flat `executed=False` could make a caller
+    wrongly believe no email went out and retry, genuinely risking a
+    real duplicate send. `executed` must be `None` here, never `False`."""
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.SEND_EMAIL, payload={"to": "a@x.com", "body": "hi"}, user_id=user_id,
+            approved_by_user_id=user_id, google_access_token="fake-access-token", http_client=_FakeTimeoutPostClient(),
+        )
+    assert result.executed is None
+    assert "genuinely UNKNOWN" in result.detail
+
+
+async def test_execute_approved_action_send_email_a_definite_200_is_executed_true_even_if_the_id_cant_be_parsed(pool, user_id):
+    """A real, disclosed CRITICAL-tier review BLOCKER (DEC-142, B2): a
+    real, genuine `200` from Gmail means the email definitely sent,
+    regardless of whether this module can parse the response body --
+    a parse failure must never flip an already-successful real send
+    into a false `executed=False`."""
+    fake_client = _FakePostClient(status_code=200, body={"unexpected": "shape"})
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.SEND_EMAIL, payload={"to": "a@x.com", "body": "hi"}, user_id=user_id,
+            approved_by_user_id=user_id, google_access_token="fake-access-token", http_client=fake_client,
+        )
+    assert result.executed is True
+    assert "<unknown>" in result.detail
+
+
+async def test_execute_approved_action_send_email_sends_a_real_mime_message_with_the_real_existing_payload_shape(pool, user_id):
     """Real, deterministic proof of the exact real payload contract
     `agents/email_agent.py::build_reply_proposal()` already produces
     (`to`/`body`, no `subject`) -- see action_executor.py's own top-of-
-    file docstring for the real, disclosed gap this exposes."""
-    _patch_valid_token(monkeypatch)
+    file docstring for the real, disclosed gap this exposes. Built via
+    the stdlib `email.message.EmailMessage` (the real header-injection
+    fix), not raw string interpolation."""
     fake_client = _FakePostClient(body={"id": "sent-1", "threadId": "thread-1", "labelIds": ["SENT"]})
     async with pool.acquire() as conn:
         result = await execute_approved_action(
             conn, action_type=ActionType.SEND_EMAIL, payload={"to": "a@x.com", "body": "hello there"}, user_id=user_id,
-            human_approved=True, google_client_id="x", google_client_secret="y", google_token_encryption_key="z",
-            http_client=fake_client,
+            approved_by_user_id=user_id, google_access_token="fake-access-token", http_client=fake_client,
         )
     assert result.executed is True
     assert "sent-1" in result.detail
     url, body, headers = fake_client.calls[0]
     assert url.endswith("/messages/send")
     assert headers["Authorization"] == "Bearer fake-access-token"
-    import base64
 
     raw = base64.urlsafe_b64decode(body["raw"]).decode()
     assert "To: a@x.com" in raw
-    assert "Subject: \r\n" in raw  # a real, honest empty subject -- the real payload shape has none
     assert "hello there" in raw
 
 
-# --- ARCHIVE_EMAIL / LABEL_EMAIL: real Gmail modify calls, S1/S0, no human_approved needed ---
+# --- ARCHIVE_EMAIL / LABEL_EMAIL: real Gmail modify calls, S1/S0, no human approval needed ---
 
 
-async def test_execute_approved_action_archive_email_succeeds_with_a_real_fake_gmail_response(pool, user_id, monkeypatch):
-    _patch_valid_token(monkeypatch)
-    fake_client = _FakePostClient()
+async def test_execute_approved_action_archive_email_succeeds_with_a_real_fake_gmail_response(pool, user_id):
+    fake_client = _FakePostClient(body={"id": "msg-1", "threadId": "t-1", "labelIds": ["SENT"]})
     async with pool.acquire() as conn:
         result = await execute_approved_action(
             conn, action_type=ActionType.ARCHIVE_EMAIL, payload={"message_id": "msg-1"}, user_id=user_id,
-            google_client_id="x", google_client_secret="y", google_token_encryption_key="z", http_client=fake_client,
+            google_access_token="fake-access-token", http_client=fake_client,
         )
     assert result.executed is True
     url, body, headers = fake_client.calls[0]
@@ -267,13 +378,12 @@ async def test_execute_approved_action_archive_email_succeeds_with_a_real_fake_g
     assert headers["Authorization"] == "Bearer fake-access-token"
 
 
-async def test_execute_approved_action_label_email_succeeds_with_a_real_fake_gmail_response(pool, user_id, monkeypatch):
-    _patch_valid_token(monkeypatch)
-    fake_client = _FakePostClient()
+async def test_execute_approved_action_label_email_succeeds_with_a_real_fake_gmail_response(pool, user_id):
+    fake_client = _FakePostClient(body={"id": "msg-1", "threadId": "t-1", "labelIds": ["SENT", "IMPORTANT"]})
     async with pool.acquire() as conn:
         result = await execute_approved_action(
             conn, action_type=ActionType.LABEL_EMAIL, payload={"message_id": "msg-1", "label_id": "IMPORTANT"}, user_id=user_id,
-            google_client_id="x", google_client_secret="y", google_token_encryption_key="z", http_client=fake_client,
+            google_access_token="fake-access-token", http_client=fake_client,
         )
     assert result.executed is True
     url, body, headers = fake_client.calls[0]
@@ -281,40 +391,53 @@ async def test_execute_approved_action_label_email_succeeds_with_a_real_fake_gma
     assert body == {"addLabelIds": ["IMPORTANT"]}
 
 
-async def test_execute_approved_action_archive_email_a_real_malformed_payload_missing_message_id(pool, user_id, monkeypatch):
-    _patch_valid_token(monkeypatch)
+async def test_execute_approved_action_archive_email_a_real_malformed_payload_missing_message_id(pool, user_id):
     async with pool.acquire() as conn:
         result = await execute_approved_action(
             conn, action_type=ActionType.ARCHIVE_EMAIL, payload={}, user_id=user_id,
-            google_client_id="x", google_client_secret="y", google_token_encryption_key="z", http_client=_FakePostClient(),
+            google_access_token="fake-access-token", http_client=_FakePostClient(),
         )
     assert result.executed is False
     assert "malformed" in result.detail.lower()
 
 
-async def test_execute_approved_action_label_email_a_real_malformed_payload_missing_label_id(pool, user_id, monkeypatch):
+async def test_execute_approved_action_label_email_a_real_malformed_payload_missing_label_id(pool, user_id):
     """A real `message_id` present but no real `label_id` -- must fail
     the same honest way, never a raw `KeyError`."""
-    _patch_valid_token(monkeypatch)
     async with pool.acquire() as conn:
         result = await execute_approved_action(
             conn, action_type=ActionType.LABEL_EMAIL, payload={"message_id": "msg-1"}, user_id=user_id,
-            google_client_id="x", google_client_secret="y", google_token_encryption_key="z", http_client=_FakePostClient(),
+            google_access_token="fake-access-token", http_client=_FakePostClient(),
         )
     assert result.executed is False
     assert "malformed" in result.detail.lower()
 
 
-async def test_execute_approved_action_label_email_a_real_gmail_failure_is_honest_not_a_crash(pool, user_id, monkeypatch):
-    _patch_valid_token(monkeypatch)
+async def test_execute_approved_action_label_email_a_real_malformed_message_id_is_refused_before_any_real_call(pool, user_id):
+    """A real, disclosed CRITICAL-tier review finding (DEC-142, L3): a
+    `message_id`/`label_id` containing `/` or `?` would reshape the
+    real Gmail URL path/query if interpolated unchecked. Refused
+    outright, before any real network call."""
+    fake_client = _FakePostClient()
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.ARCHIVE_EMAIL, payload={"message_id": "../../etc/passwd"}, user_id=user_id,
+            google_access_token="fake-access-token", http_client=fake_client,
+        )
+    assert result.executed is False
+    assert "malformed" in result.detail.lower()
+    assert fake_client.calls == []
+
+
+async def test_execute_approved_action_label_email_a_real_gmail_rejection_is_a_definite_false(pool, user_id):
     fake_client = _FakePostClient(status_code=404, body={"error": "fake: message not found"})
     async with pool.acquire() as conn:
         result = await execute_approved_action(
             conn, action_type=ActionType.LABEL_EMAIL, payload={"message_id": "gone", "label_id": "IMPORTANT"}, user_id=user_id,
-            google_client_id="x", google_client_secret="y", google_token_encryption_key="z", http_client=fake_client,
+            google_access_token="fake-access-token", http_client=fake_client,
         )
     assert result.executed is False
-    assert "Google's real API" in result.detail
+    assert "genuinely rejected" in result.detail
 
 
 # --- Real, live capstone tests (Rule 5) ---
@@ -323,16 +446,25 @@ async def test_execute_approved_action_label_email_a_real_gmail_failure_is_hones
 async def test_execute_approved_action_send_email_a_real_genuine_send_via_gmail(pool):
     """The real capstone for SEND_EMAIL: a genuine, human-approved send
     through Gmail's real, live API against this project's own dedicated
-    sandbox account (`quorum.dev.sandbox@gmail.com`, `DEC-139`)."""
+    sandbox account (`quorum.dev.sandbox@gmail.com`, `DEC-139`), using a
+    real access token resolved from the real POOL before this call
+    (never inside a transaction -- see action_executor.py's own top-of-
+    file docstring for why)."""
     if not _HAS_REAL_GOOGLE_CONFIG:
         pytest.skip("no real Google OAuth config in this environment")
 
+    from quorum_backend.auth.google_token_store import get_valid_google_access_token
+
     settings = get_settings()
-    row = await pool.fetchrow("SELECT user_id FROM google_oauth_tokens ORDER BY updated_at DESC LIMIT 1")
-    if row is None:
-        pytest.skip("no real, live Google token stored in this environment (see DEC-139)")
-    real_user_id = str(row["user_id"])
+    real_user_id = await _real_sandbox_user_id(pool)
+    if real_user_id is None:
+        pytest.skip("no real, live Google token stored for the real sandbox account (see DEC-139)")
     marker = f"real-execution-test-{uuid.uuid4()}"
+
+    access_token = await get_valid_google_access_token(
+        pool, internal_user_id=real_user_id, client_id=settings.google_oauth_client_id,
+        client_secret=settings.google_oauth_client_secret, encryption_key=settings.google_token_encryption_key,
+    )
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client, pool.acquire() as conn:
@@ -340,15 +472,13 @@ async def test_execute_approved_action_send_email_a_real_genuine_send_via_gmail(
                 conn,
                 action_type=ActionType.SEND_EMAIL,
                 payload={
-                    "to": "quorum.dev.sandbox@gmail.com",
+                    "to": _SANDBOX_EMAIL,
                     "subject": f"Real Quorum execution test {marker}",
                     "body": "A real, harmless, automated execution test -- safe to ignore or delete.",
                 },
                 user_id=real_user_id,
-                human_approved=True,
-                google_client_id=settings.google_oauth_client_id,
-                google_client_secret=settings.google_oauth_client_secret,
-                google_token_encryption_key=settings.google_token_encryption_key,
+                approved_by_user_id=real_user_id,
+                google_access_token=access_token,
                 http_client=client,
             )
         assert result.executed is True
@@ -361,20 +491,27 @@ async def test_execute_approved_action_archive_and_label_email_a_real_genuine_mo
     """The real capstone for ARCHIVE_EMAIL/LABEL_EMAIL: sends a real
     probe message directly (bypassing `execute_approved_action`, to
     isolate what THIS test is proving), then archives and labels it for
-    real through `execute_approved_action`, verifying both real label
-    changes directly against Gmail's own API afterward."""
+    real through `execute_approved_action`, polling Gmail's own real
+    API afterward to confirm each label change genuinely took effect.
+
+    A real, disclosed CRITICAL-tier review finding fixed here (DEC-142,
+    H4): an earlier version checked `INBOX`/`IMPORTANT` immediately
+    after each modify call with no real wait -- DEC-140 already
+    established that Gmail applies the real `INBOX` label on delivery,
+    not synchronously with `messages.send`'s own response, so an
+    immediate check could pass even if the modify branch did nothing at
+    all. This version polls (bounded) until the PRE-condition is
+    genuinely observed before acting, so the post-condition check
+    genuinely depends on the real API call having happened."""
     if not _HAS_REAL_GOOGLE_CONFIG:
         pytest.skip("no real Google OAuth config in this environment")
-
-    import base64
 
     from quorum_backend.auth.google_token_store import get_valid_google_access_token
 
     settings = get_settings()
-    row = await pool.fetchrow("SELECT user_id FROM google_oauth_tokens ORDER BY updated_at DESC LIMIT 1")
-    if row is None:
-        pytest.skip("no real, live Google token stored in this environment (see DEC-139)")
-    real_user_id = str(row["user_id"])
+    real_user_id = await _real_sandbox_user_id(pool)
+    if real_user_id is None:
+        pytest.skip("no real, live Google token stored for the real sandbox account (see DEC-139)")
     marker = f"real-modify-test-{uuid.uuid4()}"
 
     access_token = await get_valid_google_access_token(
@@ -382,7 +519,7 @@ async def test_execute_approved_action_archive_and_label_email_a_real_genuine_mo
         client_secret=settings.google_oauth_client_secret, encryption_key=settings.google_token_encryption_key,
     )
     raw_message = (
-        "To: quorum.dev.sandbox@gmail.com\r\n"
+        f"To: {_SANDBOX_EMAIL}\r\n"
         f"Subject: Real Quorum modify test {marker}\r\n"
         "Content-Type: text/plain; charset=UTF-8\r\n\r\n"
         "A real, harmless, automated modify test -- safe to ignore or delete."
@@ -398,36 +535,61 @@ async def test_execute_approved_action_archive_and_label_email_a_real_genuine_mo
             assert send_response.status_code == 200
             message_id = send_response.json()["id"]
 
+            # Real, bounded poll for the real PRE-condition (INBOX
+            # genuinely present) before archiving -- DEC-140's own
+            # finding: real delivery, and therefore the real INBOX
+            # label, is not synchronous with the send response.
+            label_ids = await _poll_for_real_label_state(client, access_token, message_id, present="INBOX")
+            assert "INBOX" in label_ids
+
             async with pool.acquire() as conn:
                 archive_result = await execute_approved_action(
                     conn, action_type=ActionType.ARCHIVE_EMAIL, payload={"message_id": message_id}, user_id=real_user_id,
-                    google_client_id=settings.google_oauth_client_id, google_client_secret=settings.google_oauth_client_secret,
-                    google_token_encryption_key=settings.google_token_encryption_key, http_client=client,
+                    google_access_token=access_token, http_client=client,
                 )
             assert archive_result.executed is True
 
-            check_response = await client.get(
-                f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}",
-                params={"format": "minimal"}, headers={"Authorization": f"Bearer {access_token}"},
-            )
-            assert "INBOX" not in check_response.json()["labelIds"]  # genuinely archived, not just claimed
+            label_ids_after_archive = await _poll_for_real_label_state(client, access_token, message_id, absent="INBOX")
+            assert "INBOX" not in label_ids_after_archive  # genuinely archived, not just claimed
 
             async with pool.acquire() as conn:
                 label_result = await execute_approved_action(
                     conn, action_type=ActionType.LABEL_EMAIL, payload={"message_id": message_id, "label_id": "IMPORTANT"},
-                    user_id=real_user_id, google_client_id=settings.google_oauth_client_id,
-                    google_client_secret=settings.google_oauth_client_secret,
-                    google_token_encryption_key=settings.google_token_encryption_key, http_client=client,
+                    user_id=real_user_id, google_access_token=access_token, http_client=client,
                 )
             assert label_result.executed is True
 
-            check_response_2 = await client.get(
-                f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}",
-                params={"format": "minimal"}, headers={"Authorization": f"Bearer {access_token}"},
-            )
-            assert "IMPORTANT" in check_response_2.json()["labelIds"]  # genuinely labeled, not just claimed
+            label_ids_after_label = await _poll_for_real_label_state(client, access_token, message_id, present="IMPORTANT")
+            assert "IMPORTANT" in label_ids_after_label  # genuinely labeled, not just claimed
     finally:
         await _cleanup_real_gmail_messages_matching(pool, real_user_id, marker)
+
+
+async def _poll_for_real_label_state(
+    client: httpx.AsyncClient, access_token: str, message_id: str, *, present: str | None = None, absent: str | None = None,
+    attempts: int = 10, delay_seconds: float = 1.0,
+) -> list[str]:
+    """A real, bounded poll against Gmail's own live API -- real
+    delivery genuinely isn't synchronous with a real send/modify
+    response (DEC-140's own finding), so a single, immediate check can
+    observe a real, stale label state. Returns the real, final
+    `labelIds` list, whether or not the awaited condition was reached
+    (the caller's own assertion is what actually fails the test)."""
+    import asyncio
+
+    label_ids: list[str] = []
+    for _ in range(attempts):
+        check = await client.get(
+            f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}",
+            params={"format": "minimal"}, headers={"Authorization": f"Bearer {access_token}"},
+        )
+        label_ids = check.json().get("labelIds", [])
+        if present is not None and present in label_ids:
+            return label_ids
+        if absent is not None and absent not in label_ids:
+            return label_ids
+        await asyncio.sleep(delay_seconds)
+    return label_ids
 
 
 async def _cleanup_real_gmail_messages_matching(pool, real_user_id: str, marker: str) -> None:
@@ -435,7 +597,12 @@ async def _cleanup_real_gmail_messages_matching(pool, real_user_id: str, marker:
     created (matched by its own unique marker subject), the same real
     cleanup discipline `test_email_ingestion.py`'s own capstone test
     established this session (DEC-140, review finding M2) -- never
-    leaves real test debris in the real, live sandbox account."""
+    leaves real test debris in the real, live sandbox account. A real,
+    disclosed CRITICAL-tier review finding fixed here (DEC-142, L7):
+    an earlier version never checked whether a real access token was
+    actually obtained, so a `None` token would silently no-op (a real
+    401, an empty message list, zero visible signal) instead of a real,
+    loud failure."""
     settings = get_settings()
     from quorum_backend.auth.google_token_store import get_valid_google_access_token
 
@@ -443,11 +610,13 @@ async def _cleanup_real_gmail_messages_matching(pool, real_user_id: str, marker:
         pool, internal_user_id=real_user_id, client_id=settings.google_oauth_client_id,
         client_secret=settings.google_oauth_client_secret, encryption_key=settings.google_token_encryption_key,
     )
+    assert access_token is not None, "cleanup itself could not obtain a real access token -- real debris may remain"
     async with httpx.AsyncClient(timeout=15.0) as client:
         list_response = await client.get(
             "https://gmail.googleapis.com/gmail/v1/users/me/messages",
             params={"q": f"subject:{marker}"}, headers={"Authorization": f"Bearer {access_token}"},
         )
+        assert list_response.status_code == 200, f"cleanup's own real Gmail list call failed: {list_response.text}"
         for message in list_response.json().get("messages", []):
             await client.post(
                 f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message['id']}/trash",
@@ -455,20 +624,63 @@ async def _cleanup_real_gmail_messages_matching(pool, real_user_id: str, marker:
             )
 
 
-async def test_execute_approved_action_is_exhaustively_honest_about_every_other_real_action_type(pool, user_id):
-    """A real, exhaustive proof, not a spot-check: every real
-    `ActionType` other than `CREATE_TASK`/`LOG_EXPENSE` returns
-    `executed=False` with a real, non-empty explanation, and genuinely
-    writes nothing anywhere -- confirmed by an unconditional real row
-    count, not just trusting the return value."""
-    non_executable = [t for t in ActionType if t not in (ActionType.CREATE_TASK, ActionType.LOG_EXPENSE)]
-    assert len(non_executable) == 9  # a real, live guard against this enum silently growing unnoticed
+async def test_execute_approved_action_is_honest_about_every_genuinely_unimplemented_action_type(pool, user_id):
+    """A real, disclosed CRITICAL-tier review finding (DEC-142, M5):
+    `SEND_EMAIL`/`ARCHIVE_EMAIL`/`LABEL_EMAIL` are now genuinely
+    executable (given real credentials this test deliberately never
+    provides), so this test's own real scope narrows to the FIVE
+    `ActionType`s that still have NO real execution path at all AND
+    are not real `Stakes.S3` -- asserting the SPECIFIC, real "no real
+    execution path exists yet" detail, not merely a falsy result
+    (which a bug routing one of these into the Gmail branch by mistake
+    would still pass on a bare `executed is False` check). `CREATE_
+    CALENDAR_EVENT_EXTERNAL` is excluded here on purpose -- it is real
+    `Stakes.S3` too, so it correctly hits the real, structural S3
+    backstop BEFORE ever reaching the "no execution path" fallback
+    (exactly the review's own H2 fix working as intended -- see the
+    dedicated test for it below)."""
+    genuinely_unimplemented_non_s3 = [
+        t for t in ActionType
+        if t not in (
+            ActionType.CREATE_TASK, ActionType.LOG_EXPENSE, ActionType.SEND_EMAIL,
+            ActionType.ARCHIVE_EMAIL, ActionType.LABEL_EMAIL, ActionType.CREATE_CALENDAR_EVENT_EXTERNAL,
+        )
+    ]
+    assert len(genuinely_unimplemented_non_s3) == 5  # a real, live guard against this enum silently growing unnoticed
 
     async with pool.acquire() as conn:
-        for action_type in non_executable:
+        for action_type in genuinely_unimplemented_non_s3:
             result = await execute_approved_action(conn, action_type=action_type, payload={}, user_id=user_id)
             assert result.executed is False, f"{action_type} unexpectedly executed"
-            assert len(result.detail) > 0
+            assert "No real execution path exists yet" in result.detail
 
     assert await pool.fetchrow("SELECT 1 FROM tasks WHERE user_id = $1", uuid.UUID(user_id)) is None
     assert await pool.fetchrow("SELECT 1 FROM expenses WHERE user_id = $1", uuid.UUID(user_id)) is None
+
+
+async def test_execute_approved_action_create_calendar_event_external_also_hits_the_real_s3_backstop(pool, user_id):
+    """The real, structural benefit of hoisting the S3 check (DEC-142
+    review finding H2): `CREATE_CALENDAR_EVENT_EXTERNAL` has no real
+    execution branch at all yet (Phase 5), but it is ALSO real
+    `Stakes.S3` -- a future session adding its own execution branch
+    gets this same real backstop automatically, with nothing to
+    remember to re-add."""
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_CALENDAR_EVENT_EXTERNAL, payload={}, user_id=user_id,
+        )
+    assert result.executed is False
+    assert "S3" in result.detail
+    assert "approved_by_user_id" in result.detail
+
+
+async def test_execute_approved_action_gmail_capable_types_are_honestly_non_executing_with_no_real_credentials(pool, user_id):
+    """The real counterpart to the test above -- `SEND_EMAIL`/`ARCHIVE_
+    EMAIL`/`LABEL_EMAIL` given an empty payload and no real credentials
+    at all must still be a real, honest `executed=False`, never a raw
+    exception and never a real Gmail call."""
+    async with pool.acquire() as conn:
+        for action_type in (ActionType.SEND_EMAIL, ActionType.ARCHIVE_EMAIL, ActionType.LABEL_EMAIL):
+            result = await execute_approved_action(conn, action_type=action_type, payload={}, user_id=user_id)
+            assert result.executed is False, f"{action_type} unexpectedly executed"
+            assert len(result.detail) > 0
