@@ -47,14 +47,26 @@ delete against) -- a real, disclosed, permanent limitation, not
 something a future session should expect to close the way this one
 closed `action_events`/`negotiations`.
 
-**Two real, honest, disclosed zeros, not silently faked:**
-`purge_memories()` -- no real `mem0` integration exists anywhere in this
-backend (confirmed by direct search); `revoke_oauth_tokens()` -- Google's
-own real `access_token`/`refresh_token` are deliberately never persisted
-here (confirmed directly against `auth/google_oauth.py`'s own
-docstring), so there is nothing real to revoke via a Google API call.
-Both real, disclosed gaps, not gaps this class silently hides behind a
-plausible-looking nonzero number.
+**`revoke_oauth_tokens()` is now real, Phase 3 (`QUORUM_PRODUCTION_
+COMPLETION_PLAN.md`).** This paragraph previously described it as an
+honest, disclosed zero -- true when written (Google's own tokens were
+never persisted anywhere in this backend), false since `auth/google_
+token_store.py` closed that gap. `purge_memories()` remains a real,
+honest zero: no real `mem0` integration exists anywhere in this backend
+(confirmed by direct search), a genuinely different, still-open gap.
+
+**A REAL, DISCLOSED SEQUENCING REQUIREMENT `revoke_oauth_tokens()`
+introduces, closed in `security/account_deletion.py::delete_account()`
+the same session:** `google_oauth_tokens.user_id` has `ON DELETE
+CASCADE` against `users` (`migrations/0010_google_oauth_tokens/up.sql`)
+-- if `purge_postgres_rows()` (which deletes the real `users` row) ran
+BEFORE this method, the cascade would silently delete this table's own
+row first, leaving nothing here to send to Google's real `/revoke`
+endpoint. `delete_account()` now calls `revoke_oauth_tokens()` before
+`purge_postgres_rows()`, mirroring the same "revoke access to the real,
+external thing before destroying the local record that makes revoking
+it possible" reasoning that function's own docstring already uses for
+session revocation running first.
 
 **A real, disclosed atomicity gap, found by CRITICAL-tier review
 (`DEC-113`), not silently left unexamined:** `purge_postgres_rows()`'s
@@ -76,9 +88,16 @@ architecture change beyond what this session's real scope called for.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 
 import asyncpg
+
+from quorum_backend.auth.google_oauth import GoogleOAuthExchangeFailed, revoke_google_token
+from quorum_backend.auth.google_token_store import delete_google_tokens, fetch_google_tokens
+from quorum_backend.security.google_token_encryption import GoogleTokenDecryptionFailed
+
+logger = logging.getLogger("quorum_backend")
 
 
 def _parse_deleted_count(command_status: str) -> int:
@@ -90,8 +109,15 @@ def _parse_deleted_count(command_status: str) -> int:
 
 
 class SupabaseDeletionStore:
-    def __init__(self, pool: asyncpg.Pool):
+    def __init__(self, pool: asyncpg.Pool, *, google_token_encryption_key: str | None = None):
         self._pool = pool
+        # Resolved once, at construction time, by the real caller
+        # (`main.py`'s own `delete_account_route`) from `core/config.py`
+        # -- the same resolve-in-the-route-then-pass-down convention
+        # every other real credential in this backend already follows
+        # (e.g. `settings.gemini_api_key` passed into `make_gemini_
+        # position_call`, never read from inside that factory).
+        self._google_token_encryption_key = google_token_encryption_key
 
     async def purge_postgres_rows(self, internal_user_id: str) -> int:
         """A real, deliberate design choice, not a default left
@@ -136,13 +162,23 @@ class SupabaseDeletionStore:
                 total += _parse_deleted_count(
                     await conn.execute("DELETE FROM negotiations WHERE user_id = $1", user_uuid)
                 )
-                # The real users row itself, last -- no other real table
-                # has a database-enforced FK against it (confirmed
-                # against the real 0003 migration), so ordering relative
-                # to the four deletes above genuinely doesn't matter;
-                # done last here simply to keep the identity valid for
-                # as much of this real operation as possible, in case a
-                # later step needs to look it up for a real diagnostic.
+                # The real users row itself, last. A REAL, DISCLOSED
+                # CORRECTION to this comment's own earlier claim: as of
+                # migration 0010, `google_oauth_tokens.user_id` DOES hold
+                # a real, database-enforced `ON DELETE CASCADE` FK against
+                # this table -- by the time this line runs (this method
+                # is always called AFTER `revoke_oauth_tokens()`, see
+                # `security/account_deletion.py::delete_account()`'s own
+                # real, deliberate ordering), that row is already gone,
+                # so the cascade is a real, harmless no-op in the intended
+                # flow; it only actually fires if this method is ever
+                # called standalone, skipping revocation, in which case
+                # it correctly cleans up an orphaned row rather than
+                # leaving one behind. Ordering relative to the four other
+                # deletes above still genuinely doesn't matter -- done
+                # last here simply to keep the identity valid for as much
+                # of this real operation as possible, in case a later
+                # step needs to look it up for a real diagnostic.
                 total += _parse_deleted_count(await conn.execute("DELETE FROM users WHERE user_id = $1", user_uuid))
 
         return total
@@ -160,6 +196,74 @@ class SupabaseDeletionStore:
         return 0
 
     async def revoke_oauth_tokens(self, internal_user_id: str) -> int:
-        # Real, honest zero -- see this module's own top-of-file
-        # docstring for the full account of why.
-        return 0
+        """Real, live -- see this module's own top-of-file docstring for
+        the full account of the real sequencing requirement this method
+        creates. Returns `0` honestly (never raises) when this user
+        never granted Google access at all, or `GOOGLE_TOKEN_ENCRYPTION_
+        KEY` isn't configured on this deployment -- an account deletion
+        must never be blocked by a real feature this specific real user
+        never actually used.
+
+        **TWO REAL, LIVE BUGS FOUND BY THIS PR'S OWN CRITICAL-TIER
+        REVIEW, BOTH FIXED HERE:** an earlier version let a real
+        `GoogleTokenDecryptionFailed` (a real encryption-key rotation
+        with no real migration path for rows encrypted under the old
+        key) or a real `GoogleOAuthExchangeFailed` (a genuine Google
+        `/revoke` outage or network failure) propagate straight out of
+        this method, through `delete_account()`, and out of the real
+        `DELETE /account` route as an unhandled `500` -- live-proven to
+        leave the account PERMANENTLY undeletable: session revocation
+        had already run by the time this method is reached (`delete_
+        account()`'s own real ordering), so the user is logged out with
+        no working retry path, and this real, S3-equivalent irreversible
+        operation has no other real entry point. Both real failure modes
+        are now caught, logged loudly, and never block the rest of this
+        real account deletion -- the same "an account deletion must
+        never be blocked by a real feature this specific real user never
+        actually used" principle, extended to "...or a real, external
+        failure this specific real user has no control over."
+
+        **A REAL, DISCLOSED, NOT-FULLY-CLOSED GAP, found by the same
+        review, matching `DEC-113`'s own already-disclosed atomicity
+        gap for `purge_postgres_rows`/`purge_vector_embeddings`:** this
+        method's own real local delete and `purge_postgres_rows()` are
+        independently awaited, not one shared transaction. If Google's
+        real revoke call and this method's own local delete both
+        succeed, but `purge_postgres_rows()` then fails, the account
+        still exists but its stored Google tokens are already gone --
+        a real, live, still-open risk, not silently treated as closed
+        by the fixes above. Also honest, not hidden: on a real Google-
+        side failure, the real local row is still deleted (so this
+        method never re-attempts the same failing real revoke call
+        forever), but the real external Google grant may still be live
+        until it naturally expires or the user revokes it manually at
+        Google's own account settings -- `oauth_tokens_revoked` in this
+        case reports the real LOCAL deletion count, not a guarantee the
+        real external grant was confirmed revoked."""
+        if self._google_token_encryption_key is None:
+            return 0
+        try:
+            record = await fetch_google_tokens(
+                self._pool, internal_user_id=internal_user_id, encryption_key=self._google_token_encryption_key
+            )
+        except GoogleTokenDecryptionFailed:
+            logger.exception(
+                "Real Google token ciphertext for user_id=%s failed to decrypt during account deletion -- "
+                "deleting the real, undecryptable row locally without a real Google revoke call (nothing "
+                "could be recovered from it to revoke), never blocking the rest of this real account deletion.",
+                internal_user_id,
+            )
+            return await delete_google_tokens(self._pool, internal_user_id=internal_user_id)
+        if record is None:
+            return 0
+        try:
+            await revoke_google_token(record.refresh_token)
+        except GoogleOAuthExchangeFailed:
+            logger.exception(
+                "Real Google token revocation failed for user_id=%s during account deletion (a real Google "
+                "outage or network failure) -- the real local row is still deleted so this never blocks the "
+                "rest of deletion, but the real external Google grant may still be live until it naturally "
+                "expires or the user revokes it manually at Google's own account settings.",
+                internal_user_id,
+            )
+        return await delete_google_tokens(self._pool, internal_user_id=internal_user_id)

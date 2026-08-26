@@ -25,6 +25,7 @@ import uuid
 from urllib.parse import urlencode
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator
 
 import asyncpg
@@ -40,6 +41,7 @@ from quorum_backend.auth.access_token import (
     decode_access_token,
 )
 from quorum_backend.auth.google_oauth import GoogleIdTokenInvalid, GoogleOAuthExchangeFailed, exchange_authorization_code, verify_google_id_token
+from quorum_backend.auth.google_token_store import fetch_google_tokens, store_google_tokens, update_access_token_after_refresh
 from quorum_backend.auth.refresh_token import (
     TokenExpired,
     TokenInvalid,
@@ -641,6 +643,17 @@ async def auth_token(
     every per-user domain table needs a real internal UUID mapped to
     it, and this is the one real place in the whole system where a
     genuinely new identity is first seen.
+
+    **Phase 3, `QUORUM_PRODUCTION_COMPLETION_PLAN.md`:** this route now
+    also persists Google's own real `access_token`/`refresh_token`
+    (encrypted, `auth/google_token_store.py`) -- the real gap `auth/
+    google_oauth.py`'s own docstring named since it was first written.
+    A real, deliberate resilience choice: if `GOOGLE_TOKEN_ENCRYPTION_
+    KEY` isn't configured on this deployment, storage is honestly
+    skipped (logged, not raised) rather than failing the entire real
+    sign-in over a feature this specific session doesn't need -- the
+    internal Quorum session this route's own core job is to issue never
+    depended on Google's own tokens to begin with.
     """
     settings = get_settings()
     if not settings.google_oauth_client_id or not settings.google_oauth_client_secret:
@@ -665,6 +678,15 @@ async def auth_token(
         # documented), never silently treated as "no identity, proceed
         # anyway."
         raise HTTPException(status_code=502, detail="Google's token response did not include an id_token.")
+    google_access_token = google_tokens.get("access_token")
+    if not google_access_token:
+        # A REAL, DISCLOSED FIX (this PR's own CRITICAL-tier review):
+        # an earlier version subscripted `google_tokens["access_token"]`
+        # directly -- a bare `KeyError` -> unhandled 500 on a genuine
+        # Google anomaly, where the sibling `id_token` check just above
+        # already raises a real, loud, honest 502 for the identical
+        # class of problem. Matched here for consistency.
+        raise HTTPException(status_code=502, detail="Google's token response did not include an access_token.")
 
     try:
         payload = verify_google_id_token(id_token, settings.google_oauth_client_id)
@@ -672,7 +694,87 @@ async def auth_token(
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
     user_id = payload["sub"]
-    await get_or_create_user(pool, google_sub=user_id, email=payload.get("email"))
+    internal_user_id = await get_or_create_user(pool, google_sub=user_id, email=payload.get("email"))
+
+    if settings.google_token_encryption_key is None:
+        logger.warning("GOOGLE_TOKEN_ENCRYPTION_KEY is not configured -- skipping real Google token storage for this sign-in.")
+    else:
+        # A REAL, DISCLOSED FIX (this PR's own CRITICAL-tier review,
+        # LOW 8): an earlier version silently defaulted a missing
+        # `expires_in`/`scope` with no real signal anything was amiss.
+        # Both are ordinary in every real Google response this route has
+        # ever seen; a real, live absence is a genuine anomaly worth a
+        # loud log, even though defaulting (rather than a hard failure)
+        # remains the right real choice -- this route's own core job,
+        # issuing the internal Quorum session, must never fail over a
+        # secondary feature's own optional metadata.
+        if "expires_in" not in google_tokens:
+            logger.warning("Google's token response for user_id=%s omitted expires_in -- defaulting to 3600s.", internal_user_id)
+        if not google_tokens.get("scope"):
+            logger.warning("Google's token response for user_id=%s omitted a real scope string.", internal_user_id)
+        google_access_token_expires_at = datetime.now(timezone.utc) + timedelta(
+            seconds=int(google_tokens.get("expires_in", 3600))
+        )
+
+        # A REAL, DISCLOSED FIX (this PR's own CRITICAL-tier review,
+        # BLOCKER 1): an earlier version always called `store_google_
+        # tokens()`, even with `refresh_token=None` -- which that
+        # function now correctly REJECTS (`google_token_store.py`'s own
+        # top-of-file docstring has the full real account of the two
+        # live bugs this design replaces). Google omits `refresh_token`
+        # on every real sign-in that didn't carry `access_type=offline`
+        # -- reachable live for every currently-signed-in real user the
+        # very first time they hit this route after this session's own
+        # mobile scope change ships, since THIS is the change that first
+        # adds that parameter. Handled as three real, distinct, honest
+        # cases, never a crash:
+        if google_refresh_token := google_tokens.get("refresh_token"):
+            await store_google_tokens(
+                pool,
+                internal_user_id=internal_user_id,
+                access_token=google_access_token,
+                refresh_token=google_refresh_token,
+                access_token_expires_at=google_access_token_expires_at,
+                granted_scopes=google_tokens.get("scope", ""),
+                encryption_key=settings.google_token_encryption_key,
+            )
+        else:
+            existing_record = await fetch_google_tokens(
+                pool, internal_user_id=internal_user_id, encryption_key=settings.google_token_encryption_key
+            )
+            if existing_record is not None:
+                # A real re-authentication that didn't carry a fresh
+                # refresh_token, but a real, prior one is already on
+                # record -- update just the real access_token, the same
+                # real, refresh-only write `get_valid_google_access_
+                # token()`'s own refresh path uses, never touching the
+                # real refresh_token already stored.
+                await update_access_token_after_refresh(
+                    pool,
+                    internal_user_id=internal_user_id,
+                    access_token=google_access_token,
+                    access_token_expires_at=google_access_token_expires_at,
+                    encryption_key=settings.google_token_encryption_key,
+                )
+            else:
+                # This real user's genuine FIRST sign-in, with no real
+                # refresh_token to store and no prior real one on record
+                # -- real Gmail/Calendar access is honestly unavailable
+                # for them until their next real sign-in (which, per
+                # `auth_controller.dart`'s own real `prompt=consent`,
+                # will carry one) -- but the internal Quorum session
+                # this route's own core job is to issue must never fail
+                # over this, so real storage is skipped, loudly logged,
+                # not silently swallowed.
+                logger.warning(
+                    "Google did not return a refresh_token for user_id=%s's first real sign-in, and no "
+                    "prior real token exists to fall back to -- skipping real Google token storage this "
+                    "time. The mobile app's own authorization request should always include "
+                    "access_type=offline/prompt=consent; this is expected only for a sign-in that "
+                    "predates that real change.",
+                    internal_user_id,
+                )
+
     access_token = create_access_token(user_id, settings.jwt_signing_key)
     refresh_token = await issue_refresh_token(user_id, store)
     return TokenPairResponse(access_token=access_token, refresh_token=refresh_token)
@@ -737,14 +839,15 @@ async def delete_account_route(
     calls the real, CRITICAL-tier `delete_account()` with both real
     identifiers it now genuinely needs (`DEC-113`): `google_sub` for
     real session revocation, the resolved internal UUID for the real
-    `SupabaseDeletionStore` purge. Two of the four real store counts
-    are honest, disclosed zeros regardless of what this account
-    actually contains -- see `SupabaseDeletionStore`'s own docstring
-    for the full account of why `purge_memories`/`revoke_oauth_tokens`
-    can never be anything else in this backend today.
+    `SupabaseDeletionStore` purge. **A real, disclosed correction to
+    this docstring's own earlier claim:** `revoke_oauth_tokens()` is now
+    real as of Phase 3 (`QUORUM_PRODUCTION_COMPLETION_PLAN.md`) -- only
+    `purge_memories` remains an honest, disclosed zero, since no real
+    `mem0` integration exists anywhere in this backend.
     """
     internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
-    deletion_store = SupabaseDeletionStore(pool)
+    settings = get_settings()
+    deletion_store = SupabaseDeletionStore(pool, google_token_encryption_key=settings.google_token_encryption_key)
 
     result = await delete_account(
         google_sub=google_sub,

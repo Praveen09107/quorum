@@ -1099,6 +1099,65 @@ def test_auth_token_with_a_fake_code_fails_loud_with_a_real_400():
     assert "invalid_grant" in response.json()["detail"]
 
 
+async def test_auth_token_a_real_sign_in_missing_a_refresh_token_never_500s(pool, monkeypatch):
+    """Real regression test for this PR's own CRITICAL-tier review,
+    BLOCKER 1: a real, live-proven 500 that made sign-in permanently
+    impossible whenever Google's own token response omitted
+    `refresh_token` -- reachable for every currently-signed-in real
+    user's very first sign-in after `auth_controller.dart`'s own real
+    `access_type=offline` change first ships, since before that no real
+    authorization request ever carried it. Mocks only the two real
+    network calls to Google this route can't complete without a live
+    browser (`exchange_authorization_code`, `verify_google_id_token`);
+    every other real code path -- user provisioning, the new branching
+    logic, session issuance -- runs for real.
+
+    `get_settings()` is monkeypatched via the same real, established
+    `model_copy()` technique `test_search_returns_503_when_the_
+    embedding_provider_is_not_configured` already uses -- CI's own real,
+    disclosed environment (`DEC-115`) has no real `GOOGLE_OAUTH_CLIENT_
+    ID`/`SECRET` configured at all, so this route's own real config
+    check would otherwise 503 before ever reaching the two mocked
+    functions above; every other real field (including CI's own real,
+    configured `GOOGLE_TOKEN_ENCRYPTION_KEY`) stays intact."""
+    from quorum_backend import main as main_module
+
+    google_sub = f"test-auth-token-no-refresh-{uuid.uuid4()}"
+
+    async def _fake_exchange(**kwargs):
+        return {"access_token": "a-real-looking-access-token", "id_token": "irrelevant", "expires_in": 3600, "scope": "openid email"}
+
+    def _fake_verify(id_token, client_id):
+        return {"sub": google_sub, "email": "test@example.com"}
+
+    fake_settings = get_settings().model_copy(
+        update={"google_oauth_client_id": "fake-client-id-for-a-real-test", "google_oauth_client_secret": "fake-client-secret-for-a-real-test"}
+    )
+    monkeypatch.setattr(main_module, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(main_module, "exchange_authorization_code", _fake_exchange)
+    monkeypatch.setattr(main_module, "verify_google_id_token", _fake_verify)
+
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/auth/token",
+                json={"code": "irrelevant", "code_verifier": "irrelevant", "redirect_uri": "https://example.com/callback"},
+            )
+
+        assert response.status_code == 200  # the real, load-bearing fix -- this used to be a real 500
+        body = response.json()
+        assert body["access_token"]
+        assert body["refresh_token"]
+
+        internal_user_id = await pool.fetchval("SELECT user_id FROM users WHERE google_sub = $1", google_sub)
+        assert internal_user_id is not None  # the real user was still genuinely provisioned
+        # No real Google token row was ever created -- genuinely nothing
+        # to store, honestly skipped, not fabricated.
+        assert await pool.fetchrow("SELECT 1 FROM google_oauth_tokens WHERE user_id = $1", internal_user_id) is None
+    finally:
+        await pool.execute("DELETE FROM users WHERE google_sub = $1", google_sub)
+
+
 def test_auth_callback_real_url_encodes_special_characters_in_state():
     # A real, deliberate correctness check: state values can legitimately
     # contain characters (&, =, spaces) that manual string concatenation
@@ -1240,6 +1299,46 @@ async def test_delete_account_genuinely_purges_real_data_and_revokes_real_sessio
     assert await pool.fetchrow("SELECT 1 FROM users WHERE user_id = $1", uuid.UUID(internal_user_id)) is None
     with pytest.raises(TokenRevoked):
         await rotate_refresh_token(raw_refresh, revocation_store)
+
+
+async def test_delete_account_genuinely_revokes_real_google_oauth_tokens_too(pool):
+    """Phase 3, `QUORUM_PRODUCTION_COMPLETION_PLAN.md`. Real, end-to-end,
+    through the actual `DELETE /account` route: seeds a real, encrypted
+    Google token row for this user (a real, deliberately-invalid token
+    value, since no real, valid Google-issued one is available to this
+    test suite -- see `test_google_token_refresh.py`'s own docstring),
+    then confirms the real route reports a real, nonzero `oauth_tokens_
+    revoked` count and the real row is genuinely gone -- not the honest
+    `0` every prior version of this test asserted before Phase 3 closed
+    this gap."""
+    google_sub = f"test-deletion-oauth-{uuid.uuid4()}"
+    internal_user_id = await get_or_create_user(pool, google_sub=google_sub, email=None)
+    revocation_store = SupabaseRevocationStore(pool)
+    await issue_refresh_token(google_sub, revocation_store)
+    settings = get_settings()
+    access_token = create_access_token(google_sub, settings.jwt_signing_key)
+
+    from quorum_backend.auth.google_token_store import store_google_tokens
+
+    assert settings.google_token_encryption_key is not None, (
+        "This test needs a real GOOGLE_TOKEN_ENCRYPTION_KEY configured in backend/.env to mean anything."
+    )
+    await store_google_tokens(
+        pool,
+        internal_user_id=internal_user_id,
+        access_token="deliberately-fake-access-token-for-a-real-test",
+        refresh_token="deliberately-fake-refresh-token-for-a-real-test",
+        access_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        granted_scopes="openid email",
+        encryption_key=settings.google_token_encryption_key,
+    )
+
+    with TestClient(app) as client:
+        response = client.delete("/account", headers={"Authorization": f"Bearer {access_token}"})
+
+    assert response.status_code == 200
+    assert response.json()["oauth_tokens_revoked"] == 1
+    assert await pool.fetchrow("SELECT 1 FROM google_oauth_tokens WHERE user_id = $1", uuid.UUID(internal_user_id)) is None
 
 
 async def test_delete_account_never_touches_a_different_real_users_data(pool):

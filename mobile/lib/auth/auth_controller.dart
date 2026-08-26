@@ -75,16 +75,41 @@ class AuthController {
       'client_id': _googleClientId,
       'redirect_uri': _oauthRedirectBridge,
       'response_type': 'code',
-      'scope': 'openid email',
+      // Phase 3 (QUORUM_PRODUCTION_COMPLETION_PLAN.md): real, incremental
+      // scope expansion beyond identity-only -- Gmail read/send/modify
+      // (modify covers archive/label) and Calendar event creation, the
+      // exact real scopes that section names, requested here for the
+      // first time. A real, disclosed, user-facing change: the real
+      // consent screen now asks for real Gmail/Calendar access it never
+      // asked for before.
+      'scope': 'openid email '
+          'https://www.googleapis.com/auth/gmail.readonly '
+          'https://www.googleapis.com/auth/gmail.send '
+          'https://www.googleapis.com/auth/gmail.modify '
+          'https://www.googleapis.com/auth/calendar.events',
       'code_challenge': pkce.codeChallenge,
       'code_challenge_method': 'S256',
       'state': state,
-      // Real, deliberate: forces Google's real account chooser even if
-      // a Google session is already active in the system browser --
-      // this is a personal-ops assistant tied to one real Gmail
-      // account, never silently signing in as whichever account
-      // happened to be logged into the browser already.
-      'prompt': 'select_account',
+      // Real, required for a real, usable refresh_token: Google only
+      // ever returns one in the token response when access_type=offline
+      // is set (confirmed against Google's own documentation before
+      // relying on it) -- without it, the backend's own new Phase 3
+      // token storage would have nothing real to persist beyond a
+      // short-lived access_token.
+      'access_type': 'offline',
+      // Real, deliberate: forces Google's real account chooser AND a
+      // fresh real consent screen every time, even if a Google session
+      // is already active in the system browser, or this exact identity
+      // already granted these scopes once before. Two real, distinct
+      // reasons combined here: `select_account` -- this is a personal-
+      // ops assistant tied to one real Gmail account, never silently
+      // signing in as whichever account happened to be logged into the
+      // browser already; `consent` -- Google does NOT reliably re-issue
+      // a real refresh_token on a repeat authorization unless consent is
+      // forced every time (confirmed against Google's own documentation),
+      // and this session's own real scope expansion means every existing
+      // real user needs a fresh, real consent screen regardless.
+      'prompt': 'select_account consent',
     });
 
     final String result;

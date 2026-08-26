@@ -82,6 +82,20 @@ class Settings(BaseSettings):
     google_oauth_client_id: str | None = Field(default=None, alias="GOOGLE_OAUTH_CLIENT_ID")
     google_oauth_client_secret: str | None = Field(default=None, alias="GOOGLE_OAUTH_CLIENT_SECRET")
 
+    # Real, application-level symmetric key for encrypting Google's own
+    # `access_token`/`refresh_token` at rest (Phase 3, `QUORUM_PRODUCTION_
+    # COMPLETION_PLAN.md`) -- a real `cryptography.fernet.Fernet.
+    # generate_key()` value, genuinely different from `jwt_signing_key`
+    # above (that key signs Quorum's own session tokens; this one
+    # encrypts a real, separate, external identity provider's own
+    # tokens -- two distinct real secrets, never shared, matching this
+    # project's own established "never conflate two distinct token
+    # families" discipline, `DEC-113`). `None` is the same honest
+    # "not yet provisioned" default every other real credential field in
+    # this class uses -- storing/refreshing/revoking Google tokens fails
+    # loud (503) rather than silently persisting with a missing key.
+    google_token_encryption_key: str | None = Field(default=None, alias="GOOGLE_TOKEN_ENCRYPTION_KEY")
+
     # Observability.
     langfuse_public_key: str | None = Field(default=None, alias="LANGFUSE_PUBLIC_KEY")
     langfuse_secret_key: str | None = Field(default=None, alias="LANGFUSE_SECRET_KEY")
