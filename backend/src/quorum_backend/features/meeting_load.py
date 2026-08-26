@@ -42,6 +42,7 @@ caller" gap `SEND_EMAIL` execution disclosed, `DEC-142`).
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 # The three real, named parameters this module needs, pulled directly
@@ -91,8 +92,31 @@ def compute_meeting_load(
     `buffer_adjusted_availability_hours` is `0.0` and any real, positive
     `committed_hours` is, definitionally, an overload. A negative real
     `committed_hours` (never legitimate, but never trusted blindly
-    either) is treated as `0.0`."""
+    either) is treated as `0.0`. `buffer_fraction` is clamped to a real,
+    valid `[0.0, 1.0]` range and `overload_threshold` to `>= 0.0` --
+    a real, disclosed gap this session's own standard fresh-context
+    review found and this closes: an out-of-range `buffer_fraction`
+    (e.g. `1.5`, reserving more than the whole day) previously produced
+    a real, negative `buffer_adjusted_availability_hours`, which could
+    silently flag a genuinely EMPTY day (`committed_hours=0.0`) as
+    overloaded -- contradicting this function's own stated invariant
+    above. Not reachable today (both parameters are always the fixed,
+    real spec constants in every real caller so far, and no real caller
+    exists at all yet), but a real, structural guarantee is cheaper to
+    build now than to rediscover once this function gets its first real
+    caller. A genuine `NaN` in any parameter is refused loudly (a real
+    `ValueError`), never silently absorbed into a meaningless `0.0` or
+    a meaningless `False` -- confirmed directly before trusting Python's
+    own `max()`/`min()` here: `max(0.0, float('nan'))` returns `0.0`
+    while `max(float('nan'), 0.0)` returns `nan` -- silently ARGUMENT-
+    ORDER-DEPENDENT, not a real guarantee to build defensive clamping
+    on top of without an explicit check first."""
+    if any(math.isnan(value) for value in (committed_hours, working_hours_per_day, buffer_fraction, overload_threshold)):
+        raise ValueError("compute_meeting_load() received a real NaN input -- refusing to silently produce a meaningless result.")
+
     committed_hours = max(0.0, committed_hours)
+    buffer_fraction = min(1.0, max(0.0, buffer_fraction))
+    overload_threshold = max(0.0, overload_threshold)
     if working_hours_per_day <= 0:
         return MeetingLoadState(
             buffer_adjusted_availability_hours=0.0,

@@ -4,6 +4,8 @@ pure, so every test here is a pure, deterministic assertion, matching
 `test_subscription_detective.py`'s own established style for this
 project's other pure-computation modules.
 """
+import pytest
+
 from quorum_backend.features.meeting_load import (
     BUFFER_FRACTION,
     OVERLOAD_THRESHOLD,
@@ -111,3 +113,51 @@ def test_compute_meeting_load_a_genuinely_nonpositive_working_day_has_zero_booka
     result_negative_working_day = compute_meeting_load(committed_hours=1.0, working_hours_per_day=-2.0)
     assert result_negative_working_day.buffer_adjusted_availability_hours == 0.0
     assert result_negative_working_day.is_overloaded is True
+
+
+# --- Real, disclosed gaps found by this session's own standard review, fixed here ---
+
+
+def test_compute_meeting_load_an_out_of_range_buffer_fraction_never_flags_a_genuinely_empty_day():
+    """A real, disclosed MEDIUM finding from this session's own
+    standard fresh-context review: a `buffer_fraction` above `1.0`
+    (reserving more than the whole day) used to produce a real,
+    negative `buffer_adjusted_availability_hours`, which could flag a
+    genuinely EMPTY day (`committed_hours=0.0`) as overloaded --
+    contradicting this function's own stated invariant. Clamped to a
+    real, valid `[0.0, 1.0]` range now."""
+    result = compute_meeting_load(committed_hours=0.0, buffer_fraction=1.5)
+    assert result.buffer_adjusted_availability_hours == 0.0  # clamped to 1.0, not -0.5
+    assert result.is_overloaded is False  # zero real commitments is never an overload
+
+
+def test_compute_meeting_load_a_negative_buffer_fraction_is_clamped_to_zero():
+    result = compute_meeting_load(committed_hours=0.0, buffer_fraction=-0.5)
+    assert result.buffer_adjusted_availability_hours == WORKING_HOURS_PER_DAY  # clamped to 0.0 -- no buffer reserved
+
+
+def test_compute_meeting_load_a_negative_overload_threshold_never_flags_a_genuinely_empty_day():
+    """The same real class of gap as the `buffer_fraction` finding
+    above, for `overload_threshold` specifically: a negative threshold
+    made `committed_hours=0.0` compare greater than a negative real
+    number, flagging an empty day as overloaded."""
+    result = compute_meeting_load(committed_hours=0.0, overload_threshold=-0.1)
+    assert result.is_overloaded is False
+
+
+def test_compute_meeting_load_refuses_a_real_nan_committed_hours_loudly():
+    """A real, disclosed LOW finding: `max(0.0, float('nan'))` silently
+    returns `0.0` in real Python (argument-order-dependent, confirmed
+    directly before trusting it) -- a genuine NaN must never be
+    silently absorbed into a meaningless result; it must fail loud."""
+    with pytest.raises(ValueError, match="NaN"):
+        compute_meeting_load(committed_hours=float("nan"))
+
+
+def test_compute_meeting_load_refuses_a_real_nan_in_any_other_parameter_loudly():
+    with pytest.raises(ValueError, match="NaN"):
+        compute_meeting_load(committed_hours=1.0, working_hours_per_day=float("nan"))
+    with pytest.raises(ValueError, match="NaN"):
+        compute_meeting_load(committed_hours=1.0, buffer_fraction=float("nan"))
+    with pytest.raises(ValueError, match="NaN"):
+        compute_meeting_load(committed_hours=1.0, overload_threshold=float("nan"))
