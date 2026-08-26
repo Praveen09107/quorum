@@ -1110,7 +1110,16 @@ async def test_auth_token_a_real_sign_in_missing_a_refresh_token_never_500s(pool
     network calls to Google this route can't complete without a live
     browser (`exchange_authorization_code`, `verify_google_id_token`);
     every other real code path -- user provisioning, the new branching
-    logic, session issuance -- runs for real."""
+    logic, session issuance -- runs for real.
+
+    `get_settings()` is monkeypatched via the same real, established
+    `model_copy()` technique `test_search_returns_503_when_the_
+    embedding_provider_is_not_configured` already uses -- CI's own real,
+    disclosed environment (`DEC-115`) has no real `GOOGLE_OAUTH_CLIENT_
+    ID`/`SECRET` configured at all, so this route's own real config
+    check would otherwise 503 before ever reaching the two mocked
+    functions above; every other real field (including CI's own real,
+    configured `GOOGLE_TOKEN_ENCRYPTION_KEY`) stays intact."""
     from quorum_backend import main as main_module
 
     google_sub = f"test-auth-token-no-refresh-{uuid.uuid4()}"
@@ -1121,6 +1130,10 @@ async def test_auth_token_a_real_sign_in_missing_a_refresh_token_never_500s(pool
     def _fake_verify(id_token, client_id):
         return {"sub": google_sub, "email": "test@example.com"}
 
+    fake_settings = get_settings().model_copy(
+        update={"google_oauth_client_id": "fake-client-id-for-a-real-test", "google_oauth_client_secret": "fake-client-secret-for-a-real-test"}
+    )
+    monkeypatch.setattr(main_module, "get_settings", lambda: fake_settings)
     monkeypatch.setattr(main_module, "exchange_authorization_code", _fake_exchange)
     monkeypatch.setattr(main_module, "verify_google_id_token", _fake_verify)
 
