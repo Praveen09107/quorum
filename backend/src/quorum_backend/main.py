@@ -59,6 +59,7 @@ from quorum_backend.core.config import get_settings
 from quorum_backend.core.embeddings import EmbeddingError
 from quorum_backend.features.career_pipeline import fetch_career_pipeline
 from quorum_backend.features.deadline_watch import run_deadline_watch
+from quorum_backend.features.email_ingestion import run_email_ingestion
 from quorum_backend.features.negotiation_choice import (
     InvalidChosenOption,
     NegotiationAlreadyResolved,
@@ -74,6 +75,7 @@ from quorum_backend.features.self_test_harness import ScenarioResult, run_self_t
 from quorum_backend.features.spend_alert import run_spend_alert
 from quorum_backend.features.subscription_detective import fetch_detected_subscriptions
 from quorum_backend.features.tasks import fetch_tasks
+from quorum_backend.features.waiting_on import fetch_stale_waiting_on
 from quorum_backend.features.today import (
     fetch_active_negotiations,
     fetch_pending_actions,
@@ -544,6 +546,29 @@ async def career_pipeline(
         }
         for record in records
     ]
+
+
+@app.get("/waiting_on")
+async def waiting_on(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> list[dict]:
+    """Real, live -- Phase 4, `QUORUM_PRODUCTION_COMPLETION_PLAN.md`.
+    Queries the real `sent_messages` table via `fetch_stale_waiting_on()`
+    -- real messages `features/email_ingestion.py`'s own real, live
+    Gmail polling job wrote, never mocked or pre-computed data. Response
+    shape matches `QUORUM_DATA_CONTRACTS.md` §5.9 exactly (`recipient`/
+    `subject`/`sent_at`) -- already pre-filtered server-side, since
+    `find_stale_waiting_on()`'s own staleness-threshold decision is real
+    business logic that stays here, never re-derived on the client (that
+    section's own explicit note).
+
+    Requires a real, valid access token (`_require_auth`) and is real
+    per-user scoped from its first version, matching every other real
+    per-user route built since `DEC-110`."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    messages = await fetch_stale_waiting_on(pool, user_id=internal_user_id)
+    return [{"recipient": message.recipient, "subject": message.subject, "sent_at": message.sent_at} for message in messages]
 
 
 @app.get("/finance/subscriptions")
@@ -1024,4 +1049,44 @@ async def backfill_negotiation_detail_route(
         "negotiations_failed": result.negotiations_failed,
         "negotiations_detailed": result.negotiations_detailed,
         "outcome_counts": result.outcome_counts,
+    }
+
+
+@app.post("/internal/email-ingestion")
+async def email_ingestion_route(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    _internal: None = Depends(_require_internal_secret),
+) -> dict:
+    """Real, live -- Phase 4, `QUORUM_PRODUCTION_COMPLETION_PLAN.md`,
+    `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md` §9.1's own real, specified
+    "polling, 5-15 min interval." The first real Gmail API integration
+    this backend has ever made, and the first real, non-manual caller
+    `features/waiting_on.py` has ever had. Iterates every real user via
+    `features/email_ingestion.py::run_email_ingestion`: for each real
+    user with a real, stored Google grant (`auth/google_token_store.py`,
+    Phase 3), polls their real Gmail for real newly-sent messages
+    (recorded into `sent_messages`) and real new replies to threads
+    they're genuinely still waiting on -- zero LLM calls, same shared
+    `_require_internal_secret` auth as every other `/internal/*` route.
+
+    A real, honest skip, not a failure, for a real user who never
+    granted Google access at all or whose grant was later revoked --
+    Gmail integration is a real, additive capability, not a
+    precondition for this route running cleanly across every real user.
+    """
+    settings = get_settings()
+    if not settings.google_oauth_client_id or not settings.google_oauth_client_secret or not settings.google_token_encryption_key:
+        raise HTTPException(status_code=503, detail="Email ingestion is not currently available -- Google OAuth isn't fully configured on this deployment.")
+    result = await run_email_ingestion(
+        pool,
+        client_id=settings.google_oauth_client_id,
+        client_secret=settings.google_oauth_client_secret,
+        encryption_key=settings.google_token_encryption_key,
+    )
+    return {
+        "users_scanned": result.users_scanned,
+        "users_failed": result.users_failed,
+        "users_skipped_no_token": result.users_skipped_no_token,
+        "new_sent_messages": result.new_sent_messages,
+        "new_replies_detected": result.new_replies_detected,
     }

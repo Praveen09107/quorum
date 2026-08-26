@@ -41,6 +41,12 @@
 /// generation call this backend has ever made). Wiring it genuinely
 /// unlocks the Today tab's In Motion cards as real, tappable drill-
 /// throughs for the first time, not just a static display.
+/// `fetchWaitingOn` joins them as of Phase 4 (`features/waiting_on.py`,
+/// `features/email_ingestion.py`) -- real, live, per-user-scoped
+/// `GET /waiting_on`, backed by a real Gmail polling job, reaching the
+/// You tab's already-built, already-tested Waiting On screen (`_WaitingOnLoader`
+/// in `you_screen.dart`) for the first time since it was written years
+/// ahead of any real backend to call.
 /// `confirmDelete` is real and live too, as of `DEC-113` -- the real,
 /// irreversible `DELETE /account`, unblocked only once real user
 /// provisioning existed (`DEC-110`) to make a correctly per-user-scoped
@@ -62,6 +68,7 @@ import 'package:quorum_mobile/api/tasks_api.dart';
 import 'package:quorum_mobile/api/today_api.dart';
 import 'package:quorum_mobile/api/trust_api.dart';
 import 'package:quorum_mobile/api/trust_digest_api.dart';
+import 'package:quorum_mobile/api/waiting_on_api.dart';
 import 'package:quorum_mobile/auth/auth_api.dart';
 import 'package:quorum_mobile/auth/auth_controller.dart';
 import 'package:quorum_mobile/auth/login_screen.dart';
@@ -194,6 +201,10 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             chooseNegotiation: createChooseNegotiationFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            fetchWaitingOn: createWaitingOnFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
