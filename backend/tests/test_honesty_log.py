@@ -133,28 +133,42 @@ def test_build_honesty_feed_a_real_unrecognized_outcome_is_dropped_not_crashed()
 
 
 async def test_fetch_honesty_feed_real_per_user_scoping_and_ordering(pool, user_id):
+    """A real, disclosed LOW finding from this session's own standard
+    review: an earlier version of this test put exactly one row in
+    each bucket, so it passed trivially regardless of whether ordering
+    was preserved WITHIN a bucket -- a real regression that stopped
+    re-sorting rows correctly could still have passed. Fixed by giving
+    `successes` two real rows at different real timestamps."""
     now = datetime.now(timezone.utc)
-    older = uuid.uuid4()
-    newer = uuid.uuid4()
+    oldest = uuid.uuid4()
+    middle = uuid.uuid4()
+    newest = uuid.uuid4()
     await pool.execute(
         "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
         "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
-        older, "create_task", "S1", '{"title": "Older task"}', "approve", "approved_unchanged",
-        f"trace-{older}", uuid.UUID(user_id), now - timedelta(hours=2),
+        oldest, "create_task", "S1", '{"title": "Oldest task"}', "approve", "approved_unchanged",
+        f"trace-{oldest}", uuid.UUID(user_id), now - timedelta(hours=3),
     )
     await pool.execute(
         "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
         "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
-        newer, "log_expense", "S1", '{"payee": "Store", "amount": 9.0}', "approve", "caught_by_gate",
-        f"trace-{newer}", uuid.UUID(user_id), now - timedelta(minutes=5),
+        middle, "create_task", "S1", '{"title": "Middle task"}', "approve", "approved_unchanged",
+        f"trace-{middle}", uuid.UUID(user_id), now - timedelta(hours=1),
+    )
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        newest, "log_expense", "S1", '{"payee": "Store", "amount": 9.0}', "approve", "caught_by_gate",
+        f"trace-{newest}", uuid.UUID(user_id), now - timedelta(minutes=5),
     )
 
     feed = await fetch_honesty_feed(pool, user_id=user_id)
 
-    assert feed.total == 2
-    # Real, most-recent-first ordering across the whole real feed.
-    assert feed.failures_and_catches[0].action_id == str(newer)
-    assert feed.successes[0].action_id == str(older)
+    assert feed.total == 3
+    # Real, most-recent-first ordering across the whole real feed --
+    # including WITHIN a single bucket containing 2+ real rows.
+    assert feed.failures_and_catches[0].action_id == str(newest)
+    assert [a.action_id for a in feed.successes] == [str(middle), str(oldest)]
 
 
 async def test_fetch_honesty_feed_never_leaks_another_real_users_rows(pool, user_id):
