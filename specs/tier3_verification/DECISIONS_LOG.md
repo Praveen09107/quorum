@@ -3367,6 +3367,8 @@ The review also independently re-derived the `uncertain_no_data` exclusion formu
 
 **Genuinely still open, not resolved by this entry:** this feature's own real trigger is purely on-demand (a user opening the Tasks screen) -- no autonomous job surfaces a real risk proactively (e.g., via Today's "Needs you now" or a push notification); that would be a real, separate, larger scope decision, not silently assumed here.
 
+**Deployed to production** -- this genuinely unlocks a new, real, user-visible surface (the Predictive Risk banner), so it's shipped rather than left merged-but-undeployed, per the `DEC-134` lesson. Revision `quorum-backend-00021-nbh`, image tag `dec149-20260828`. Live-verified: `GET /health` → `200 {"status":"ok"}`; `GET /predictive_risk` with no `Authorization` header → real `401`.
+
 **Affects:** `backend/src/quorum_backend/features/predictive_risk.py` (new), `backend/src/quorum_backend/main.py`, `backend/tests/test_predictive_risk.py` (new), `backend/tests/test_main.py`, `mobile/lib/api/predictive_risk_api.dart` (new), `mobile/lib/features/predictive_risk/predictive_risk_logic.dart` (new), `mobile/lib/features/tasks/tasks_screen.dart`, `mobile/lib/features/today_screen.dart`, `mobile/lib/shell/main_shell.dart`, `mobile/lib/main.dart`, `mobile/test/predictive_risk_logic_test.dart` (new), `mobile/test/predictive_risk_api_test.dart` (new), `mobile/test/main_shell_navigation_test.dart`, this log, `STATUS_INDEX.md`, `QUORUM_PRODUCTION_COMPLETION_PLAN.md`.
 
 ---
