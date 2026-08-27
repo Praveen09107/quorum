@@ -90,12 +90,16 @@ async def pool():
     await real_pool.close()
 
 
-async def _insert_test_event(pool, proposal_id, outcome, resolved_at, *, has_resolved_at=True):
-    # A real, generated user_id -- required as of migration 0004
-    # (DEC-119), added for GET /today's real per-user scoping needs.
-    # /trust_digest's own real query still doesn't filter by it (the
-    # same disclosed, unchanged limitation since DEC-101) -- any real,
-    # valid UUID satisfies the column's NOT NULL constraint here.
+async def _insert_test_event(pool, proposal_id, outcome, resolved_at, *, has_resolved_at=True, user_id=None) -> uuid.UUID:
+    # RESOLVED, `DEC-150`: `user_id` is now a real, meaningful parameter,
+    # not just a NOT NULL placeholder -- `aggregate_weekly_summary()`
+    # genuinely filters by it now. Defaults to a fresh random UUID (a
+    # real, distinct identity) for the pre-existing tests below, which
+    # each pass that same real UUID into `aggregate_weekly_summary()`/
+    # `fetch_trust_digest()` themselves; tests that need to control it
+    # explicitly (cross-user isolation) pass a real, specific one.
+    # Returned so every caller has the real, exact value actually used.
+    user_id = user_id or uuid.uuid4()
     await pool.execute(
         """
         INSERT INTO action_events
@@ -111,8 +115,9 @@ async def _insert_test_event(pool, proposal_id, outcome, resolved_at, *, has_res
         f"test-trust-digest-{proposal_id}",
         resolved_at,
         resolved_at if has_resolved_at else None,
-        uuid.uuid4(),
+        user_id,
     )
+    return user_id
 
 
 async def test_aggregate_weekly_summary_counts_real_rows_and_excludes_uncertain(pool):
@@ -123,12 +128,18 @@ async def test_aggregate_weekly_summary_counts_real_rows_and_excludes_uncertain(
     resolved_at = datetime(2020, 1, 7, 12, 0, tzinfo=timezone.utc)
     ids = [uuid.uuid4() for _ in range(4)]
     outcomes = ["approved_unchanged", "approved_unchanged", "caught_by_gate", "uncertain_no_data"]
+    # RESOLVED, DEC-150: all 4 real rows now share the SAME real user_id
+    # -- aggregate_weekly_summary() genuinely filters by it, so rows
+    # scattered across different real users would no longer be counted
+    # together the way this test's own real point (excluding
+    # uncertain_no_data) requires.
+    user_id = uuid.uuid4()
 
     try:
         for proposal_id, outcome in zip(ids, outcomes):
-            await _insert_test_event(pool, proposal_id, outcome, resolved_at)
+            await _insert_test_event(pool, proposal_id, outcome, resolved_at, user_id=user_id)
 
-        summary = await aggregate_weekly_summary(pool, week_start)
+        summary = await aggregate_weekly_summary(pool, week_start, user_id=str(user_id))
 
         assert summary.week_start == "2020-01-06"
         # 4 rows inserted, but uncertain_no_data is excluded from
@@ -147,9 +158,9 @@ async def test_aggregate_weekly_summary_falls_back_to_created_at_when_resolved_a
     proposal_id = uuid.uuid4()
 
     try:
-        await _insert_test_event(pool, proposal_id, "approved_unchanged", created_at, has_resolved_at=False)
+        user_id = await _insert_test_event(pool, proposal_id, "approved_unchanged", created_at, has_resolved_at=False)
 
-        summary = await aggregate_weekly_summary(pool, week_start)
+        summary = await aggregate_weekly_summary(pool, week_start, user_id=str(user_id))
 
         assert summary.total_actions == 1
         assert summary.success_rate == 1.0
@@ -159,10 +170,34 @@ async def test_aggregate_weekly_summary_falls_back_to_created_at_when_resolved_a
 
 async def test_aggregate_weekly_summary_with_no_real_rows_is_a_real_honest_zero(pool):
     # 1999-01-04 is a real Monday nothing in this project has ever
-    # written test data against.
-    summary = await aggregate_weekly_summary(pool, date(1999, 1, 4))
+    # written test data against -- a real, fresh random user_id too, so
+    # this genuinely has zero real rows regardless of what any other
+    # real user's own history looks like.
+    summary = await aggregate_weekly_summary(pool, date(1999, 1, 4), user_id=str(uuid.uuid4()))
     assert summary.total_actions == 0
     assert summary.success_rate == 0.0
+
+
+async def test_aggregate_weekly_summary_never_counts_another_real_users_rows(pool):
+    """RESOLVED, `DEC-150`: the real, load-bearing correctness property
+    this whole fix exists to guarantee, proven directly at the module
+    level (not just through the route) -- two distinct real users, real
+    rows in the identical real week, querying as one user must never
+    see the other's row."""
+    week_start = date(2020, 1, 6)
+    resolved_at = datetime(2020, 1, 7, 12, 0, tzinfo=timezone.utc)
+    proposal_mine, proposal_theirs = uuid.uuid4(), uuid.uuid4()
+    my_user_id = uuid.uuid4()
+
+    try:
+        await _insert_test_event(pool, proposal_mine, "approved_unchanged", resolved_at, user_id=my_user_id)
+        await _insert_test_event(pool, proposal_theirs, "approved_unchanged", resolved_at)  # a real, different user
+
+        summary = await aggregate_weekly_summary(pool, week_start, user_id=str(my_user_id))
+
+        assert summary.total_actions == 1  # only my own real row, never the other real user's
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = ANY($1::uuid[])", [proposal_mine, proposal_theirs])
 
 
 async def test_fetch_trust_digest_end_to_end_against_the_real_database(pool):
@@ -174,16 +209,21 @@ async def test_fetch_trust_digest_end_to_end_against_the_real_database(pool):
     this_week_ids = [uuid.uuid4(), uuid.uuid4()]
     last_week_ids = [uuid.uuid4(), uuid.uuid4()]
     all_ids = this_week_ids + last_week_ids
+    # RESOLVED, DEC-150: all 4 real rows share the SAME real user_id --
+    # fetch_trust_digest() now requires one, and this test's own real
+    # point (a genuine week-over-week comparison) needs every row
+    # counted together, not scattered across different real users.
+    user_id = uuid.uuid4()
 
     try:
         # This week: 2/2 approved -- success_rate 1.0.
         for proposal_id in this_week_ids:
-            await _insert_test_event(pool, proposal_id, "approved_unchanged", this_week_resolved)
+            await _insert_test_event(pool, proposal_id, "approved_unchanged", this_week_resolved, user_id=user_id)
         # Last week: 1 approved, 1 caught -- success_rate 0.5.
-        await _insert_test_event(pool, last_week_ids[0], "approved_unchanged", last_week_resolved)
-        await _insert_test_event(pool, last_week_ids[1], "caught_by_gate", last_week_resolved)
+        await _insert_test_event(pool, last_week_ids[0], "approved_unchanged", last_week_resolved, user_id=user_id)
+        await _insert_test_event(pool, last_week_ids[1], "caught_by_gate", last_week_resolved, user_id=user_id)
 
-        result = await fetch_trust_digest(pool, today=today)
+        result = await fetch_trust_digest(pool, user_id=str(user_id), today=today)
 
         assert result.current_week.week_start == "2020-01-20"
         assert result.current_week.total_actions == 2

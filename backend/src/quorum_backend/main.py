@@ -305,20 +305,23 @@ async def trust(
 @app.get("/trust_digest")
 async def trust_digest(
     pool: asyncpg.Pool = Depends(_get_db_pool),
-    _user_id: str = Depends(_require_auth),
+    google_sub: str = Depends(_require_auth),
 ) -> dict:
     """Real, live -- queries the real `action_events` table via
     `fetch_trust_digest()`, never mocked or pre-computed data. Response
     shape matches `QUORUM_DATA_CONTRACTS.md` §5.15 exactly.
 
-    Requires a real, valid access token (`_require_auth`) as of this
-    session -- honest note: `action_events` itself has no `user_id`
-    column (confirmed against the real migration schema), so this is
-    currently a real "you must be signed in" gate, not yet a per-user
-    data filter. Adding real per-user scoping to the underlying data is
-    a separate, disclosed open item, not silently implied solved here.
+    RESOLVED, `DEC-150`: this docstring previously said `action_events`
+    had no `user_id` column and that this route was only a "you must be
+    signed in" gate, not a real per-user filter -- true when first
+    written, false since migration `0004`/`DEC-119`, and never corrected
+    here even after `DEC-145` found and disclosed the live consequence
+    (this route genuinely aggregated every real user's data together).
+    Real per-user scoped now, matching every other per-user-scoped route
+    in this backend (`_resolve_internal_user_id_or_404`, `DEC-110`).
     """
-    result = await fetch_trust_digest(pool)
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    result = await fetch_trust_digest(pool, user_id=internal_user_id)
     return {
         "current_week": asdict(result.current_week),
         "previous_week": asdict(result.previous_week) if result.previous_week is not None else None,
