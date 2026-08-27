@@ -114,7 +114,9 @@ Added `.claude/CLAUDE.md`'s new "Whole-system verification checkpoint" section, 
 
 **✅ Real `UPDATE_BUDGET` execution CLOSED, `DEC-148`** — `users.monthly_budget_limit` (migration `0015`, a real, small per-user column, no companion table needed) is the genuine budgets-ceiling concept this bullet called for. `action_executor.py`'s new branch writes it directly; every real read site that previously divided by the module-level `TODAY_MONTHLY_BUDGET_LIMIT` constant (`today.py`, `deadline_watch.py`, `spend_alert.py` via the shared `negotiation_trigger_support.py` helper, `negotiation_detail_backfill.py`) now reads the real per-user value instead, proven end to end by a real, live test showing a real per-user limit change genuinely flips `spend_alert.py`'s own conflict detection. CRITICAL-tier reviewed (touches `action_executor.py`, the file with the real S3/Gmail-execution backstop). Full detail: `DECISIONS_LOG.md` `DEC-148`.
 
-- Build `features/predictive_risk.py` for real (doesn't exist) — parameters already specified (≥0.5 historical correction rate, ±1 deadline tolerance).
+**✅ `features/predictive_risk.py` CLOSED, `DEC-149`** — real, per-user "does next week's real task-deadline density match a historically risky pattern" assessment, using the real, already-specified parameters (≥0.5 historical correction rate, ±1 deadline tolerance). The one Phase 6 module with genuinely no prior route/data contract or mobile screen anywhere in the spec corpus — flagged explicitly before building, and built with both a real backend AND a real, minimal mobile surface (a banner on the Tasks screen, not a new tab), per Preethish's own explicit choice when asked. Full detail: `DECISIONS_LOG.md` `DEC-149`.
+
+- ~~Build `features/predictive_risk.py` for real~~ — **done, `DEC-149`.**
 - ~~Build `features/career_digest.py` for real~~ — **done, `DEC-147`.**
 - ~~Build `features/honesty_log.py` for real~~ — **done, `DEC-145`.**
 - Wire real Memory Transparency (`security/memory_transparency.py` already exists) — needs a real route plus Preethish's own mem0 signup (external, disclosed, his action, not ours).

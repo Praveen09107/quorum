@@ -76,6 +76,7 @@ from quorum_backend.features.negotiation_choice import (
 )
 from quorum_backend.features.negotiation_detail import fetch_negotiation_detail
 from quorum_backend.features.negotiation_detail_backfill import run_negotiation_detail_backfill
+from quorum_backend.features.predictive_risk import fetch_risk_assessment
 from quorum_backend.features.retry_queue_drainer import drain_due_jobs
 from quorum_backend.features.search import search as run_search
 from quorum_backend.features.self_test_harness import ScenarioResult, run_self_test, summarize
@@ -355,6 +356,33 @@ async def tasks(
         }
         for record in records
     ]
+
+
+@app.get("/predictive_risk")
+async def predictive_risk_endpoint(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live -- Phase 6, `QUORUM_PRODUCTION_COMPLETION_PLAN.md`,
+    `DEC-149`. Real, per-user scoped assessment of whether next real
+    calendar week's own real task-deadline density matches a
+    historically risky pattern in this exact user's own real task
+    history. See `features/predictive_risk.py`'s own top-of-file
+    docstring for the real, disclosed design decisions this module made
+    where no prior spec contract existed (this feature's real JSON
+    shape, and its real "correction" proxy).
+
+    Requires a real, valid access token (`_require_auth`) and is real
+    per-user scoped from this route's first line."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    assessment = await fetch_risk_assessment(pool, user_id=internal_user_id)
+    return {
+        "week_start": assessment.week_start,
+        "deadline_density": assessment.deadline_density,
+        "matching_historical_weeks": assessment.matching_historical_weeks,
+        "pooled_correction_rate": assessment.pooled_correction_rate,
+        "is_at_risk": assessment.is_at_risk,
+    }
 
 
 @app.get("/today")

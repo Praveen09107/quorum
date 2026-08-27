@@ -371,6 +371,68 @@ def test_tasks_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
             app.state.db_pool = real_pool
 
 
+# --- GET /predictive_risk (Phase 6, DEC-149) ---
+
+
+def test_predictive_risk_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.get("/predictive_risk")
+    assert response.status_code == 401
+
+
+async def test_predictive_risk_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
+    """Real, end-to-end: real-provisions a real user (DEC-110), confirms
+    `GET /predictive_risk` genuinely round-trips through `fetch_risk_
+    assessment()` with a real, valid access token. A freshly provisioned
+    real user has no real task history, so the real, honest response
+    is the no-data case -- asserted precisely, not just a 200."""
+    headers, _internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+
+    with TestClient(app) as client:
+        response = client.get("/predictive_risk", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body.keys()) == {
+        "week_start", "deadline_density", "matching_historical_weeks", "pooled_correction_rate", "is_at_risk",
+    }
+    assert body["matching_historical_weeks"] == 0
+    assert body["pooled_correction_rate"] is None
+    assert body["is_at_risk"] is False
+
+
+async def test_predictive_risk_endpoint_never_counts_another_real_users_tasks(pool, provisioned_users):
+    headers_a, _user_a = await _provisioned_auth_header(pool, provisioned_users)
+    _headers_b, user_b = await _provisioned_auth_header(pool, provisioned_users)
+    task_b = uuid.uuid4()
+    upcoming = datetime.now(timezone.utc) + timedelta(weeks=1)
+
+    await pool.execute(
+        "INSERT INTO tasks (task_id, user_id, title, estimated_hours, deadline, status) VALUES ($1, $2, $3, $4, $5, $6)",
+        task_b, uuid.UUID(user_b), "User B's real, private upcoming task", 1.0, upcoming, "open",
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/predictive_risk", headers=headers_a)
+        assert response.json()["deadline_density"] == 0  # user A never sees user B's real task
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE task_id = $1", task_b)
+
+
+def test_predictive_risk_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
+    with TestClient(app) as client:
+        real_pool = app.state.db_pool
+        app.state.db_pool = None
+        try:
+            response = client.get("/predictive_risk", headers=_auth_header())
+            health_response = client.get("/health")
+            assert response.status_code == 503
+            assert health_response.status_code == 200
+        finally:
+            app.state.db_pool = real_pool
+
+
 async def test_today_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
     """Real, end-to-end: real-provisions a real user, inserts a real,
     unresolved `action_events` row and a real, unresolved `negotiations`

@@ -73,6 +73,7 @@ import 'package:quorum_mobile/features/memory_transparency/memory_transparency_l
 import 'package:quorum_mobile/features/negotiation/negotiation_logic.dart';
 import 'package:quorum_mobile/features/negotiation/negotiation_screen.dart';
 import 'package:quorum_mobile/features/pending_share_provider.dart';
+import 'package:quorum_mobile/features/predictive_risk/predictive_risk_logic.dart';
 import 'package:quorum_mobile/features/search/search_logic.dart';
 import 'package:quorum_mobile/features/share_intent_handler.dart';
 import 'package:quorum_mobile/features/tasks/tasks_logic.dart';
@@ -99,6 +100,7 @@ typedef CareerDigestFetcher = Future<CompanyDigestData> Function(String applicat
 typedef FinanceFetcher = Future<List<DetectedSubscriptionData>> Function();
 typedef WaitingOnFetcher = Future<List<WaitingOnItem>> Function();
 typedef SearchFetcher = Future<List<SearchResultItem>> Function(String query);
+typedef PredictiveRiskFetcher = Future<RiskAssessmentData> Function();
 
 class MainShell extends ConsumerStatefulWidget {
   final TodayDataFetcher? fetchToday;
@@ -108,6 +110,7 @@ class MainShell extends ConsumerStatefulWidget {
   final MemoriesFetcher? fetchMemories;
   final DeletionConfirmer? confirmDelete;
   final TaskListFetcher? fetchTasks;
+  final PredictiveRiskFetcher? fetchPredictiveRisk;
   final GateRevealFetcher? fetchGateReveal;
   final NegotiationFetcher? fetchNegotiation;
   final ChooseNegotiationOption? chooseNegotiation;
@@ -132,6 +135,7 @@ class MainShell extends ConsumerStatefulWidget {
     this.fetchMemories,
     this.confirmDelete,
     this.fetchTasks,
+    this.fetchPredictiveRisk,
     this.fetchGateReveal,
     this.fetchNegotiation,
     this.chooseNegotiation,
@@ -188,6 +192,7 @@ class _MainShellState extends ConsumerState<MainShell> {
         return _TodayTab(
           fetch: widget.fetchToday,
           fetchTasks: widget.fetchTasks,
+          fetchPredictiveRisk: widget.fetchPredictiveRisk,
           fetchGateReveal: widget.fetchGateReveal,
           fetchNegotiation: widget.fetchNegotiation,
           chooseNegotiation: widget.chooseNegotiation,
@@ -284,11 +289,19 @@ class _NotConnectedState extends StatelessWidget {
 class _TodayTab extends StatelessWidget {
   final TodayDataFetcher? fetch;
   final TaskListFetcher? fetchTasks;
+  final PredictiveRiskFetcher? fetchPredictiveRisk;
   final GateRevealFetcher? fetchGateReveal;
   final NegotiationFetcher? fetchNegotiation;
   final ChooseNegotiationOption? chooseNegotiation;
 
-  const _TodayTab({this.fetch, this.fetchTasks, this.fetchGateReveal, this.fetchNegotiation, this.chooseNegotiation});
+  const _TodayTab({
+    this.fetch,
+    this.fetchTasks,
+    this.fetchPredictiveRisk,
+    this.fetchGateReveal,
+    this.fetchNegotiation,
+    this.chooseNegotiation,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -310,6 +323,7 @@ class _TodayTab extends StatelessWidget {
           data: snapshot.data!,
           now: DateTime.now(),
           fetchTasks: fetchTasks,
+          fetchPredictiveRisk: fetchPredictiveRisk,
           onTapAction: gateReveal == null
               ? null
               : (action) => Navigator.of(context).push(

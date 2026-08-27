@@ -16,7 +16,9 @@ import 'package:quorum_mobile/features/computed_state.dart';
 import 'package:quorum_mobile/features/finance/finance_logic.dart';
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
 import 'package:quorum_mobile/features/negotiation/negotiation_logic.dart';
+import 'package:quorum_mobile/features/predictive_risk/predictive_risk_logic.dart';
 import 'package:quorum_mobile/features/search/search_logic.dart';
+import 'package:quorum_mobile/features/tasks/tasks_logic.dart';
 import 'package:quorum_mobile/features/today/in_motion_logic.dart';
 import 'package:quorum_mobile/features/today/needs_you_now_logic.dart';
 import 'package:quorum_mobile/features/today_screen.dart';
@@ -99,11 +101,29 @@ Future<List<SearchResultItem>> _fakeFetchSearch(String query) async {
   ];
 }
 
+Future<List<TaskData>> _fakeFetchTasks() async {
+  return [
+    const TaskData(taskId: 't1', title: 'A real, distinctive test task', estimatedHours: 2.0, deadline: null, status: TaskStatus.open),
+  ];
+}
+
+Future<RiskAssessmentData> _fakeFetchPredictiveRisk() async {
+  return RiskAssessmentData(
+    weekStart: DateTime(2026, 9, 1),
+    deadlineDensity: 3,
+    matchingHistoricalWeeks: 2,
+    pooledCorrectionRate: 0.6,
+    isAtRisk: true,
+  );
+}
+
 Widget _harness() {
   return ProviderScope(
     child: MaterialApp(
       home: MainShell(
         fetchToday: _fakeFetchToday,
+        fetchTasks: _fakeFetchTasks,
+        fetchPredictiveRisk: _fakeFetchPredictiveRisk,
         fetchGateReveal: _fakeFetchGateReveal,
         fetchNegotiation: _fakeFetchNegotiation,
         chooseNegotiation: _fakeChooseNegotiation,
@@ -119,6 +139,20 @@ Widget _harness() {
 }
 
 void main() {
+  testWidgets('tapping "View tasks" opens the real Tasks screen with the real predictive risk banner', (tester) async {
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('View tasks'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('A real, distinctive test task'), findsOneWidget);
+    // The real risk banner (DEC-149) -- rendered above the real task
+    // list, not a new tab or a separate screen.
+    expect(find.textContaining('Next week may be tight'), findsOneWidget);
+    expect(find.textContaining('60%'), findsOneWidget);
+  });
+
   testWidgets('tapping a Needs You Now action opens the real Gate reveal with real findings', (tester) async {
     await tester.pumpWidget(_harness());
     await tester.pumpAndSettle();
