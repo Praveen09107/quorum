@@ -52,6 +52,13 @@
 /// permanently-dead "Log" bottom-nav tab for the first time since
 /// `honesty_log_logic.dart`/`honesty_log_screen.dart` were built years
 /// ahead of any real backend to call (Batch 8, `DEC-087`).
+/// `fetchGateReveal` joins them as of the same phase (`features/
+/// gate_reveal.py`) -- real, live, per-user-scoped `GET /gate_reveal/
+/// {proposal_id}`, backed by the Gate's own real findings/objections
+/// (now genuinely persisted onto `action_events`, migration `0013`),
+/// closing the real, disclosed `DEC-126` gap and making a "Needs you
+/// now" card's own tap-through to `gate_reveal_screen.dart` genuinely
+/// reachable for the first time since Batch 6 (`DEC-080`).
 /// `confirmDelete` is real and live too, as of `DEC-113` -- the real,
 /// irreversible `DELETE /account`, unblocked only once real user
 /// provisioning existed (`DEC-110`) to make a correctly per-user-scoped
@@ -67,6 +74,7 @@ import 'package:http/http.dart' as http;
 import 'package:quorum_mobile/api/account_api.dart';
 import 'package:quorum_mobile/api/career_pipeline_api.dart';
 import 'package:quorum_mobile/api/finance_api.dart';
+import 'package:quorum_mobile/api/gate_reveal_api.dart';
 import 'package:quorum_mobile/api/honesty_log_api.dart';
 import 'package:quorum_mobile/api/negotiation_api.dart';
 import 'package:quorum_mobile/api/search_api.dart';
@@ -203,6 +211,10 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             fetchNegotiation: createNegotiationFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            fetchGateReveal: createGateRevealFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),

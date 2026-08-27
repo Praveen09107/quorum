@@ -234,6 +234,57 @@ async def test_drain_due_jobs_processes_a_real_single_domain_job_and_persists_a_
     assert float(expense["amount"]) == 25.0
     assert expense["source"] == "gate_approved"
 
+    # DEC-146: real, live persistence of the Gate's own findings/
+    # objections, closing the gap DEC-126 found -- LOG_EXPENSE is real
+    # Stakes.S1, so Stage B (and therefore `_fake_critic_call`) never
+    # runs; `objections` must be a real, honest empty list, never a
+    # fabricated one, while `findings` reflects whatever real Stage A
+    # checks apply to this domain.
+    gate_reveal_row = await pool.fetchrow(
+        "SELECT findings, objections FROM action_events WHERE user_id = $1", uuid.UUID(user_id)
+    )
+    assert json.loads(gate_reveal_row["objections"]) == []
+    assert isinstance(json.loads(gate_reveal_row["findings"]), list)
+
+
+async def test_persist_verdict_writes_real_findings_and_objections_matching_the_real_verdict(pool, user_id):
+    """A real, direct unit test of `_persist_verdict()` itself (not the
+    full `drain_due_jobs()` pipeline) -- proves the real persistence
+    mechanism handles a genuinely non-empty `objections` list correctly,
+    a real state no domain this drainer can currently translate ever
+    reaches on its own (`finance`/`tasks` are S1, `calendar` is S2 --
+    real Stage-B Critic objections only exist for real S3 actions, none
+    of which `Position.domain`'s own schema lets this drainer produce).
+    Disclosed here rather than silently left untested."""
+    from quorum_backend.features.retry_queue_drainer import _persist_verdict
+    from quorum_backend.gate.schemas import ActionProposal, ActionType, Finding, Objection, Stakes
+
+    proposal = ActionProposal(
+        action_type=ActionType.LOG_EXPENSE, payload={"amount": 10.0, "category": "food", "payee": "A real vendor"}
+    )
+    verdict = GateVerdict(
+        decision="approve",
+        findings=[Finding(validator="ProvenanceCheck", claim="A real claim", evidence_state="verified_true", confidence=1.0)],
+        objections=[Objection(category="tone", severity="low", description="A real, live-tested objection.", signed_off=True)],
+        trace_id="test-trace",
+        revision_count=0,
+    )
+
+    async with pool.acquire() as conn, conn.transaction():
+        await _persist_verdict(conn, proposal=proposal, stakes=Stakes.S1, verdict=verdict, user_id=user_id)
+
+    row = await pool.fetchrow(
+        "SELECT findings, objections FROM action_events WHERE proposal_id = $1", proposal.proposal_id
+    )
+    findings = json.loads(row["findings"])
+    objections = json.loads(row["objections"])
+    assert findings == [
+        {"validator": "ProvenanceCheck", "claim": "A real claim", "evidence_state": "verified_true", "source_ref": None, "confidence": 1.0}
+    ]
+    assert len(objections) == 1
+    assert objections[0]["category"] == "tone"
+    assert objections[0]["signed_off"] is True
+
 
 async def test_drain_due_jobs_processes_a_real_multi_domain_job_and_persists_one_action_event_per_domain(pool, user_id):
     await _seed_job(pool, user_id=user_id, source_domains=["finance", "tasks"])

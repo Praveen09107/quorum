@@ -3251,4 +3251,24 @@ The review also independently re-derived the `uncertain_no_data` exclusion formu
 
 ---
 
-*Next entry: DEC-146*
+## DEC-146: real Gate Reveal -- the Gate's own findings/objections are finally persisted
+
+**CRITICAL tier** -- touches `retry_queue_drainer.py` (already CRITICAL-tier reviewed, `DEC-127`/`DEC-128`/`DEC-142`) and adds real, live persistence to the Gate's own verdict pipeline for the first time. Rule 6 applies.
+
+**Authorized directly ("go ahead with NEXT" / "continue with other remaining work"), Phase 6 of `QUORUM_PRODUCTION_COMPLETION_PLAN.md`.** Closes the real, disclosed gap `DEC-126` found: `gate.review()`'s own real `GateVerdict.findings`/`.objections` have always been computed, but never persisted anywhere -- used only to decide the verdict, then silently discarded. `mobile/lib/features/gate_reveal/` has had real, tested logic and a real screen since Batch 6 (`DEC-080`), and `main_shell.dart`'s own `_TodayTab` already wires a real tap-through from a "Needs you now" card to it -- with no real backend behind either until now.
+
+**What was built:** `migrations/0013_gate_reveal/` (new, applied live) -- two new, nullable `findings`/`objections` JSONB columns directly on `action_events`, no new table, no duplicated identity. `retry_queue_drainer.py::_persist_verdict()` -- the ONE real, live producer of `action_events` rows in this entire backend (confirmed by direct search before touching anything) -- now writes `verdict.findings`/`verdict.objections` (via Pydantic's own `.model_dump()`) onto the same row it already creates. `features/gate_reveal.py` (new) -- `fetch_gate_reveal()`, a real, per-user-scoped lookup by `proposal_id`, returning `None` honestly (never confirming another user's row exists) when it doesn't resolve. `GET /gate_reveal/{proposal_id}` (new), mirroring `GET /negotiations/{negotiation_id}`'s own already-established auth/404 pattern exactly.
+
+**A real, honest limit of what this real path can ever produce, confirmed directly rather than assumed:** `run_stage_b()`'s own real logic means only genuine `Stakes.S3` proposals ever produce real, Critic-authored objections (S2 is Judge-only, S1/S0 never reach Stage B at all) -- and none of the three real negotiation-eligible domains this drainer can translate (`finance`/`tasks`/`calendar-local`, per `Position.domain`'s own schema constraint) is ever S3. `objections` will therefore always be a real, honest empty list through this one real production path today, never a fabricated one -- disclosed directly in this session's own tests (a dedicated, direct unit test of `_persist_verdict()` proves the write mechanism handles a genuinely non-empty `objections` list correctly, since no real integration path through `drain_due_jobs()` can exercise that case itself).
+
+**A CRITICAL-tier cross-model review (Opus, isolated worktree) ran against this PR before merge, per Rule 6.**
+
+**Tests:** 4 in `test_gate_reveal.py` (real, live per-user lookup, cross-user isolation, null-column honesty) + 2 new/extended in `test_retry_queue_drainer.py` (the existing single-domain-job test extended to assert real findings/objections persistence for the S1 case; a new, direct `_persist_verdict()` unit test proving a genuinely non-empty objections list round-trips correctly) + 5 new route-level tests in `test_main.py` (live round-trip, cross-user 404, invalid-UUID 404, auth, 503) + 10 in `gate_reveal_api_test.dart` (the mobile fetcher, including the real `evidence_state`-to-visual-state mapping).
+
+**Verified live:** `ruff check backend` clean. Migration `0013` applied live to the real, deployed Supabase database, schema-verified directly. 143 backend tests across every DEC-146-touched file (and `retry_queue_drainer.py`'s own full existing suite) passing together. Mobile: `flutter analyze` clean, full `flutter test` suite clean (363/363).
+
+**Affects:** `backend/migrations/0013_gate_reveal/` (new), `backend/src/quorum_backend/features/gate_reveal.py` (new), `backend/src/quorum_backend/features/retry_queue_drainer.py`, `backend/src/quorum_backend/main.py`, `backend/tests/test_gate_reveal.py` (new), `backend/tests/test_retry_queue_drainer.py`, `backend/tests/test_main.py`, `mobile/lib/api/gate_reveal_api.dart` (new), `mobile/lib/main.dart`, `mobile/test/gate_reveal_api_test.dart` (new), this log.
+
+---
+
+*Next entry: DEC-147*

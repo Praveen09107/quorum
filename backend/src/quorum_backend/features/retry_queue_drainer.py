@@ -307,12 +307,25 @@ async def _persist_verdict(
     `approve` verdict only -- calls the real `action_executor.py` on
     the SAME connection, so the real write (when one exists) commits or
     rolls back together with the real decision that authorized it.
-    Returns whether a real execution genuinely happened."""
+    Returns whether a real execution genuinely happened.
+
+    REAL, LIVE PERSISTENCE OF THE GATE'S OWN FINDINGS/OBJECTIONS, closing
+    the real, disclosed gap `DEC-126` found (migration `0013`, `DEC-146`):
+    `gate.review()`'s own real `GateVerdict.findings`/`.objections` have
+    always been computed here, but were never persisted anywhere before
+    this -- used only to decide `verdict.decision`, then discarded. Real,
+    live-confirmed against `gate/schemas.py`'s own Pydantic models
+    before trusting `.model_dump()`'s output shape: both `Finding` and
+    `Objection` serialize their own `Literal` fields as plain strings,
+    matching `mobile/lib/features/gate_reveal/gate_reveal_logic.dart`'s
+    own already-built, already-tested parsing exactly (`evidence_state`/
+    `category`/`severity`/`signed_off` as real, plain JSON values, not
+    Python enum reprs)."""
     outcome, is_resolved = map_verdict_to_outcome(verdict)
     final_payload = verdict.revised_payload if verdict.revised_payload is not None else proposal.payload
     await conn.execute(
-        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
-        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at, findings, objections) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)",
         proposal.proposal_id,
         proposal.action_type.value,
         stakes.value,
@@ -322,6 +335,8 @@ async def _persist_verdict(
         verdict.trace_id,
         uuid.UUID(user_id),
         datetime.now(timezone.utc) if is_resolved else None,
+        json.dumps([finding.model_dump() for finding in verdict.findings]),
+        json.dumps([objection.model_dump() for objection in verdict.objections]),
     )
 
     if verdict.decision != "approve":
