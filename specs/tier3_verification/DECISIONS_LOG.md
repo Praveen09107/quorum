@@ -3272,6 +3272,8 @@ The review also independently re-derived the `uncertain_no_data` exclusion formu
 
 **Verified live:** `ruff check backend` clean. Migration `0013` applied live to the real, deployed Supabase database, schema-verified directly. The full backend suite across every DEC-146-touched file (and `retry_queue_drainer.py`'s own full existing suite) passing together -- see `STATUS_INDEX.md` for the current, live count rather than restating one here. Mobile: `flutter analyze` clean, full `flutter test` suite clean.
 
+**Deployed to production, unlike `DEC-144`'s `meeting_load.py`** -- this genuinely changes user-visible behavior (the Gate Reveal tap-through's own correctness), so it's shipped rather than left merged-but-undeployed, per the `DEC-134` lesson about keeping production in sync with what actually matters to a user. Revision `quorum-backend-00018-xh2`, image tag `dec146-20260827`. Live-verified: `GET /health` → `200 {"status":"ok"}`; `GET /gate_reveal/{uuid}` with no `Authorization` header → real `401`.
+
 **Affects:** `backend/migrations/0013_gate_reveal/` (new), `backend/src/quorum_backend/features/gate_reveal.py` (new), `backend/src/quorum_backend/features/retry_queue_drainer.py`, `backend/src/quorum_backend/main.py`, `backend/tests/test_gate_reveal.py` (new), `backend/tests/test_retry_queue_drainer.py`, `backend/tests/test_main.py`, `mobile/lib/api/gate_reveal_api.dart` (new), `mobile/lib/features/gate_reveal/gate_reveal_logic.dart`, `mobile/lib/features/gate_reveal/gate_reveal_screen.dart`, `mobile/lib/shell/main_shell.dart`, `mobile/lib/main.dart`, `mobile/test/gate_reveal_api_test.dart` (new), `mobile/test/gate_reveal_logic_test.dart`, `mobile/test/main_shell_navigation_test.dart`, this log, `STATUS_INDEX.md`.
 
 ---
