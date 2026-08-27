@@ -47,12 +47,53 @@ from quorum_backend.features.meeting_load import WORKING_HOURS_PER_DAY as TODAY_
 # duplicate `8.0` with an aspirational comment. Now a real import, not
 # a coincidence of two files agreeing on the same number.
 
-# A real, disclosed, reasoned default -- no per-user budget-
-# configuration feature exists anywhere in this app yet, so this is a
-# genuinely global default until one does, the same disclosed-choice
-# pattern already established for REFRESH_TOKEN_TTL_DAYS.
+# RESOLVED, `DEC-148`: this comment previously described the value below
+# as a genuinely global default because "no per-user budget-
+# configuration feature exists anywhere in this app yet." A real one
+# now does -- `users.monthly_budget_limit` (migration `0015`), closing
+# the gap `action_executor.py`'s own docstring named as the reason
+# `UPDATE_BUDGET` had no real execution target. `50000.0` survives here
+# ONLY as the real migration's own default value (every existing user
+# starts here) and as this constant's own historical name -- the real,
+# live-read path is `fetch_monthly_budget_limit()` below, never this
+# module-level constant directly, for every real per-user computation.
 # QUORUM_CONFIGURATION_CONSTANTS.md §4.
 TODAY_MONTHLY_BUDGET_LIMIT = 50000.0
+
+
+class MonthlyBudgetLimitUserNotFoundError(Exception):
+    """Raised when no real `users` row exists at all for a given
+    `user_id` -- a real, CRITICAL-tier review finding (`DEC-148`,
+    MEDIUM M2): an earlier version of this function silently fell back
+    to the real migration default instead, making a genuinely
+    nonexistent user indistinguishable from one honestly still on the
+    default -- the same real bug class `deadline_watch.py`'s own
+    `DeadlineWatchUserNotFoundError`/`spend_alert.py`'s own `SpendAlert
+    UserNotFoundError` already exist to rule out for their own real
+    `FOR UPDATE` lock queries. Every real caller of this function
+    already has real, per-item failure isolation that catches and
+    tallies exactly this (`run_deadline_watch`/`run_spend_alert`/`run_
+    negotiation_detail_backfill`'s own deliberately broad `except
+    Exception`), so raising loud here costs nothing and closes a real,
+    silent-corruption path."""
+
+
+async def fetch_monthly_budget_limit(conn: asyncpg.Pool | asyncpg.Connection, *, user_id: str) -> float:
+    """Real, live, per-user lookup -- `DEC-148`. Accepts either a real
+    `Pool` or a real `Connection`: every real call site here is a single,
+    non-transactional read, and both asyncpg types expose an identical
+    `fetchrow()` interface for that -- no pool-specific behavior (no
+    `.acquire()`, no transaction management) is ever needed by this
+    function itself. Callers already inside their own transaction
+    (`negotiation_trigger_support.py`, `negotiation_detail_backfill.py`)
+    pass their own `conn`, so this read joins that same transaction
+    rather than opening a second, separate one; `fetch_today_budget()`
+    below, with no surrounding transaction of its own, passes the real
+    `pool` directly."""
+    row = await conn.fetchrow("SELECT monthly_budget_limit FROM users WHERE user_id = $1", uuid.UUID(user_id))
+    if row is None:
+        raise MonthlyBudgetLimitUserNotFoundError(f"No real users row exists for user_id={user_id!r}")
+    return float(row["monthly_budget_limit"])
 
 
 @dataclass(frozen=True)
@@ -221,4 +262,5 @@ async def fetch_today_budget(pool: asyncpg.Pool, *, user_id: str) -> BudgetState
         uuid.UUID(user_id),
     )
     spent = float(row["spent"])
-    return compute_budget_state(monthly_limit=TODAY_MONTHLY_BUDGET_LIMIT, spent_so_far=spent)
+    monthly_limit = await fetch_monthly_budget_limit(pool, user_id=user_id)
+    return compute_budget_state(monthly_limit=monthly_limit, spent_so_far=spent)

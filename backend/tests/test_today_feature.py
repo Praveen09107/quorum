@@ -356,6 +356,22 @@ async def test_fetch_today_budget_is_the_real_full_limit_when_nothing_spent(pool
     assert result.remaining_fraction == 1.0
 
 
+async def test_fetch_today_budget_genuinely_reflects_a_real_per_user_monthly_limit(pool, user_id):
+    """`DEC-148`: the real point of `users.monthly_budget_limit`
+    (migration `0015`) existing at all -- a real, per-user ceiling
+    different from the module-level default genuinely changes this
+    function's own real, live-computed result, closing the exact gap
+    `UPDATE_BUDGET` execution needed to mean anything."""
+    await pool.execute(
+        "UPDATE users SET monthly_budget_limit = $1 WHERE user_id = $2", 20000.0, uuid.UUID(user_id)
+    )
+
+    result = await fetch_today_budget(pool, user_id=user_id)
+
+    assert result.amount_remaining == 20000.0
+    assert result.remaining_fraction == 1.0
+
+
 async def test_fetch_today_budget_never_counts_another_real_users_expenses(pool, user_id):
     other_google_sub = f"test-today-budget-other-{uuid.uuid4()}"
     other_user_id = await get_or_create_user(pool, google_sub=other_google_sub, email=None)

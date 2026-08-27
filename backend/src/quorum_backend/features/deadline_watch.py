@@ -128,10 +128,9 @@ import asyncpg
 from quorum_backend.features.negotiation_trigger_support import (
     build_tasks_claim_and_state,
     create_bare_negotiation,
-    fetch_month_to_date_spend,
+    fetch_budget_snapshot,
     has_blocking_negotiation,
 )
-from quorum_backend.features.today import TODAY_MONTHLY_BUDGET_LIMIT
 from quorum_backend.gate.schemas import ResourceClaim
 from quorum_backend.negotiation.trigger import DomainState, scan_for_conflicts
 
@@ -187,12 +186,21 @@ async def scan_one_user(conn: asyncpg.Connection, *, user_id: str) -> tuple[Scan
         return ScanOutcome.NO_CLAIM, None
     tasks_claim, tasks_state = tasks_claim_and_state
 
-    # A single real query for the raw spend figure -- both this
-    # module's own real finance CLAIM (spent this month) and its real
-    # available capacity (remaining budget) derive from the same one
-    # real number, never fetched twice.
-    spent_this_month = await fetch_month_to_date_spend(conn, user_id=user_id)
-    remaining_budget = max(0.0, TODAY_MONTHLY_BUDGET_LIMIT - spent_this_month)
+    # RESOLVED, `DEC-148`, refined by that same DEC's own review (LOW
+    # L1): `remaining_budget` now comes from the real, shared `fetch_
+    # budget_snapshot()` (real per-user `users.monthly_budget_limit`,
+    # migration `0015`) instead of a module-local duplicate of that same
+    # subtraction against a hardcoded constant -- the exact real
+    # inconsistency that would have let this job silently ignore a real
+    # UPDATE_BUDGET execution while `spend_alert.py` honored it. Using
+    # the shared SNAPSHOT (not the separate `fetch_remaining_monthly_
+    # budget()` helper) also closes a real, review-found gap the first
+    # version of this fix introduced: two separate statements querying
+    # month-to-date spend could disagree if a real expense committed
+    # between them, letting the real finance CLAIM and the real
+    # available-capacity figure genuinely drift apart within one scan.
+    # One shared read, reused for both real numbers below.
+    _monthly_limit, spent_this_month, remaining_budget = await fetch_budget_snapshot(conn, user_id=user_id)
 
     resource_claims = [
         tasks_claim,

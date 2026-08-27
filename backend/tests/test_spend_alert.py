@@ -131,6 +131,29 @@ async def test_scan_one_user_creates_a_real_negotiation_for_a_genuine_conflict(p
     assert row["trigger_source"] == "spend_alert"
 
 
+async def test_scan_one_user_genuinely_respects_a_real_per_user_monthly_budget_limit(pool, user_id):
+    """`DEC-148`: the real, end-to-end proof that a real `UPDATE_BUDGET`
+    execution (which writes `users.monthly_budget_limit`, migration
+    `0015`) genuinely changes this autonomous job's own real behavior,
+    not just the isolated `fetch_remaining_monthly_budget()` helper in
+    unit isolation. The identical real spend/task data the sibling test
+    above uses (₹5000 subscription + ₹46000 one-off genuinely exceeds
+    the real ₹50000 default) produces NO real conflict once this exact
+    user's own real ceiling is raised well above their real spend."""
+    await _seed_real_recurring_subscription(pool, user_id=user_id, payee="Coworking", amount=5000.0)
+    await _seed_expense(pool, user_id=user_id, payee="BigOneOff", amount=46000.0, occurred_days_ago=0)
+    await _seed_task(pool, user_id=user_id, hours=12.0, deadline_offset_days=1)
+    await pool.execute(
+        "UPDATE users SET monthly_budget_limit = $1 WHERE user_id = $2", 500000.0, uuid.UUID(user_id)
+    )
+
+    async with pool.acquire() as conn:
+        outcome, negotiation_id = await scan_one_user(conn, user_id=user_id)
+
+    assert outcome is ScanOutcome.NO_CONFLICT
+    assert negotiation_id is None
+
+
 async def test_scan_one_user_uses_the_real_sum_of_every_detected_subscription_not_just_one(pool, user_id):
     """A REAL, DISCLOSED CORRECTION TO THIS TEST'S OWN ORIGINAL SEED
     DATA, found by this session's own CRITICAL-tier review: the

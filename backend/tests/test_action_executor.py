@@ -169,6 +169,122 @@ async def test_execute_approved_action_log_expense_defaults_a_real_missing_payee
     assert row["payee"] == "Unknown"
 
 
+async def test_execute_approved_action_update_budget_writes_a_real_new_ceiling(pool, user_id):
+    """`DEC-148`: the real gap this module's own docstring named --
+    `payload["amount"]` is the real NEW ceiling itself, per `agents/
+    finance_agent.py::build_finance_proposal`'s own real contract, not
+    a delta applied to the existing one."""
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn,
+            action_type=ActionType.UPDATE_BUDGET,
+            payload={"amount": 75000.0, "category": "irrelevant-for-update-budget"},
+            user_id=user_id,
+        )
+    assert result.executed is True
+    row = await pool.fetchrow("SELECT monthly_budget_limit FROM users WHERE user_id = $1", uuid.UUID(user_id))
+    assert float(row["monthly_budget_limit"]) == 75000.0
+
+
+async def test_execute_approved_action_update_budget_a_second_real_call_overwrites_the_first(pool, user_id):
+    async with pool.acquire() as conn:
+        await execute_approved_action(
+            conn, action_type=ActionType.UPDATE_BUDGET, payload={"amount": 60000.0, "category": "x"}, user_id=user_id
+        )
+        await execute_approved_action(
+            conn, action_type=ActionType.UPDATE_BUDGET, payload={"amount": 40000.0, "category": "x"}, user_id=user_id
+        )
+    row = await pool.fetchrow("SELECT monthly_budget_limit FROM users WHERE user_id = $1", uuid.UUID(user_id))
+    assert float(row["monthly_budget_limit"]) == 40000.0  # the real, current value, not the first one
+
+
+@pytest.mark.parametrize("bad_amount", [0.0, -1.0, -50000.0, float("nan"), float("inf"), float("-inf")])
+async def test_execute_approved_action_update_budget_rejects_a_real_non_positive_ceiling(pool, user_id, bad_amount):
+    """A real, structural safety property: a real `0`, negative,
+    `NaN`, or infinite ceiling would produce a real division-by-zero,
+    an inverted-sign fraction, or a silently corrupted `NaN`/`0.0`
+    result in every real per-user computation that divides by it
+    (`today.py::compute_budget_state`, `negotiation_detail_backfill.
+    py::_build_baseline`'s own `budget_remaining_fraction`) -- rejected
+    before any real write, never carried out. `NaN`/`inf` are
+    deliberately included, not an afterthought: both real, live Python
+    values satisfy a bare `x <= 0 == False` (hand-verified: NaN
+    compares False against every relational operator except `!=`),
+    so `math.isfinite()` is what actually catches them."""
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.UPDATE_BUDGET, payload={"amount": bad_amount, "category": "x"}, user_id=user_id
+        )
+    assert result.executed is False
+    assert "malformed" in result.detail.lower()
+    row = await pool.fetchrow("SELECT monthly_budget_limit FROM users WHERE user_id = $1", uuid.UUID(user_id))
+    assert float(row["monthly_budget_limit"]) == 50000.0  # the real, untouched migration default
+
+
+async def test_execute_approved_action_update_budget_rejects_a_real_non_numeric_amount(pool, user_id):
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.UPDATE_BUDGET, payload={"amount": "not-a-real-number", "category": "x"}, user_id=user_id
+        )
+    assert result.executed is False
+    assert "malformed" in result.detail.lower()
+
+
+async def test_execute_approved_action_update_budget_rejects_a_real_boolean_amount(pool, user_id):
+    """`isinstance(True, int)` is real, live Python behavior -- `bool`
+    is a genuine subclass of `int` -- so a stray real `True`/`False`
+    payload value must be explicitly rejected, not silently accepted
+    as `1.0`/`0.0`."""
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.UPDATE_BUDGET, payload={"amount": True, "category": "x"}, user_id=user_id
+        )
+    assert result.executed is False
+    assert "malformed" in result.detail.lower()
+
+
+async def test_execute_approved_action_update_budget_rejects_a_real_amount_above_the_max(pool, user_id):
+    """`DEC-148` review, BLOCKER B1: a real Judge-authored `revised_
+    payload` has no schema guarantee beyond being a `dict` (`UPDATE_
+    BUDGET` is real `Stakes.S2`, so Stage B genuinely runs for it,
+    unlike `CREATE_TASK`/`LOG_EXPENSE`) -- an implausibly large real
+    ceiling is rejected here as this branch's own, independent last
+    line of defense, the same real bound `retry_queue_drainer.py::
+    _MAX_FINANCE_AMOUNT` already applies to the pre-Gate translation
+    path."""
+    from quorum_backend.features.action_executor import _MAX_BUDGET_LIMIT
+
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.UPDATE_BUDGET,
+            payload={"amount": _MAX_BUDGET_LIMIT + 1.0, "category": "x"}, user_id=user_id,
+        )
+    assert result.executed is False
+    assert "malformed" in result.detail.lower()
+    row = await pool.fetchrow("SELECT monthly_budget_limit FROM users WHERE user_id = $1", uuid.UUID(user_id))
+    assert float(row["monthly_budget_limit"]) == 50000.0
+
+
+async def test_execute_approved_action_update_budget_a_real_nonexistent_user_id_is_honestly_not_executed(pool, user_id):
+    """`DEC-148` review, HIGH H2: a real `UPDATE ... WHERE user_id = $2`
+    genuinely, silently matches ZERO rows for a real, nonexistent
+    `user_id` -- unlike `CREATE_TASK`/`LOG_EXPENSE`'s own real
+    `INSERT`s, which fail loud on a bad foreign key. Must report a
+    real, honest `executed=False`, never a false `executed=True` for a
+    write that never happened."""
+    nonexistent_user_id = str(uuid.uuid4())
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.UPDATE_BUDGET, payload={"amount": 60000.0, "category": "x"},
+            user_id=nonexistent_user_id,
+        )
+    assert result.executed is False
+    # No real users row was ever created for this nonexistent id --
+    # confirms this genuinely didn't silently succeed against some
+    # other real row either.
+    assert await pool.fetchrow("SELECT 1 FROM users WHERE user_id = $1", uuid.UUID(nonexistent_user_id)) is None
+
+
 async def test_execute_approved_action_fails_safely_not_loudly_on_a_real_malformed_payload(pool, user_id):
     """A real, defensive guard: `CREATE_TASK`/`LOG_EXPENSE` should never
     reach this function with a payload missing required keys under the
@@ -628,7 +744,7 @@ async def test_execute_approved_action_is_honest_about_every_genuinely_unimpleme
     """A real, disclosed CRITICAL-tier review finding (DEC-142, M5):
     `SEND_EMAIL`/`ARCHIVE_EMAIL`/`LABEL_EMAIL` are now genuinely
     executable (given real credentials this test deliberately never
-    provides), so this test's own real scope narrows to the FIVE
+    provides), so this test's own real scope narrows to the
     `ActionType`s that still have NO real execution path at all AND
     are not real `Stakes.S3` -- asserting the SPECIFIC, real "no real
     execution path exists yet" detail, not merely a falsy result
@@ -638,15 +754,18 @@ async def test_execute_approved_action_is_honest_about_every_genuinely_unimpleme
     `Stakes.S3` too, so it correctly hits the real, structural S3
     backstop BEFORE ever reaching the "no execution path" fallback
     (exactly the review's own H2 fix working as intended -- see the
-    dedicated test for it below)."""
+    dedicated test for it below). `UPDATE_BUDGET` is excluded as of
+    `DEC-148` -- it is now genuinely executable too; see its own
+    dedicated tests below."""
     genuinely_unimplemented_non_s3 = [
         t for t in ActionType
         if t not in (
             ActionType.CREATE_TASK, ActionType.LOG_EXPENSE, ActionType.SEND_EMAIL,
             ActionType.ARCHIVE_EMAIL, ActionType.LABEL_EMAIL, ActionType.CREATE_CALENDAR_EVENT_EXTERNAL,
+            ActionType.UPDATE_BUDGET,
         )
     ]
-    assert len(genuinely_unimplemented_non_s3) == 5  # a real, live guard against this enum silently growing unnoticed
+    assert len(genuinely_unimplemented_non_s3) == 4  # a real, live guard against this enum silently growing unnoticed
 
     async with pool.acquire() as conn:
         for action_type in genuinely_unimplemented_non_s3:

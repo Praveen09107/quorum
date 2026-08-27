@@ -29,20 +29,30 @@ produce one of these three action types to begin with -- see
 `action_executor.py`'s own top-of-file docstring for the full account,
 including the real S3 human-approval backstop `SEND_EMAIL` (and
 `CREATE_CALENDAR_EVENT_EXTERNAL`) specifically requires. `UPDATE_
-BUDGET` and both real calendar types still have no real execution
-target at all (a missing `budgets`/`calendar_events` table, or Phase
-5's own separate, Rule-5-gated scope). Never called for `reject`/`revise`/
-`escalate_to_human` -- only a genuine `approve` verdict.
+BUDGET` now ALSO has a real execution target (`DEC-148`, `users.
+monthly_budget_limit`, migration `0015`) and genuinely executes through
+this exact call site -- the real `finance` domain's own translated
+`update_budget` action is the one real, live way this action type is
+reachable in production today. Both real calendar types still have no
+real execution target at all (Phase 5's own separate, Rule-5-gated
+scope). Never called for `reject`/`revise`/`escalate_to_human` -- only
+a genuine `approve` verdict.
 
 STAGE A SCOPE, A REAL, DELIBERATE, PREETHISH-CONFIRMED CHOICE (`DEC-127`):
-`budget_check`/`availability_check` need real ground-truth adapters this
-backend cannot honestly back -- confirmed directly against the real
-schema before designing this: no `budgets`-ceiling table exists (only
-`expenses`, which records transactions, not a ceiling to check against),
-and no `calendar_events` table exists at all (confirmed since `DEC-121`).
-Building either for real would mean inventing new architecture beyond
-this session's real scope (`CLAUDE.md` Rule 3). This drainer instead
-runs `provenance_check` for every real domain (a genuinely correct,
+`availability_check` needs a real ground-truth adapter this backend
+cannot honestly back yet -- no `calendar_events` table exists at all
+(confirmed since `DEC-121`). Building one for real would mean inventing
+new architecture beyond this session's real scope (`CLAUDE.md` Rule 3).
+**`budget_check` is a genuinely different case as of `DEC-148`:** a
+real `budgets`-ceiling now exists (`users.monthly_budget_limit`), so a
+real, pure-code Stage A `budget_check` validator is now honestly
+buildable for the first time -- tracked as its own new, disclosed open
+item (it would be the correct, structural home for bounding a real
+`UPDATE_BUDGET`/`LOG_EXPENSE` amount against the real, current ceiling
+before Stage B ever runs, rather than `action_executor.py`'s own
+last-line-of-defense checks doing all of that work alone), not silently
+folded into this session's own scope. This drainer instead runs
+`provenance_check` for every real domain (a genuinely correct,
 non-fabricated `"user_request"` justification -- this action stems
 directly from a real, explicit choice the user just made, recorded in
 `negotiations.chosen_option_id`) plus `deadline_conflict_check` for the
@@ -69,6 +79,7 @@ consumer in this backend already follows.
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -216,8 +227,19 @@ _MAX_ESTIMATED_HOURS = 999.9
 def validate_and_build_finance_proposal(args: dict) -> ActionProposal:
     action = args["action"]
     amount = float(args["amount"])
-    if amount <= 0:
-        raise DownstreamTranslationError(f"Translated finance amount must be positive, got {amount!r}")
+    # `math.isfinite()` -- a real, CRITICAL-tier review finding
+    # (`DEC-148`, BLOCKER B1): Python's real `json` module parses the
+    # literal, non-standard tokens `NaN`/`Infinity`/`-Infinity` by
+    # default, so a malformed real Gemini generation containing one of
+    # these unquoted could otherwise slip past a bare `amount <= 0`
+    # check (both `nan <= 0` and `inf <= 0` are real, live `False` in
+    # Python) and reach `build_finance_proposal()`. Real, defense-in-
+    # depth here -- `action_executor.py`'s own `UPDATE_BUDGET` branch
+    # carries the same real check as its own, independent last line of
+    # defense, since a Judge-authored `revised_payload` can bypass this
+    # function entirely.
+    if not math.isfinite(amount) or amount <= 0:
+        raise DownstreamTranslationError(f"Translated finance amount must be a real, finite, positive number, got {amount!r}")
     if amount > _MAX_FINANCE_AMOUNT:
         raise DownstreamTranslationError(f"Translated finance amount {amount!r} exceeds the real, max storable value {_MAX_FINANCE_AMOUNT}")
     return build_finance_proposal(action=action, amount=amount, category=args["category"], payee=args.get("payee"))
