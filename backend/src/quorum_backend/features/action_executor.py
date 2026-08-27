@@ -188,6 +188,19 @@ logger = logging.getLogger("quorum_backend")
 
 _UNKNOWN_PAYEE = "Unknown"
 
+# The same real, already-established value `retry_queue_drainer.py::
+# _MAX_FINANCE_AMOUNT` uses -- defined again here, not imported,
+# because `retry_queue_drainer.py` already imports `execute_approved_
+# action` from this module, so importing the reverse direction would
+# be a real circular import. Reused deliberately, not re-derived: this
+# module's own real S2 `UPDATE_BUDGET` finding (CRITICAL-tier review,
+# `DEC-148`) is that a real, Judge-authored `revised_payload` can reach
+# this function having skipped `retry_queue_drainer.py`'s own pre-Gate
+# `validate_and_build_finance_proposal()` bound entirely -- this is the
+# real, structural backstop for that path, not a duplicate check for
+# the same path.
+_MAX_BUDGET_LIMIT = 99_999_999.99
+
 # A real, live-confirmed shape for both a real Gmail message id and a
 # real Gmail label id -- neither one this project has ever seen
 # contain anything but this real, narrow character set. Rejected
@@ -228,13 +241,13 @@ async def execute_approved_action(
     google_access_token: str | None = None,
     http_client: httpx.AsyncClient | None = None,
 ) -> ExecutionResult:
-    """Real, live writes for the five real, safely-executable action
+    """Real, live writes for the six real, safely-executable action
     types; a real, honest non-execution for every other real
     `ActionType`. Runs on the SAME connection/transaction the caller is
-    already inside for `CREATE_TASK`/`LOG_EXPENSE` (matching `retry_
-    queue_drainer.py`'s own atomicity discipline) -- the three real
-    Gmail-executing branches never touch `conn` at all; see this
-    module's own top-of-file docstring for why.
+    already inside for `CREATE_TASK`/`LOG_EXPENSE`/`UPDATE_BUDGET`
+    (matching `retry_queue_drainer.py`'s own atomicity discipline) --
+    the three real Gmail-executing branches never touch `conn` at all;
+    see this module's own top-of-file docstring for why.
 
     `approved_by_user_id`/`google_access_token`/`http_client` are all
     optional, defaulting to `None` -- the one real caller today
@@ -244,16 +257,30 @@ async def execute_approved_action(
     `SEND_EMAIL`/`ARCHIVE_EMAIL`/`LABEL_EMAIL` when they're genuinely
     needed but missing, never a crash from an unexpected `None`.
 
-    A REAL, VERIFIED SAFETY PROPERTY THIS FUNCTION RELIES ON, STATED
-    EXPLICITLY RATHER THAN LEFT IMPLICIT: `CREATE_TASK`/`LOG_EXPENSE`/
-    `ARCHIVE_EMAIL` are all real `Stakes.S1`, and `LABEL_EMAIL` is real
-    `Stakes.S0` (confirmed against `router.STAKES_TABLE`) --
-    `gate/orchestration.py`'s own real state machine means Stage B
-    never runs for S0/S1, so `payload` here is always the original,
-    already-validated `proposal.payload` for those four. `SEND_EMAIL`
-    is real `Stakes.S3` and is checked once, structurally, before every
-    branch -- see `approved_by_user_id` above and this module's own
-    top-of-file docstring. Still handled defensively below (a real
+    A REAL, VERIFIED SAFETY PROPERTY THIS FUNCTION RELIES ON FOR THREE
+    OF ITS SIX REAL BRANCHES, STATED EXPLICITLY RATHER THAN LEFT
+    IMPLICIT: `CREATE_TASK`/`LOG_EXPENSE` are real `Stakes.S1`, and
+    `LABEL_EMAIL` is real `Stakes.S0` (confirmed against `router.
+    STAKES_TABLE`) -- `gate/orchestration.py`'s own real state machine
+    means Stage B never runs for S0/S1, so `payload` here is always the
+    original, already-validated `proposal.payload` for those three.
+    `SEND_EMAIL` is real `Stakes.S3` and is checked once, structurally,
+    before every branch -- see `approved_by_user_id` above and this
+    module's own top-of-file docstring.
+
+    A REAL, DIFFERENT, WEAKER GUARANTEE FOR THE REMAINING TWO --
+    `ARCHIVE_EMAIL` (S1, included above for completeness) aside,
+    `UPDATE_BUDGET` is real `Stakes.S2`: Stage B DOES run for it (the
+    real Judge, never the Critic -- `run_stage_b()` only calls the
+    Critic for S3), and `orchestration.py`'s own real `review()` can
+    turn a Judge `decision="revise"` into a final `approve` carrying
+    that Judge's own `revised_payload` -- a real `dict` with no schema
+    guarantee beyond being one. `payload` reaching the `UPDATE_BUDGET`
+    branch below is therefore NOT always the original, pre-Gate-
+    validated value; that branch carries its own real, independent
+    bound checks as its actual defense (a CRITICAL-tier review finding,
+    `DEC-148`), not a restatement of a guarantee this docstring no
+    longer makes for it. Still handled defensively below regardless (a real
     `KeyError`/`TypeError`/`ValueError` returns a real, honest
     `executed=False` rather than an unhandled exception)."""
     try:
@@ -363,46 +390,73 @@ async def _execute_approved_action_unsafe(
         # RESOLVED, `DEC-148`: closes the real gap this module's own
         # top-of-file docstring named -- `users.monthly_budget_limit`
         # (migration `0015`) is the real, genuine, small budgets-ceiling
-        # concept that never existed before. `payload["amount"]`, per
-        # `agents/finance_agent.py::build_finance_proposal`'s own real,
-        # existing contract, is the real NEW ceiling itself (not a
-        # delta) -- confirmed directly against that function and
+        # concept that never existed before. `payload["amount"]` is
+        # read as the real NEW ceiling itself, never a delta --
         # `negotiation/downstream_translation.py`'s own real translation
-        # prompt ("changing a real budget ceiling itself") before
-        # writing this branch, not assumed.
+        # prompt now says this explicitly ("DEC-148 review finding H1"
+        # in that file's own docstring); this branch enforces the
+        # reading, that file's prompt asks the model for it.
         #
-        # A real, structural safety check, not left implicit: every
-        # real per-user computation that divides by this value
-        # (`today.py::compute_budget_state`, `negotiation_detail_
-        # backfill.py::_build_baseline`'s own `budget_remaining_
-        # fraction`) would produce a real division-by-zero or an
-        # inverted-sign fraction for a non-positive real ceiling -- a
-        # genuinely different, worse failure mode than a merely
-        # implausible one, so rejected here before any real write,
-        # the same "reject a structurally unsafe value outright" choice
-        # `_reject_header_injection`/`_reject_malformed_gmail_id` above
-        # already make for their own real inputs. Raising `ValueError`
-        # here is deliberate, not an oversight -- the shared `except`
-        # in `execute_approved_action()` above turns it into the same
-        # real, honest `executed=False` every other malformed-payload
-        # case already gets.
-        new_limit = payload["amount"]
+        # A REAL, CRITICAL-TIER-REVIEW-FOUND GAP, FIXED HERE (`DEC-148`
+        # review, BLOCKER B1): `UPDATE_BUDGET` is real `Stakes.S2`, so
+        # -- unlike `CREATE_TASK`/`LOG_EXPENSE` (`Stakes.S1`, Stage B
+        # never runs) -- the real Judge DOES run for this action type,
+        # and `orchestration.py`'s own real `review()` can turn a Judge
+        # `decision="revise"` into a final `approve` carrying that
+        # Judge's own `revised_payload`, a real `dict` with no schema
+        # guarantee beyond that (the same real fact this module's own
+        # `SEND_EMAIL` handling already discloses for S3). The payload
+        # reaching this branch is therefore NOT always the original,
+        # already-validated `retry_queue_drainer.py::validate_and_
+        # build_finance_proposal()` output -- it can be a real,
+        # LLM-authored value that never passed that function's own
+        # bound check at all. The checks below are this function's own
+        # real, independent, last-line-of-defense validation, not a
+        # restatement of a check already guaranteed to have run.
+        #
         # `math.isfinite()` is load-bearing, not decorative: a real
         # `float('nan')` genuinely satisfies `nan <= 0 == False` in
         # live, hand-verified Python (NaN compares False against every
         # relational operator except `!=`), and `float('inf')` also
         # satisfies `inf <= 0 == False` -- both would silently slip past
-        # a bare `new_limit <= 0` check and then corrupt every real
-        # downstream division by this value (`compute_budget_state`,
-        # `_build_baseline`'s own `budget_remaining_fraction`) with a
-        # real, silent `NaN`/`0.0` result, never a loud failure.
+        # a bare `new_limit <= 0` check. A real, disclosed, hand-checked
+        # fact about the ONE real path that reaches this branch through
+        # the Gate today (a Judge-authored `revised_payload`): Postgres's
+        # own `jsonb` type genuinely rejects the literal `NaN`/`Infinity`
+        # tokens Python's `json.dumps` would otherwise emit (`Invalid
+        # TextRepresentationError: Token "NaN" is invalid`, confirmed
+        # live against the real Supabase database), so `_persist_
+        # verdict()`'s own `INSERT INTO action_events` already fails
+        # first for THAT specific path -- the job fails and genuinely
+        # retries, never silently writing or executing the hostile
+        # value. `math.isfinite()` here is still real, necessary defense
+        # in depth, not redundant, for two genuinely different reasons:
+        # (1) a real, live-caught-but-not-yet-JSON-serialized value
+        # reaching this function through any future caller that doesn't
+        # route through that same jsonb insert first, and (2) this
+        # function's own `float(new_limit)` write below would otherwise
+        # be the very LAST point a `NaN`/`inf` could still be caught if
+        # that upstream protection were ever weakened. `_MAX_BUDGET_
+        # LIMIT` is the check that actually matters for THIS real path
+        # today: a finite-but-implausibly-large amount encodes as
+        # perfectly valid JSON, sails past Postgres's jsonb parser
+        # untouched, and would otherwise corrupt every real downstream
+        # division by this value (`compute_budget_state`, `_build_
+        # baseline`'s own `budget_remaining_fraction`) -- bounded here
+        # the identical way `retry_queue_drainer.py::_MAX_FINANCE_
+        # AMOUNT` already bounds a translated finance amount, reused
+        # not re-derived.
+        new_limit = payload["amount"]
         if (
             isinstance(new_limit, bool)
             or not isinstance(new_limit, (int, float))
             or not math.isfinite(new_limit)
             or new_limit <= 0
+            or new_limit > _MAX_BUDGET_LIMIT
         ):
-            raise ValueError(f"real UPDATE_BUDGET amount must be a real, finite, positive number, got {new_limit!r}")
+            raise ValueError(
+                f"real UPDATE_BUDGET amount must be a real, finite number in (0, {_MAX_BUDGET_LIMIT}], got {new_limit!r}"
+            )
 
         # A real, honest, live-found fact, matching LOG_EXPENSE's own
         # already-disclosed precedent immediately below: `payload
@@ -411,11 +465,25 @@ async def _execute_approved_action_unsafe(
         # ceiling, not a per-category one. The real, translated category
         # still survives in the real `action_events.payload` JSONB the
         # caller already persists alongside this write.
-        await conn.execute(
+        #
+        # A REAL, CRITICAL-TIER-REVIEW-FOUND GAP, FIXED HERE (`DEC-148`
+        # review, HIGH H2): `UPDATE ... WHERE user_id = $2` genuinely,
+        # silently matches ZERO rows for a real, nonexistent `user_id`
+        # -- unlike `CREATE_TASK`/`LOG_EXPENSE`'s own real `INSERT`s,
+        # which fail loud on a bad foreign key, a real `UPDATE`'s own
+        # real status tag (`"UPDATE 0"`) was previously discarded,
+        # so this branch would have reported a real, honest-looking
+        # `executed=True` for a write that never genuinely happened.
+        # Checked here, structurally, the same "verify what actually
+        # happened, never assume" discipline this whole project's Gate
+        # architecture exists to enforce elsewhere.
+        status = await conn.execute(
             "UPDATE users SET monthly_budget_limit = $1 WHERE user_id = $2",
             float(new_limit),
             uuid.UUID(user_id),
         )
+        if status != "UPDATE 1":
+            raise ValueError(f"real UPDATE_BUDGET matched no real users row for user_id={user_id!r} ({status!r})")
         return ExecutionResult(executed=True, detail=f"Real monthly budget limit updated to {float(new_limit)!r}.")
 
     if action_type == ActionType.LOG_EXPENSE:

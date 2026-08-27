@@ -169,19 +169,39 @@ async def fetch_month_to_date_spend(conn: asyncpg.Connection, *, user_id: str) -
     return float(row["spent"])
 
 
+async def fetch_budget_snapshot(conn: asyncpg.Connection, *, user_id: str) -> tuple[float, float, float]:
+    """Real, shared `(monthly_limit, spent_this_month, remaining)`
+    snapshot -- `DEC-148` review, LOW L1: `deadline_watch.py` and
+    `negotiation_detail_backfill.py::_build_spend_alert_state`
+    previously called two or three of `fetch_month_to_date_spend`/
+    `fetch_monthly_budget_limit`/`fetch_remaining_monthly_budget`
+    separately, issuing the identical real spend query more than once
+    per call and letting the limit/spend pair used for one real number
+    (e.g. a claim) drift from the pair used for another (e.g. available
+    capacity) if a real, concurrent expense committed between the two
+    separate statements. One real, shared read here, used everywhere
+    all three numbers are needed together, closes both the duplicate
+    query and the split-snapshot exposure at once."""
+    spent = await fetch_month_to_date_spend(conn, user_id=user_id)
+    monthly_limit = await fetch_monthly_budget_limit(conn, user_id=user_id)
+    remaining = max(0.0, monthly_limit - spent)
+    return monthly_limit, spent, remaining
+
+
 async def fetch_remaining_monthly_budget(conn: asyncpg.Connection, *, user_id: str) -> float:
     """Real, shared finance-domain `available` figure -- never
     negative (a real month that's already run over shows `0.0` real
-    remaining budget, not a nonsensical negative number).
+    remaining budget, not a nonsensical negative number). A thin
+    wrapper over `fetch_budget_snapshot()` for the real callers
+    (`spend_alert.py`) that only need this one number.
 
     RESOLVED, `DEC-148`: previously subtracted spend from the module-
     level `TODAY_MONTHLY_BUDGET_LIMIT` constant -- now reads the real,
     per-user `users.monthly_budget_limit` (migration `0015`) instead, so
     a real `UPDATE_BUDGET` execution genuinely changes what this
     function returns."""
-    spent = await fetch_month_to_date_spend(conn, user_id=user_id)
-    monthly_limit = await fetch_monthly_budget_limit(conn, user_id=user_id)
-    return max(0.0, monthly_limit - spent)
+    _limit, _spent, remaining = await fetch_budget_snapshot(conn, user_id=user_id)
+    return remaining
 
 
 async def fetch_detected_subscriptions_via_conn(conn: asyncpg.Connection, *, user_id: str) -> list[DetectedSubscription]:

@@ -193,7 +193,11 @@ async def test_drain_due_jobs_do_nothing_option_produces_zero_actions_and_delete
 async def test_drain_due_jobs_processes_a_real_update_budget_job_and_genuinely_writes_the_new_ceiling(pool, user_id):
     """`DEC-148`: the real, end-to-end capstone -- a chosen finance
     negotiation option translated to `update_budget` (S2, `router.
-    STAKES_TABLE`), approved by the real Judge, now genuinely executes
+    STAKES_TABLE`), approved by an injected, deterministic fake Judge
+    (`_fake_judge_approve` -- real Gate state machine, real Stage A,
+    real translation validation, real database; the Judge itself is
+    the one real, live external call this test file deliberately never
+    makes, matching every other test in it), now genuinely executes
     through `action_executor.py::execute_approved_action()`'s own new
     branch, closing the exact gap this whole pipeline previously
     stopped short of for this one action type."""
@@ -220,6 +224,98 @@ async def test_drain_due_jobs_processes_a_real_update_budget_job_and_genuinely_w
 
     row = await pool.fetchrow("SELECT monthly_budget_limit FROM users WHERE user_id = $1", uuid.UUID(user_id))
     assert float(row["monthly_budget_limit"]) == 80000.0
+
+
+async def test_drain_due_jobs_a_real_judge_revised_update_budget_payload_still_rejects_an_implausibly_large_amount(pool, user_id):
+    """`DEC-148` review, BLOCKER B1's own regression test: `UPDATE_
+    BUDGET` is real `Stakes.S2`, so the real Judge genuinely runs for
+    it, and `gate/orchestration.py::review()`'s own real `revise`
+    handling can turn a Judge-authored `revised_payload` into the
+    FINAL payload `action_executor.py` executes -- bypassing `retry_
+    queue_drainer.py`'s own pre-Gate `validate_and_build_finance_
+    proposal()` bound entirely, since that only ever validates the
+    ORIGINAL translated payload.
+
+    A real, hand-verified fact this test is deliberately built around,
+    NOT a NaN/inf value: a live query against the real Supabase
+    database (this session, `DEC-148`) confirmed Postgres's own `jsonb`
+    type genuinely REJECTS the literal `NaN`/`Infinity` tokens Python's
+    `json.dumps` would otherwise emit (`InvalidTextRepresentationError:
+    Token "NaN" is invalid`) -- so a `NaN`/`inf` `revised_payload`
+    never even reaches `execute_approved_action()` through this real
+    path; it fails earlier, at `_persist_verdict()`'s own `INSERT INTO
+    action_events` (the job fails and genuinely retries later). A real,
+    finite-but-implausibly-large amount is NOT caught there -- it
+    encodes as perfectly valid JSON -- so this test proves the part of
+    `action_executor.py`'s own real, independent bound check
+    (`_MAX_BUDGET_LIMIT`) that Postgres's jsonb strictness does NOT
+    already cover."""
+    from quorum_backend.features.action_executor import _MAX_BUDGET_LIMIT
+
+    retry_id = await _seed_job(pool, user_id=user_id, source_domains=["finance"])
+    translation_call = await _fake_translation_call_factory(
+        {"finance": {"action": "update_budget", "amount": 60000.0, "category": "discretionary", "payee": None}}
+    )
+
+    async def judge_revise_with_hostile_amount(proposal, findings, objections):
+        return GateVerdict(
+            decision="revise",
+            revised_payload={"amount": _MAX_BUDGET_LIMIT + 1.0, "category": "discretionary"},
+            findings=[], objections=[], trace_id="test-trace", revision_count=0,
+        )
+
+    result = await drain_due_jobs(
+        pool, translation_call=translation_call, critic_call=_fake_critic_call, judge_call=judge_revise_with_hostile_amount
+    )
+
+    assert result.jobs_succeeded == 1
+    assert result.downstream_actions_produced == 1
+    assert result.downstream_actions_executed == 0  # the real, hostile amount was genuinely rejected, never executed
+
+    event = await pool.fetchrow("SELECT gate_decision, outcome FROM action_events WHERE user_id = $1", uuid.UUID(user_id))
+    assert event["gate_decision"] == "approve"  # Stage A's own re-check never touches a finance amount -- passes through
+    # The real user's own budget ceiling was never touched by the real,
+    # implausibly large value -- still the real, untouched migration default.
+    row = await pool.fetchrow("SELECT monthly_budget_limit FROM users WHERE user_id = $1", uuid.UUID(user_id))
+    assert float(row["monthly_budget_limit"]) == 50000.0
+    assert await pool.fetchrow("SELECT 1 FROM retry_queue WHERE retry_id = $1", retry_id) is None
+
+
+async def test_drain_due_jobs_a_real_judge_revised_update_budget_payload_with_nan_fails_the_real_json_insert_not_silently(pool, user_id):
+    """The real, disclosed OTHER half of the B1 story: a `NaN`
+    `revised_payload` never reaches `action_executor.py` at all through
+    this real path -- Postgres's own `jsonb` type rejects it first, at
+    the real `INSERT INTO action_events` inside `_persist_verdict()`.
+    This is a real, safe failure mode (the job fails and genuinely
+    retries later, the hostile value is never persisted and never
+    executed), just a different one than a naive reading of "add a
+    finite check" would suggest -- documented here so a future reader
+    doesn't assume `action_executor.py`'s own check is what stops this
+    specific case."""
+    retry_id = await _seed_job(pool, user_id=user_id, source_domains=["finance"])
+    translation_call = await _fake_translation_call_factory(
+        {"finance": {"action": "update_budget", "amount": 60000.0, "category": "discretionary", "payee": None}}
+    )
+
+    async def judge_revise_with_nan(proposal, findings, objections):
+        return GateVerdict(
+            decision="revise",
+            revised_payload={"amount": float("nan"), "category": "discretionary"},
+            findings=[], objections=[], trace_id="test-trace", revision_count=0,
+        )
+
+    result = await drain_due_jobs(
+        pool, translation_call=translation_call, critic_call=_fake_critic_call, judge_call=judge_revise_with_nan
+    )
+
+    assert result.jobs_failed == 1  # the real INSERT itself failed -- a real, safe, retried failure, not a silent write
+    assert await pool.fetchrow("SELECT 1 FROM action_events WHERE user_id = $1", uuid.UUID(user_id)) is None
+    row = await pool.fetchrow("SELECT monthly_budget_limit FROM users WHERE user_id = $1", uuid.UUID(user_id))
+    assert float(row["monthly_budget_limit"]) == 50000.0
+    # The real job survives for a clean retry, not silently dropped.
+    retry_row = await pool.fetchrow("SELECT attempt_count FROM retry_queue WHERE retry_id = $1", retry_id)
+    assert retry_row is not None
+    assert retry_row["attempt_count"] == 1
 
 
 async def test_drain_due_jobs_an_unsupported_domain_fails_loud_via_the_real_retry_path(pool, user_id):

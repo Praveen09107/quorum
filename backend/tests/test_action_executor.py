@@ -243,6 +243,48 @@ async def test_execute_approved_action_update_budget_rejects_a_real_boolean_amou
     assert "malformed" in result.detail.lower()
 
 
+async def test_execute_approved_action_update_budget_rejects_a_real_amount_above_the_max(pool, user_id):
+    """`DEC-148` review, BLOCKER B1: a real Judge-authored `revised_
+    payload` has no schema guarantee beyond being a `dict` (`UPDATE_
+    BUDGET` is real `Stakes.S2`, so Stage B genuinely runs for it,
+    unlike `CREATE_TASK`/`LOG_EXPENSE`) -- an implausibly large real
+    ceiling is rejected here as this branch's own, independent last
+    line of defense, the same real bound `retry_queue_drainer.py::
+    _MAX_FINANCE_AMOUNT` already applies to the pre-Gate translation
+    path."""
+    from quorum_backend.features.action_executor import _MAX_BUDGET_LIMIT
+
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.UPDATE_BUDGET,
+            payload={"amount": _MAX_BUDGET_LIMIT + 1.0, "category": "x"}, user_id=user_id,
+        )
+    assert result.executed is False
+    assert "malformed" in result.detail.lower()
+    row = await pool.fetchrow("SELECT monthly_budget_limit FROM users WHERE user_id = $1", uuid.UUID(user_id))
+    assert float(row["monthly_budget_limit"]) == 50000.0
+
+
+async def test_execute_approved_action_update_budget_a_real_nonexistent_user_id_is_honestly_not_executed(pool, user_id):
+    """`DEC-148` review, HIGH H2: a real `UPDATE ... WHERE user_id = $2`
+    genuinely, silently matches ZERO rows for a real, nonexistent
+    `user_id` -- unlike `CREATE_TASK`/`LOG_EXPENSE`'s own real
+    `INSERT`s, which fail loud on a bad foreign key. Must report a
+    real, honest `executed=False`, never a false `executed=True` for a
+    write that never happened."""
+    nonexistent_user_id = str(uuid.uuid4())
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.UPDATE_BUDGET, payload={"amount": 60000.0, "category": "x"},
+            user_id=nonexistent_user_id,
+        )
+    assert result.executed is False
+    # No real users row was ever created for this nonexistent id --
+    # confirms this genuinely didn't silently succeed against some
+    # other real row either.
+    assert await pool.fetchrow("SELECT 1 FROM users WHERE user_id = $1", uuid.UUID(nonexistent_user_id)) is None
+
+
 async def test_execute_approved_action_fails_safely_not_loudly_on_a_real_malformed_payload(pool, user_id):
     """A real, defensive guard: `CREATE_TASK`/`LOG_EXPENSE` should never
     reach this function with a payload missing required keys under the

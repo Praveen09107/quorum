@@ -133,8 +133,15 @@ def build_translation_prompt(domain: str, description: str) -> str:
         return preamble + (
             "Decide: is this logging one new expense (log_expense) or "
             "changing a real budget ceiling itself (update_budget)? "
-            "Extract a real, positive amount, a real category, and an "
-            "optional payee (null if none is genuinely named)."
+            "For log_expense, amount is the real expense amount. For "
+            "update_budget, amount is the real, NEW TOTAL monthly "
+            "budget ceiling itself -- never a change, increase, "
+            "decrease, or reduction amount; if the description only "
+            "names a change (e.g. \"cut spending by 5000\"), compute "
+            "the real resulting total from context and return that "
+            "total, not the change. Extract a real, positive amount, a "
+            "real category, and an optional payee (null if none is "
+            "genuinely named)."
         )
     if domain == "tasks":
         return preamble + (

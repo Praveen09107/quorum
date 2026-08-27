@@ -61,6 +61,23 @@ from quorum_backend.features.meeting_load import WORKING_HOURS_PER_DAY as TODAY_
 TODAY_MONTHLY_BUDGET_LIMIT = 50000.0
 
 
+class MonthlyBudgetLimitUserNotFoundError(Exception):
+    """Raised when no real `users` row exists at all for a given
+    `user_id` -- a real, CRITICAL-tier review finding (`DEC-148`,
+    MEDIUM M2): an earlier version of this function silently fell back
+    to the real migration default instead, making a genuinely
+    nonexistent user indistinguishable from one honestly still on the
+    default -- the same real bug class `deadline_watch.py`'s own
+    `DeadlineWatchUserNotFoundError`/`spend_alert.py`'s own `SpendAlert
+    UserNotFoundError` already exist to rule out for their own real
+    `FOR UPDATE` lock queries. Every real caller of this function
+    already has real, per-item failure isolation that catches and
+    tallies exactly this (`run_deadline_watch`/`run_spend_alert`/`run_
+    negotiation_detail_backfill`'s own deliberately broad `except
+    Exception`), so raising loud here costs nothing and closes a real,
+    silent-corruption path."""
+
+
 async def fetch_monthly_budget_limit(conn: asyncpg.Pool | asyncpg.Connection, *, user_id: str) -> float:
     """Real, live, per-user lookup -- `DEC-148`. Accepts either a real
     `Pool` or a real `Connection`: every real call site here is a single,
@@ -74,13 +91,9 @@ async def fetch_monthly_budget_limit(conn: asyncpg.Pool | asyncpg.Connection, *,
     below, with no surrounding transaction of its own, passes the real
     `pool` directly."""
     row = await conn.fetchrow("SELECT monthly_budget_limit FROM users WHERE user_id = $1", uuid.UUID(user_id))
-    # A user_id that doesn't resolve to a real row is a genuine caller
-    # error (every real caller here has already resolved this exact
-    # user_id via `_resolve_internal_user_id_or_404` or an internal
-    # job's own real user iteration) -- falls back to the same real
-    # default the migration itself uses, rather than raising and
-    # breaking an entire real batch job over one bad id.
-    return float(row["monthly_budget_limit"]) if row is not None else TODAY_MONTHLY_BUDGET_LIMIT
+    if row is None:
+        raise MonthlyBudgetLimitUserNotFoundError(f"No real users row exists for user_id={user_id!r}")
+    return float(row["monthly_budget_limit"])
 
 
 @dataclass(frozen=True)

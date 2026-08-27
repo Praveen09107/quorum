@@ -198,11 +198,9 @@ import asyncpg
 
 from quorum_backend.features.negotiation_trigger_support import (
     build_tasks_claim_and_state,
+    fetch_budget_snapshot,
     fetch_detected_subscriptions_via_conn,
-    fetch_month_to_date_spend,
-    fetch_remaining_monthly_budget,
 )
-from quorum_backend.features.today import fetch_monthly_budget_limit
 from quorum_backend.gate.schemas import ImpactDelta, NegotiationOption, ResourceClaim
 from quorum_backend.negotiation.gemini_calls import make_gemini_position_call, make_gemini_synthesis_call
 from quorum_backend.negotiation.impact_simulator import DomainSnapshot, OptionEffect
@@ -282,9 +280,11 @@ async def _build_deadline_watch_state(
     if tasks is None:
         return None
     tasks_claim, tasks_state = tasks
-    spent = await fetch_month_to_date_spend(conn, user_id=user_id)
-    monthly_limit = await fetch_monthly_budget_limit(conn, user_id=user_id)
-    remaining = max(0.0, monthly_limit - spent)
+    # RESOLVED, `DEC-148` review (LOW L1): one real, shared snapshot
+    # read, not three separate real queries across this module's two
+    # state-builders -- see `fetch_budget_snapshot()`'s own docstring
+    # for the real split-snapshot inconsistency this closes.
+    monthly_limit, spent, remaining = await fetch_budget_snapshot(conn, user_id=user_id)
     finance_claim = ResourceClaim(claim_type="money", amount=spent, unit="currency_minor_units")
     finance_state = DomainState(domain="finance", available=remaining, unit="currency_minor_units")
     spent_pct = (spent / monthly_limit) * 100 if monthly_limit else 0.0
@@ -315,8 +315,10 @@ async def _build_spend_alert_state(
     if not subscriptions:
         return None
     total_recurring_cost = sum(sub.average_amount for sub in subscriptions)
-    monthly_limit = await fetch_monthly_budget_limit(conn, user_id=user_id)
-    remaining = await fetch_remaining_monthly_budget(conn, user_id=user_id)
+    # RESOLVED, `DEC-148` review (LOW L1): one real, shared snapshot
+    # read instead of two separate calls (one of which internally
+    # re-queried the same real spend figure this call already needed).
+    monthly_limit, _spent, remaining = await fetch_budget_snapshot(conn, user_id=user_id)
     finance_claim = ResourceClaim(claim_type="money", amount=total_recurring_cost, unit="currency_minor_units")
     finance_state = DomainState(domain="finance", available=remaining, unit="currency_minor_units")
     resource_claims = [finance_claim]
