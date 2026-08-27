@@ -21,14 +21,28 @@
 // THE REAL, LOAD-BEARING DISTINCTION this file exists to preserve: the
 // backend's Critic is obligated (see Objection's own real docstring in
 // gate/schemas.py) to return either real objections or an explicit
-// signed_off=true entry -- NEVER a bare empty list, when Stage B genuinely
-// ran. This is what makes stageBRan()'s check below correct: an EMPTY
-// objections list means Stage B never ran at all (an S0/S1 action never
-// reaches Stage B); a list containing ONLY a sign-off entry means Stage B
-// ran and found nothing to object to. Conflating these two would mean
-// this screen either hides a real "Stage B approved this" moment, or
-// falsely implies Stage B reviewed something it never touched -- the
-// exact failure mode this file's tests exist to rule out.
+// signed_off=true entry -- NEVER a bare empty list, when it genuinely
+// runs. This is what makes stageBRan()'s check below correct FOR THE
+// CRITIC SPECIFICALLY: a list containing ONLY a sign-off entry means the
+// Critic ran and found nothing to object to.
+//
+// CRITICAL-tier review correction (DEC-146): that obligation is the
+// CRITIC's alone. `gate/orchestration.py::run_stage_b()` only calls the
+// real Critic for S3 -- an S2 action reaches the Judge directly with a
+// real, empty `objections` list, and the Judge never fabricates a
+// sign-off entry on an empty input. So a real, live S2 action that
+// genuinely went through Stage B (possibly escalated to a human by the
+// Judge itself) can carry an honestly empty `objections` list. Reading
+// `objections.isEmpty` as "Stage B never ran" is therefore only correct
+// for a caller that already knows this is an S3 action -- the original
+// version of this file's `stageBRan(objections)` was wrong for the real,
+// reachable S2 case, and `gate_reveal_screen.dart` was changed to use
+// `stageBRanForStakes(stakes)` instead, which reads the Gate's own
+// structural stakes value (the same hardcoded-lookup discipline
+// `router.STAKES_TABLE` already uses) rather than inferring it from
+// list emptiness. `stageBRan(objections)` is kept, unchanged and still
+// correctly tested, for any future caller that already knows it's
+// looking at a real S3 verdict specifically.
 
 enum EvidenceVisualState { positive, negative, uncertain }
 
@@ -98,6 +112,17 @@ bool stageBRan(List<ObjectionSummary> objections) {
   return objections.isNotEmpty;
 }
 
+/// The real, general-purpose check `GateRevealScreen` actually uses
+/// (DEC-146) -- Stage B ran if and only if the real Gate's own stakes
+/// value is S2 or S3 (`gate/orchestration.py::review()`'s own
+/// structural branch), never inferred from whether `objections` happens
+/// to be non-empty. See this file's header for why the objections-list
+/// check above is real and correctly tested, but only for a caller that
+/// already knows it's looking at an S3 verdict specifically.
+bool stageBRanForStakes(String stakes) {
+  return stakes == 'S2' || stakes == 'S3';
+}
+
 /// Separates real objections from sign-off entries. A defensive edge
 /// case handled even though the real schema says it shouldn't occur: a
 /// mixed list (a real objection alongside a sign-off entry) is still
@@ -119,8 +144,17 @@ StageBSummary summarizeStageB(List<ObjectionSummary> objections) {
 /// a single fetcher (`GateRevealFetcher`, `shell/main_shell.dart`) can
 /// return both together for a given real proposal.
 class GateRevealBundle {
-  final List<FindingSummary> findings;
-  final List<ObjectionSummary> objections;
+  final String stakes;
 
-  const GateRevealBundle({required this.findings, required this.objections});
+  /// `null` means the backend genuinely never recorded this (a real
+  /// `action_events` row written before migration `0013`) -- NOT the
+  /// same as a real, empty list, which means the Gate ran and recorded
+  /// zero findings/objections. A CRITICAL-tier review finding
+  /// (`DEC-146`) caught an earlier version of the backend collapsing
+  /// this into a fabricated `[]`; this type preserves the real
+  /// distinction all the way to the widget that renders it.
+  final List<FindingSummary>? findings;
+  final List<ObjectionSummary>? objections;
+
+  const GateRevealBundle({required this.stakes, required this.findings, required this.objections});
 }

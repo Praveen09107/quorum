@@ -60,6 +60,7 @@ from quorum_backend.core.embeddings import EmbeddingError
 from quorum_backend.features.career_pipeline import fetch_career_pipeline
 from quorum_backend.features.deadline_watch import run_deadline_watch
 from quorum_backend.features.email_ingestion import run_email_ingestion
+from quorum_backend.features.gate_reveal import fetch_gate_reveal
 from quorum_backend.features.honesty_log import fetch_honesty_feed
 from quorum_backend.features.negotiation_choice import (
     InvalidChosenOption,
@@ -135,6 +136,7 @@ app = FastAPI(title="Quorum Backend", lifespan=_lifespan)
 # real user) are deliberately indistinguishable, so both routes use the
 # exact same real detail text, not two independently-drifting copies.
 _NEGOTIATION_NOT_FOUND_DETAIL = "No negotiation found with that id."
+_GATE_REVEAL_NOT_FOUND_DETAIL = "No action found with that id."
 
 
 def _get_db_pool(request: Request) -> asyncpg.Pool:
@@ -427,6 +429,36 @@ async def negotiation_detail_endpoint(
     if detail is None:
         raise HTTPException(status_code=404, detail=_NEGOTIATION_NOT_FOUND_DETAIL)
     return {"positions": detail.positions, "options": detail.options}
+
+
+@app.get("/gate_reveal/{proposal_id}")
+async def gate_reveal_endpoint(
+    proposal_id: str,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live -- Phase 6, `QUORUM_PRODUCTION_COMPLETION_PLAN.md`,
+    closing the real, disclosed gap `DEC-126` found: no `findings`/
+    `objections` persistence or backend route ever existed for this,
+    despite `mobile/lib/shell/main_shell.dart`'s own real, already-
+    built tap-through from a "Needs you now" card. Real per-user scoped
+    from this route's first line.
+
+    A real, honest `404` if `proposal_id` isn't a real, syntactically
+    valid UUID, or doesn't resolve to an `action_events` row this
+    caller owns -- the two cases are deliberately indistinguishable in
+    the response, the same "never confirm another user's data exists"
+    discipline `GET /negotiations/{negotiation_id}` already
+    established."""
+    try:
+        proposal_uuid = uuid.UUID(proposal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=_GATE_REVEAL_NOT_FOUND_DETAIL) from exc
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    bundle = await fetch_gate_reveal(pool, user_id=internal_user_id, proposal_id=str(proposal_uuid))
+    if bundle is None:
+        raise HTTPException(status_code=404, detail=_GATE_REVEAL_NOT_FOUND_DETAIL)
+    return {"stakes": bundle.stakes, "findings": bundle.findings, "objections": bundle.objections}
 
 
 @app.post("/negotiations/{negotiation_id}/choose", status_code=202)

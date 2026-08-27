@@ -20,6 +20,7 @@ from quorum_backend.auth.user_provisioning import get_or_create_user
 from quorum_backend.core import db
 from quorum_backend.features.retry_queue_drainer import (
     _mark_job_failed,
+    _persist_verdict,
     available_hours_before_deadline,
     drain_due_jobs,
     map_verdict_to_outcome,
@@ -27,7 +28,15 @@ from quorum_backend.features.retry_queue_drainer import (
     validate_and_build_finance_proposal,
     validate_and_build_task_proposal,
 )
-from quorum_backend.gate.schemas import GateVerdict, Objection
+from quorum_backend.gate.schemas import (
+    ActionProposal,
+    ActionType,
+    EvidenceRef,
+    Finding,
+    GateVerdict,
+    Objection,
+    Stakes,
+)
 from quorum_backend.negotiation.downstream_translation import DownstreamTranslationError
 
 
@@ -233,6 +242,86 @@ async def test_drain_due_jobs_processes_a_real_single_domain_job_and_persists_a_
     assert expense is not None
     assert float(expense["amount"]) == 25.0
     assert expense["source"] == "gate_approved"
+
+    # DEC-146: real, live persistence of the Gate's own findings/
+    # objections, closing the gap DEC-126 found -- LOG_EXPENSE is real
+    # Stakes.S1, so Stage B (and therefore `_fake_critic_call`) never
+    # runs; `objections` must be a real, honest empty list, never a
+    # fabricated one, while `findings` reflects whatever real Stage A
+    # checks apply to this domain.
+    gate_reveal_row = await pool.fetchrow(
+        "SELECT findings, objections FROM action_events WHERE user_id = $1", uuid.UUID(user_id)
+    )
+    assert json.loads(gate_reveal_row["objections"]) == []
+    assert isinstance(json.loads(gate_reveal_row["findings"]), list)
+
+
+async def test_persist_verdict_writes_real_findings_and_objections_matching_the_real_verdict(pool, user_id):
+    """A real, direct unit test of `_persist_verdict()` itself (not the
+    full `drain_due_jobs()` pipeline) -- proves the real persistence
+    mechanism handles a genuinely non-empty `objections` list correctly,
+    a real state no domain this drainer can currently translate ever
+    reaches on its own (none of `finance`/`tasks`/`calendar-local` ever
+    exceeds S2 -- real Stage-B Critic objections only exist for real S3
+    actions, none of which `Position.domain`'s own schema lets this
+    drainer produce; `finance` can also reach S2 via `UPDATE_BUDGET`,
+    not just S1's `LOG_EXPENSE`). Disclosed here rather than silently
+    left untested.
+
+    Also covers the real, CRITICAL-tier review finding this test
+    previously missed (`DEC-146`): a `Finding`/`Objection` carrying a
+    real `EvidenceRef` (a real `datetime` in `retrieved_at`) must
+    round-trip through `_persist_verdict()`'s `json.dumps(...,
+    mode="json")` without a `TypeError` -- the bare, default
+    `.model_dump()` this test originally exercised never surfaced that
+    bug because neither field it used ever set `source_ref`/
+    `evidence_ref`."""
+    proposal = ActionProposal(
+        action_type=ActionType.LOG_EXPENSE, payload={"amount": 10.0, "category": "food", "payee": "A real vendor"}
+    )
+    evidence_ref = EvidenceRef(source_type="budget", source_id="real-budget-row-id")
+    verdict = GateVerdict(
+        decision="approve",
+        findings=[
+            Finding(
+                validator="ProvenanceCheck",
+                claim="A real claim",
+                evidence_state="verified_true",
+                source_ref=evidence_ref,
+                confidence=1.0,
+            )
+        ],
+        objections=[
+            Objection(
+                category="tone",
+                severity="low",
+                description="A real, live-tested objection.",
+                evidence_ref=evidence_ref,
+                signed_off=True,
+            )
+        ],
+        trace_id="test-trace",
+        revision_count=0,
+    )
+
+    async with pool.acquire() as conn, conn.transaction():
+        await _persist_verdict(conn, proposal=proposal, stakes=Stakes.S1, verdict=verdict, user_id=user_id)
+
+    row = await pool.fetchrow(
+        "SELECT findings, objections FROM action_events WHERE proposal_id = $1", proposal.proposal_id
+    )
+    findings = json.loads(row["findings"])
+    objections = json.loads(row["objections"])
+    assert findings[0]["validator"] == "ProvenanceCheck"
+    assert findings[0]["source_ref"]["source_id"] == "real-budget-row-id"
+    # mode="json" must render the real datetime as a real ISO-8601
+    # string, never a raw Python datetime repr that json.dumps would
+    # have rejected outright.
+    assert isinstance(findings[0]["source_ref"]["retrieved_at"], str)
+    assert len(objections) == 1
+    assert objections[0]["category"] == "tone"
+    assert objections[0]["signed_off"] is True
+    assert objections[0]["evidence_ref"]["source_type"] == "budget"
 
 
 async def test_drain_due_jobs_processes_a_real_multi_domain_job_and_persists_one_action_event_per_domain(pool, user_id):

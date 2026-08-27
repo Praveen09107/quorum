@@ -61,6 +61,24 @@ void main() {
     });
   });
 
+  group('stageBRanForStakes -- the real check GateRevealScreen actually uses (DEC-146)', () {
+    test('S0 never reaches Stage B', () {
+      expect(stageBRanForStakes('S0'), isFalse);
+    });
+
+    test('S1 never reaches Stage B', () {
+      expect(stageBRanForStakes('S1'), isFalse);
+    });
+
+    test('S2 reaches Stage B (the Judge only) -- even though the Critic never ran and objections may be empty', () {
+      expect(stageBRanForStakes('S2'), isTrue);
+    });
+
+    test('S3 reaches Stage B (Critic then Judge)', () {
+      expect(stageBRanForStakes('S3'), isTrue);
+    });
+  });
+
   group('summarizeStageB', () {
     test('a sign-off-only list produces zero real objections and signedOff=true', () {
       final summary = summarizeStageB([_signOffEntry()]);

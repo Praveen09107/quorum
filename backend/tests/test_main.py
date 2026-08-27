@@ -570,6 +570,82 @@ def test_negotiation_detail_endpoint_returns_503_not_a_crash_when_the_real_pool_
             app.state.db_pool = real_pool
 
 
+async def test_gate_reveal_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
+    """Real, end-to-end: real-provisions a real user (DEC-110), inserts
+    a real `action_events` row with real findings/objections scoped to
+    that exact user, confirms `GET /gate_reveal/{proposal_id}` genuinely
+    round-trips through `fetch_gate_reveal()` with a real, valid access
+    token, then cleans up."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at, findings, objections) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)",
+        proposal_id, "create_task", "S1", '{"title": "A real end-to-end task"}', "approve", "approved_unchanged",
+        f"trace-{proposal_id}", uuid.UUID(internal_user_id), datetime.now(timezone.utc),
+        '[{"validator": "ProvenanceCheck", "claim": "A real claim", "evidence_state": "verified_true", "source_ref": null, "confidence": 1.0}]',
+        '[]',
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/gate_reveal/{proposal_id}", headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body.keys()) == {"stakes", "findings", "objections"}
+        assert body["stakes"] == "S1"
+        assert len(body["findings"]) == 1
+        assert body["findings"][0]["validator"] == "ProvenanceCheck"
+        assert body["objections"] == []
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = $1", proposal_id)
+
+
+async def test_gate_reveal_endpoint_returns_404_for_a_real_proposal_belonging_to_another_real_user(pool, provisioned_users):
+    headers_a, _user_a = await _provisioned_auth_header(pool, provisioned_users)
+    _headers_b, user_b = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        proposal_id, "create_task", "S1", '{"title": "User B real task"}', "approve", "approved_unchanged",
+        f"trace-{proposal_id}", uuid.UUID(user_b), datetime.now(timezone.utc),
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/gate_reveal/{proposal_id}", headers=headers_a)
+        assert response.status_code == 404
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = $1", proposal_id)
+
+
+def test_gate_reveal_endpoint_a_real_syntactically_invalid_id_is_a_real_404_not_a_500():
+    with TestClient(app) as client:
+        response = client.get("/gate_reveal/not-a-real-uuid", headers=_auth_header())
+    assert response.status_code == 404
+
+
+def test_gate_reveal_endpoint_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.get(f"/gate_reveal/{uuid.uuid4()}")
+    assert response.status_code == 401
+
+
+def test_gate_reveal_endpoint_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
+    with TestClient(app) as client:
+        real_pool = app.state.db_pool
+        app.state.db_pool = None
+        try:
+            response = client.get(f"/gate_reveal/{uuid.uuid4()}", headers=_auth_header())
+            health_response = client.get("/health")
+            assert response.status_code == 503
+            assert health_response.status_code == 200
+        finally:
+            app.state.db_pool = real_pool
+
+
 _CHOOSE_TEST_OPTIONS = [
     {"option_id": "option_a", "description": "halt spending", "source_domains": ["finance"]},
     {"option_id": "do_nothing", "description": "do nothing", "source_domains": []},

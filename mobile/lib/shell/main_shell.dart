@@ -355,7 +355,7 @@ class _GateRevealLoader extends StatelessWidget {
             return Center(child: Text("Couldn't load the Gate reveal: ${snapshot.error}"));
           }
           final bundle = snapshot.data!;
-          return GateRevealScreen(findings: bundle.findings, objections: bundle.objections);
+          return GateRevealScreen(stakes: bundle.stakes, findings: bundle.findings, objections: bundle.objections);
         },
       ),
     );

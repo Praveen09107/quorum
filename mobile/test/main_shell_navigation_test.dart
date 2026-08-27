@@ -44,6 +44,7 @@ Future<TodayScreenData> _fakeFetchToday() async {
 
 Future<GateRevealBundle> _fakeFetchGateReveal(String proposalId) async {
   return const GateRevealBundle(
+    stakes: 'S3',
     findings: [
       FindingSummary(validator: 'budget_check', claim: 'within budget', visualState: EvidenceVisualState.positive),
     ],
