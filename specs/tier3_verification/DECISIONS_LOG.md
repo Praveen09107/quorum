@@ -3337,6 +3337,8 @@ The review also independently re-derived the `uncertain_no_data` exclusion formu
 
 **Genuinely still open, not resolved by this entry:** a real, pure-code Stage A `budget_check` validator is now honestly buildable for the first time (M1's own finding) -- not built here, logged as its own new, disclosed open item for a future session.
 
+**Deployed to production** -- this genuinely changes real, live behavior (the "Budget remaining this month" number on Today, and every autonomous trigger job's own conflict math, now reflect a real per-user ceiling instead of one hardcoded global number), so it's shipped rather than left merged-but-undeployed, per the `DEC-134` lesson about keeping production in sync. Revision `quorum-backend-00020-w98`, image tag `dec148-20260828`. Live-verified: `GET /health` → `200 {"status":"ok"}`.
+
 **Affects:** `backend/migrations/0015_user_budget_limit/` (new), `backend/migrations/0016_user_budget_limit_check/` (new), `backend/src/quorum_backend/features/action_executor.py`, `backend/src/quorum_backend/features/today.py`, `backend/src/quorum_backend/features/deadline_watch.py`, `backend/src/quorum_backend/features/negotiation_trigger_support.py`, `backend/src/quorum_backend/features/negotiation_detail_backfill.py`, `backend/src/quorum_backend/features/retry_queue_drainer.py`, `backend/src/quorum_backend/negotiation/downstream_translation.py`, `backend/scripts/enable_backfill_negotiation_detail_cron.sql` (stale-comment correction, unrelated finding), `backend/tests/test_action_executor.py`, `backend/tests/test_today_feature.py`, `backend/tests/test_spend_alert.py`, `backend/tests/test_retry_queue_drainer.py`, this log, `STATUS_INDEX.md`, `QUORUM_PRODUCTION_COMPLETION_PLAN.md`.
 
 ---
