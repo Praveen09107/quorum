@@ -458,7 +458,7 @@ async def gate_reveal_endpoint(
     bundle = await fetch_gate_reveal(pool, user_id=internal_user_id, proposal_id=str(proposal_uuid))
     if bundle is None:
         raise HTTPException(status_code=404, detail=_GATE_REVEAL_NOT_FOUND_DETAIL)
-    return {"findings": bundle.findings, "objections": bundle.objections}
+    return {"stakes": bundle.stakes, "findings": bundle.findings, "objections": bundle.objections}
 
 
 @app.post("/negotiations/{negotiation_id}/choose", status_code=202)

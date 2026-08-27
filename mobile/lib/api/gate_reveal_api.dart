@@ -34,7 +34,7 @@ Future<GateRevealBundle> Function(String proposalId) createGateRevealFetcher({
     final http.Response response;
     try {
       response = await client.get(
-        Uri.parse('$baseUrl/gate_reveal/$proposalId'),
+        Uri.parse('$baseUrl/gate_reveal/${Uri.encodeComponent(proposalId)}'),
         headers: {'Authorization': 'Bearer $accessToken'},
       );
     } catch (e) {
@@ -62,9 +62,20 @@ Future<GateRevealBundle> Function(String proposalId) createGateRevealFetcher({
     }
 
     try {
+      final rawFindings = json['findings'];
+      final rawObjections = json['objections'];
       return GateRevealBundle(
-        findings: (json['findings'] as List<dynamic>).map((raw) => _parseFinding(raw as Map<String, dynamic>)).toList(),
-        objections: (json['objections'] as List<dynamic>).map((raw) => _parseObjection(raw as Map<String, dynamic>)).toList(),
+        stakes: json['stakes'] as String,
+        // `null` on the wire means the backend genuinely never recorded
+        // this (a real row predating migration `0013`) -- preserved as
+        // `null` here too, never collapsed into a fabricated empty list
+        // (DEC-146).
+        findings: rawFindings == null
+            ? null
+            : (rawFindings as List<dynamic>).map((raw) => _parseFinding(raw as Map<String, dynamic>)).toList(),
+        objections: rawObjections == null
+            ? null
+            : (rawObjections as List<dynamic>).map((raw) => _parseObjection(raw as Map<String, dynamic>)).toList(),
       );
     } catch (e) {
       throw const ApiException('Quorum sent back something this app could not understand.');

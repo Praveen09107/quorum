@@ -22,7 +22,7 @@ void main() {
       final client = MockClient((request) async {
         capturedUri = request.url;
         capturedAuth = request.headers['Authorization'];
-        return http.Response(jsonEncode({'findings': [], 'objections': []}), 200);
+        return http.Response(jsonEncode({'stakes': 'S1', 'findings': [], 'objections': []}), 200);
       });
 
       final fetch = createGateRevealFetcher(
@@ -34,6 +34,19 @@ void main() {
 
       expect(capturedUri.toString(), 'https://example.test/gate_reveal/real-proposal-id');
       expect(capturedAuth, 'Bearer a-real-test-token');
+    });
+
+    test('URL-encodes the real proposal id in the path', () async {
+      late Uri capturedUri;
+      final client = MockClient((request) async {
+        capturedUri = request.url;
+        return http.Response(jsonEncode({'stakes': 'S1', 'findings': [], 'objections': []}), 200);
+      });
+
+      final fetch = createGateRevealFetcher(getAccessToken: () async => 't', client: client, baseUrl: 'https://example.test');
+      await fetch('id with spaces/slash');
+
+      expect(capturedUri.toString(), 'https://example.test/gate_reveal/id%20with%20spaces%2Fslash');
     });
 
     test('a null access token (no real session) fails loud with a real 401, before any real request is even sent', () async {
@@ -54,10 +67,11 @@ void main() {
       }
     });
 
-    test('parses a real, complete 200 response into findings and objections with the real visual-state mapping', () async {
+    test('parses a real, complete 200 response into stakes, findings and objections with the real visual-state mapping', () async {
       final client = MockClient((request) async {
         return http.Response(
           jsonEncode({
+            'stakes': 'S3',
             'findings': [
               {'validator': 'ProvenanceCheck', 'claim': 'A real claim', 'evidence_state': 'verified_true'},
               {'validator': 'TemporalFactCheck', 'claim': 'Another claim', 'evidence_state': 'no_data_found'},
@@ -73,23 +87,57 @@ void main() {
       final fetch = createGateRevealFetcher(getAccessToken: () async => 't', client: client);
       final bundle = await fetch('real-id');
 
+      expect(bundle.stakes, 'S3');
       expect(bundle.findings, hasLength(2));
-      expect(bundle.findings[0].validator, 'ProvenanceCheck');
-      expect(bundle.findings[0].visualState, EvidenceVisualState.positive);
-      expect(bundle.findings[1].visualState, EvidenceVisualState.uncertain);
+      expect(bundle.findings![0].validator, 'ProvenanceCheck');
+      expect(bundle.findings![0].visualState, EvidenceVisualState.positive);
+      expect(bundle.findings![1].visualState, EvidenceVisualState.uncertain);
       expect(bundle.objections, hasLength(1));
-      expect(bundle.objections[0].signedOff, isTrue);
+      expect(bundle.objections![0].signedOff, isTrue);
     });
 
     test('an empty real bundle parses to real empty lists, not a crash', () async {
       final client = MockClient((request) async {
-        return http.Response(jsonEncode({'findings': [], 'objections': []}), 200);
+        return http.Response(jsonEncode({'stakes': 'S1', 'findings': [], 'objections': []}), 200);
       });
 
       final fetch = createGateRevealFetcher(getAccessToken: () async => 't', client: client);
       final bundle = await fetch('real-id');
 
       expect(bundle.findings, isEmpty);
+      expect(bundle.objections, isEmpty);
+    });
+
+    test('a real, null findings/objections (a pre-Gate-Reveal action) parses to a real null, never a fabricated empty list', () async {
+      final client = MockClient((request) async {
+        return http.Response(jsonEncode({'stakes': 'S1', 'findings': null, 'objections': null}), 200);
+      });
+
+      final fetch = createGateRevealFetcher(getAccessToken: () async => 't', client: client);
+      final bundle = await fetch('real-id');
+
+      expect(bundle.findings, isNull);
+      expect(bundle.objections, isNull);
+    });
+
+    test('an S2 bundle with a real, honestly empty objections list still reports its real stakes -- not conflated with Stage B never running', () async {
+      final client = MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'stakes': 'S2',
+            'findings': [
+              {'validator': 'AvailabilityCheck', 'claim': 'Slot is free', 'evidence_state': 'verified_true'},
+            ],
+            'objections': [],
+          }),
+          200,
+        );
+      });
+
+      final fetch = createGateRevealFetcher(getAccessToken: () async => 't', client: client);
+      final bundle = await fetch('real-id');
+
+      expect(bundle.stakes, 'S2');
       expect(bundle.objections, isEmpty);
     });
 
@@ -171,6 +219,7 @@ void main() {
       final client = MockClient((request) async {
         return http.Response(
           jsonEncode({
+            'stakes': 'S1',
             'findings': [
               {'validator': 'ProvenanceCheck', 'claim': 'A real claim'}, // missing evidence_state
             ],

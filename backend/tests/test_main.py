@@ -593,7 +593,8 @@ async def test_gate_reveal_endpoint_is_real_and_live_not_mocked_with_a_real_vali
 
         assert response.status_code == 200
         body = response.json()
-        assert set(body.keys()) == {"findings", "objections"}
+        assert set(body.keys()) == {"stakes", "findings", "objections"}
+        assert body["stakes"] == "S1"
         assert len(body["findings"]) == 1
         assert body["findings"][0]["validator"] == "ProvenanceCheck"
         assert body["objections"] == []

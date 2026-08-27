@@ -15,25 +15,46 @@ import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
 import 'package:quorum_mobile/theme/quorum_theme.dart';
 
 class GateRevealScreen extends StatelessWidget {
-  final List<FindingSummary> findings;
-  final List<ObjectionSummary> objections;
+  final String stakes;
+
+  /// `null` on both means this real action predates migration `0013`
+  /// -- the Gate genuinely reviewed it, but findings/objections were
+  /// never persisted. Rendered as an explicit, honest notice below,
+  /// never silently shown as an empty "Stage A found nothing" screen
+  /// (a CRITICAL-tier review finding, `DEC-146`).
+  final List<FindingSummary>? findings;
+  final List<ObjectionSummary>? objections;
 
   const GateRevealScreen({
     super.key,
+    required this.stakes,
     required this.findings,
     required this.objections,
   });
 
   @override
   Widget build(BuildContext context) {
-    final ranStageB = stageBRan(objections);
+    final recordedFindings = findings;
+    final recordedObjections = objections;
+    // "Did Stage B run" is read from the Gate's own real stakes value,
+    // never inferred from whether `objections` happens to be non-empty
+    // -- a real S2 action can be genuinely reviewed by the Judge and
+    // still carry an honestly empty objections list (DEC-146).
+    final ranStageB = stageBRanForStakes(stakes);
 
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         Text('Stage A — automated checks', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
-        for (final finding in findings) _FindingRow(finding: finding),
+        if (recordedFindings == null)
+          const ListTile(
+            leading: Icon(Icons.info_outline, color: QuorumStatusColors.needsAttention),
+            title: Text("Not recorded"),
+            subtitle: Text("This action predates Gate Reveal, so its real findings were never saved."),
+          )
+        else
+          for (final finding in recordedFindings) _FindingRow(finding: finding),
         // Stage B only ever appears in the widget tree if it genuinely
         // ran -- an S0/S1 action's screen simply has no Stage B section
         // at all, never an empty or misleading placeholder for one.
@@ -41,7 +62,14 @@ class GateRevealScreen extends StatelessWidget {
           const SizedBox(height: 24),
           Text('Stage B — Critic review', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          _StageBSection(summary: summarizeStageB(objections)),
+          if (recordedObjections == null)
+            const ListTile(
+              leading: Icon(Icons.info_outline, color: QuorumStatusColors.needsAttention),
+              title: Text("Not recorded"),
+              subtitle: Text("This action predates Gate Reveal, so its real Stage B review was never saved."),
+            )
+          else
+            _StageBSection(summary: summarizeStageB(recordedObjections)),
         ],
       ],
     );

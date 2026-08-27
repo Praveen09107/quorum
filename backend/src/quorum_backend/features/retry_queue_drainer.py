@@ -313,14 +313,28 @@ async def _persist_verdict(
     the real, disclosed gap `DEC-126` found (migration `0013`, `DEC-146`):
     `gate.review()`'s own real `GateVerdict.findings`/`.objections` have
     always been computed here, but were never persisted anywhere before
-    this -- used only to decide `verdict.decision`, then discarded. Real,
-    live-confirmed against `gate/schemas.py`'s own Pydantic models
-    before trusting `.model_dump()`'s output shape: both `Finding` and
-    `Objection` serialize their own `Literal` fields as plain strings,
-    matching `mobile/lib/features/gate_reveal/gate_reveal_logic.dart`'s
-    own already-built, already-tested parsing exactly (`evidence_state`/
-    `category`/`severity`/`signed_off` as real, plain JSON values, not
-    Python enum reprs)."""
+    this -- used only to decide `verdict.decision`, then discarded.
+
+    Uses `.model_dump(mode="json")`, NOT the bare, default python-mode
+    `.model_dump()` -- a real, CRITICAL-tier review finding (`DEC-146`)
+    caught that `Finding.source_ref`/`Objection.evidence_ref` are
+    `EvidenceRef | None`, and `EvidenceRef.retrieved_at` is a real
+    `datetime`. Default `.model_dump()` returns that as a live
+    `datetime` object, which `json.dumps()` cannot serialize -- a
+    `TypeError` that today's two wired Stage A checks
+    (`provenance_check`/`deadline_conflict_check`) never trigger (neither
+    populates `source_ref`), but that a single new evidence-backed
+    check or Critic objection would hit immediately, permanently
+    stalling the affected job (see `MAX_RETRY_ATTEMPTS` below) and
+    risking the exact same-transaction double-execution this module's
+    own docstring already discloses for a different failure mode.
+    `mode="json"` renders every field as its real, plain-JSON-safe
+    shape -- `Literal` fields as plain strings (matching `mobile/lib/
+    features/gate_reveal/gate_reveal_logic.dart`'s own already-built,
+    already-tested parsing exactly: `evidence_state`/`category`/
+    `severity`/`signed_off` as plain JSON values, never Python enum
+    reprs) and `datetime` fields as real ISO-8601 strings -- verified
+    directly against `gate/schemas.py`'s actual models, not assumed."""
     outcome, is_resolved = map_verdict_to_outcome(verdict)
     final_payload = verdict.revised_payload if verdict.revised_payload is not None else proposal.payload
     await conn.execute(
@@ -335,8 +349,8 @@ async def _persist_verdict(
         verdict.trace_id,
         uuid.UUID(user_id),
         datetime.now(timezone.utc) if is_resolved else None,
-        json.dumps([finding.model_dump() for finding in verdict.findings]),
-        json.dumps([objection.model_dump() for objection in verdict.objections]),
+        json.dumps([finding.model_dump(mode="json") for finding in verdict.findings]),
+        json.dumps([objection.model_dump(mode="json") for objection in verdict.objections]),
     )
 
     if verdict.decision != "approve":
