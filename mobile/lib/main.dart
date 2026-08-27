@@ -66,6 +66,13 @@
 /// `you_screen.dart`'s own `_CareerDigestLoader` tap-through from
 /// Career Pipeline genuinely reachable for the first time since Batch 7
 /// (`DEC-084`).
+/// `fetchPredictiveRisk` joins them as of the same phase (`features/
+/// predictive_risk.py`, `DEC-149`) -- real, live, per-user-scoped
+/// `GET /predictive_risk`. Unlike every other fetcher above, no prior
+/// spec contract or mobile screen ever named this feature -- a real,
+/// disclosed design decision built this session gives it a small,
+/// deliberately minimal real surface: a banner on the real Tasks
+/// screen (reached via Today's own "View tasks" link), not a new tab.
 /// `confirmDelete` is real and live too, as of `DEC-113` -- the real,
 /// irreversible `DELETE /account`, unblocked only once real user
 /// provisioning existed (`DEC-110`) to make a correctly per-user-scoped
@@ -85,6 +92,7 @@ import 'package:quorum_mobile/api/finance_api.dart';
 import 'package:quorum_mobile/api/gate_reveal_api.dart';
 import 'package:quorum_mobile/api/honesty_log_api.dart';
 import 'package:quorum_mobile/api/negotiation_api.dart';
+import 'package:quorum_mobile/api/predictive_risk_api.dart';
 import 'package:quorum_mobile/api/search_api.dart';
 import 'package:quorum_mobile/api/tasks_api.dart';
 import 'package:quorum_mobile/api/today_api.dart';
@@ -203,6 +211,10 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             fetchTasks: createTasksFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            fetchPredictiveRisk: createPredictiveRiskFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),

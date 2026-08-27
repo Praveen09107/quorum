@@ -42,6 +42,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/features/computed_state.dart';
+import 'package:quorum_mobile/features/predictive_risk/predictive_risk_logic.dart';
 import 'package:quorum_mobile/features/tasks/tasks_logic.dart';
 import 'package:quorum_mobile/features/tasks/tasks_screen.dart';
 import 'package:quorum_mobile/features/today/holding_steady_zone.dart';
@@ -82,6 +83,15 @@ class TodayScreen extends StatelessWidget {
   /// same pattern as every other real/external boundary.
   final Future<List<TaskData>> Function()? fetchTasks;
 
+  /// Real, optional injected fetch for the real Predictive Risk feature
+  /// (Phase 6, `DEC-149`) -- passed through to the Tasks screen the
+  /// "View tasks" link above already opens, rendered as a small banner
+  /// above the real task list. Deferred, same pattern as every other
+  /// real/external boundary; genuinely reachable only when `fetchTasks`
+  /// is also supplied, since there is no other way to reach the Tasks
+  /// screen this banner lives on.
+  final Future<RiskAssessmentData> Function()? fetchPredictiveRisk;
+
   const TodayScreen({
     super.key,
     required this.data,
@@ -89,6 +99,7 @@ class TodayScreen extends StatelessWidget {
     this.onTapAction,
     this.onTapNegotiation,
     this.fetchTasks,
+    this.fetchPredictiveRisk,
   });
 
   @override
@@ -109,7 +120,9 @@ class TodayScreen extends StatelessWidget {
               ? null
               : TextButton(
                   onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => _TasksLoader(fetch: fetchTasks!)),
+                    MaterialPageRoute(
+                      builder: (_) => _TasksLoader(fetch: fetchTasks!, fetchPredictiveRisk: fetchPredictiveRisk),
+                    ),
                   ),
                   child: const Text('View tasks'),
                 ),
@@ -155,8 +168,9 @@ class _ZoneSection extends StatelessWidget {
 
 class _TasksLoader extends StatelessWidget {
   final Future<List<TaskData>> Function() fetch;
+  final Future<RiskAssessmentData> Function()? fetchPredictiveRisk;
 
-  const _TasksLoader({required this.fetch});
+  const _TasksLoader({required this.fetch, this.fetchPredictiveRisk});
 
   @override
   Widget build(BuildContext context) {
@@ -171,7 +185,7 @@ class _TasksLoader extends StatelessWidget {
           if (snapshot.hasError) {
             return Center(child: Text("Couldn't load tasks: ${snapshot.error}"));
           }
-          return TasksScreen(tasks: snapshot.data!);
+          return TasksScreen(tasks: snapshot.data!, fetchPredictiveRisk: fetchPredictiveRisk);
         },
       ),
     );
