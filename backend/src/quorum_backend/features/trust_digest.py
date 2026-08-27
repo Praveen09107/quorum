@@ -3,12 +3,15 @@ HONEST DISCLOSURE: a genuinely new backend module, not a wrapper around
 existing logic -- no week-over-week trend comparison existed anywhere in
 this repository's backend before this session. `backend/src/quorum_
 backend/features/predictive_risk.py`, cited by this session's own spec as
-this module's design-philosophy precedent, does not exist in this
-repository either (`backend/features/*` from the ADD's Sec 9.7 table has
-never been built here) -- built directly against the philosophy that
+this module's design-philosophy precedent, did not exist in this
+repository at the time (`backend/features/*` from the ADD's Sec 9.7 table
+had never been built here) -- built directly against the philosophy that
 table DESCRIBES ("deliberately simple and explainable... a count
 comparison, not a trained model"), not literally copied from a file this
-repository doesn't have.
+repository didn't have then. **A real, stale-claim correction, `DEC-150`:**
+`predictive_risk.py` is now real too (`DEC-149`) -- this paragraph is kept
+as a historical account of this module's own real origin, not edited to
+imply the precedent existed at the time.
 
 Real, deliberate design choice: a plain threshold comparison against a
 real, named constant, never a trained model or a magic number.
@@ -18,9 +21,21 @@ module's own `compare_weeks()` docstring named as explicitly out of
 scope -- `aggregate_weekly_summary()` and `fetch_trust_digest()` below,
 querying the real, live `action_events` table (`DEC-098`) directly via
 `asyncpg`, closing the gap to a real, live `GET /trust_digest` endpoint.
+
+**RESOLVED, `DEC-150`:** `aggregate_weekly_summary()`/`fetch_trust_digest()`
+had no real `user_id` filter at all since the day they were written --
+`action_events.user_id` existed since migration `0004`/`DEC-119`, but this
+module was never updated to use it, meaning the real, live, deployed
+`GET /trust_digest` genuinely aggregated every real user's data together.
+Found while building `DEC-145`'s Honesty Log, disclosed rather than
+silently fixed at the time (out of that session's own scope) -- closed
+here as its own, real, standalone fix. Both functions now require a real,
+resolved `user_id`, matching every other per-user-scoped route in this
+backend.
 """
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal
@@ -84,10 +99,20 @@ def compare_weeks(
     return TrendResult(current_week=current, previous_week=previous, trend=trend, delta=delta)
 
 
-async def aggregate_weekly_summary(pool: asyncpg.Pool, week_start: date) -> WeeklyTrustSummary:
+async def aggregate_weekly_summary(pool: asyncpg.Pool, week_start: date, *, user_id: str) -> WeeklyTrustSummary:
     """The real weekly-aggregation query -- groups raw `action_events`
     rows into a `WeeklyTrustSummary`, the one gap `compare_weeks()`'s own
     docstring named as out of scope.
+
+    RESOLVED, real per-user scoping closed here: this query previously
+    had no `user_id` filter at all, despite `action_events.user_id`
+    existing since migration `0004`/`DEC-119` -- a real, live, currently-
+    deployed cross-user aggregation gap, found while building `DEC-145`'s
+    Honesty Log and disclosed rather than silently fixed at the time (out
+    of that session's own scope). Every real caller now must supply the
+    real, resolved internal `user_id`, matching every other per-user-
+    scoped route in this backend (`/tasks`, `/career_pipeline`, `/today`,
+    etc. since `DEC-110`).
 
     Only resolved actions (`outcome IS NOT NULL`) are counted, bucketed
     by `COALESCE(resolved_at, created_at)` -- defensive against a real
@@ -113,9 +138,11 @@ async def aggregate_weekly_summary(pool: asyncpg.Pool, week_start: date) -> Week
             ) AS total_actions,
             COUNT(*) FILTER (WHERE outcome = 'approved_unchanged') AS successes
         FROM action_events
-        WHERE COALESCE(resolved_at, created_at) >= $1
-          AND COALESCE(resolved_at, created_at) < $2
+        WHERE user_id = $1
+          AND COALESCE(resolved_at, created_at) >= $2
+          AND COALESCE(resolved_at, created_at) < $3
         """,
+        uuid.UUID(user_id),
         week_start,
         week_end,
     )
@@ -129,11 +156,12 @@ async def aggregate_weekly_summary(pool: asyncpg.Pool, week_start: date) -> Week
     return WeeklyTrustSummary(week_start=week_start.isoformat(), total_actions=total_actions, success_rate=success_rate)
 
 
-async def fetch_trust_digest(pool: asyncpg.Pool, *, today: date | None = None) -> TrendResult:
+async def fetch_trust_digest(pool: asyncpg.Pool, *, user_id: str, today: date | None = None) -> TrendResult:
     """The real, live entry point for `GET /trust_digest` -- computes
     this week's and last week's real `WeeklyTrustSummary` from the real
-    database (ISO weeks, Monday-start), then reuses the already-correct,
-    already-tested `compare_weeks()` unchanged.
+    database (ISO weeks, Monday-start), real per-user scoped, then
+    reuses the already-correct, already-tested `compare_weeks()`
+    unchanged.
 
     `today` is injectable for tests only -- the real endpoint always
     calls this with no override, so it always uses the real current
@@ -144,7 +172,7 @@ async def fetch_trust_digest(pool: asyncpg.Pool, *, today: date | None = None) -
     this_week_start = today - timedelta(days=today.weekday())
     last_week_start = this_week_start - timedelta(days=7)
 
-    current = await aggregate_weekly_summary(pool, this_week_start)
-    previous = await aggregate_weekly_summary(pool, last_week_start)
+    current = await aggregate_weekly_summary(pool, this_week_start, user_id=user_id)
+    previous = await aggregate_weekly_summary(pool, last_week_start, user_id=user_id)
 
     return compare_weeks(current, previous)

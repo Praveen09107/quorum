@@ -215,16 +215,22 @@ def test_trust_digest_rejects_a_real_but_expired_access_token():
     assert "expired" in response.json()["detail"].lower()
 
 
-def test_trust_digest_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token():
+async def test_trust_digest_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
     """Real, end-to-end: the real lifespan creates a real DB pool
     against the real, live Supabase database (DEC-098), and this
-    request genuinely round-trips through it once a real, valid access
-    token is presented. Asserts shape and types only, never specific
+    request genuinely round-trips through it once a real, valid,
+    PROVISIONED access token is presented -- `DEC-150` real per-user
+    scoping means `_auth_header()`'s own unprovisioned identity would
+    now correctly 404 here, so this test uses `_provisioned_auth_
+    header()` instead, matching every other real per-user-scoped route
+    test in this file. Asserts shape and types only, never specific
     counts -- real production data changes as this project actually
     gets used, and a value-based assertion here would be exactly the
     stale-restated-number drift pattern CLAUDE.md warns against."""
+    headers, _internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+
     with TestClient(app) as client:
-        response = client.get("/trust_digest", headers=_auth_header())
+        response = client.get("/trust_digest", headers=headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -239,6 +245,41 @@ def test_trust_digest_endpoint_is_real_and_live_not_mocked_with_a_real_valid_tok
 
     if body["previous_week"] is not None:
         assert set(body["previous_week"].keys()) == {"week_start", "total_actions", "success_rate"}
+
+
+async def test_trust_digest_endpoint_never_counts_another_real_users_action_events(pool, provisioned_users):
+    """RESOLVED, `DEC-150`: the real, load-bearing correctness property
+    this fix exists to guarantee -- two distinct real users, two
+    distinct real `action_events` rows this real calendar week, a
+    request as user A must report a real digest reflecting only A's own
+    row, never B's. Before this fix, both rows would have been
+    aggregated together regardless of which user's token was presented."""
+    headers_a, user_a = await _provisioned_auth_header(pool, provisioned_users)
+    _headers_b, user_b = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_a, proposal_b = uuid.uuid4(), uuid.uuid4()
+    now = datetime.now(timezone.utc)
+
+    async def _insert(proposal_id, user_id):
+        await pool.execute(
+            "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+            "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+            proposal_id, "create_note", "S0", "{}", "approve", "approved_unchanged",
+            f"test-trust-digest-isolation-{proposal_id}", uuid.UUID(user_id), now,
+        )
+
+    try:
+        await _insert(proposal_a, user_a)
+        await _insert(proposal_b, user_b)
+
+        with TestClient(app) as client:
+            response_a = client.get("/trust_digest", headers=headers_a)
+
+        assert response_a.status_code == 200
+        # User A's own real week must show exactly the 1 real action
+        # they own -- never 2, which would mean user B's row leaked in.
+        assert response_a.json()["current_week"]["total_actions"] == 1
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = ANY($1::uuid[])", [proposal_a, proposal_b])
 
 
 def test_trust_digest_returns_503_not_a_crash_when_the_real_pool_is_unavailable():

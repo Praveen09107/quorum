@@ -3373,4 +3373,20 @@ The review also independently re-derived the `uncertain_no_data` exclusion formu
 
 ---
 
-*Next entry: DEC-150*
+## DEC-150: real per-user scoping for `/trust_digest` -- a real, disclosed, live cross-user aggregation gap, closed
+
+**Standard tier** -- a real correctness/data-isolation fix to an existing route, reusing the already-established `_resolve_internal_user_id_or_404` pattern; no new Gate logic, secrets handling, or external-action path.
+
+**Authorized directly ("what do you want from me to continue implementation"), picked as the immediate next item ahead of the chosen Phase 5 direction.** Closes a real, live, currently-deployed bug found while building `DEC-145`'s Honesty Log and deliberately left open at the time (disclosed, not silently fixed, since it was out of that session's own scope): `features/trust_digest.py::aggregate_weekly_summary()`/`fetch_trust_digest()` had NO real `user_id` filter at all, despite `action_events.user_id` existing since migration `0004`/`DEC-119` -- the real, live, deployed `GET /trust_digest` genuinely aggregated every real user's data together, and had done so since the route was first built (`DEC-100`), through every real, live deploy since.
+
+**What was built:** `aggregate_weekly_summary(pool, week_start, *, user_id)` and `fetch_trust_digest(pool, *, user_id, today=None)` now both require a real, resolved `user_id`, with the real SQL adding `WHERE user_id = $1`. `main.py`'s `/trust_digest` route now calls `_resolve_internal_user_id_or_404` (the same real, established pattern every other per-user-scoped route in this backend already uses) and passes the result through -- closing the route's own stale docstring claim in the same edit (it still said "`action_events` itself has no `user_id` column," true when written, false since `DEC-119`, never corrected until now). `features/honesty_log.py`'s own real, disclosed note about this exact gap (written at `DEC-145`) is updated to record it as resolved rather than left as a live, open item.
+
+**Tests:** 1 new in `test_trust_digest.py` (`test_aggregate_weekly_summary_never_counts_another_real_users_rows`, proving the fix at the module level) + the 4 existing live-database tests updated to insert every row under one real, consistent `user_id` and pass it through (previously each row got its own random, unused `user_id`, since nothing ever filtered by it) + 1 new in `test_main.py` (`test_trust_digest_endpoint_never_counts_another_real_users_action_events`, the same property proven at the route level) + the existing route-level "real, live, not mocked" test updated to use `_provisioned_auth_header()` instead of the deliberately-unprovisioned `_auth_header()`, since a real per-user query now genuinely needs a real, resolved identity to succeed.
+
+**Verified live:** `ruff check backend` clean. See `STATUS_INDEX.md` for the current, live count rather than restating one here.
+
+**Affects:** `backend/src/quorum_backend/features/trust_digest.py`, `backend/src/quorum_backend/features/honesty_log.py`, `backend/src/quorum_backend/main.py`, `backend/tests/test_trust_digest.py`, `backend/tests/test_main.py`, this log, `STATUS_INDEX.md`.
+
+---
+
+*Next entry: DEC-151*

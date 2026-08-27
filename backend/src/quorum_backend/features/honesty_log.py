@@ -59,18 +59,20 @@ just produces a slightly less specific real sentence) -- not scraped
 from any spec, since none exists for this exact transformation.
 
 A REAL, RELATED GAP FOUND WHILE READING THIS MODULE'S OWN REAL
-PRECEDENT, DISCLOSED HERE RATHER THAN SILENTLY FIXED (OUT OF THIS
-SESSION'S OWN SCOPE): `main.py`'s real `GET /trust_digest` route
-still carries a comment claiming "`action_events` itself has no
+PRECEDENT, DISCLOSED HERE AT THE TIME RATHER THAN SILENTLY FIXED (OUT
+OF THIS SESSION'S OWN SCOPE): `main.py`'s real `GET /trust_digest`
+route carried a comment claiming "`action_events` itself has no
 `user_id` column" -- true when that route was first built, but
 `action_events.user_id` has existed since migration `0004` (`DEC-119`,
-predating this comment's own claim). `fetch_trust_digest()` still
-aggregates every real user's `action_events` together with no real
-per-user filter at all -- a real, live, currently-deployed cross-user
-aggregation gap, not just a stale comment. This module does NOT repeat
-that mistake -- `fetch_honesty_feed()` below is real, per-user scoped
-from its first line -- but the `/trust_digest` gap itself is left
-exactly as found, a separate, real, disclosed open item.
+predating this comment's own claim). `fetch_trust_digest()` aggregated
+every real user's `action_events` together with no real per-user
+filter at all -- a real, live, then-currently-deployed cross-user
+aggregation gap, not just a stale comment. This module never repeated
+that mistake -- `fetch_honesty_feed()` below has been real, per-user
+scoped from its first line -- and the `/trust_digest` gap itself,
+found here and left open at the time, is **RESOLVED as of `DEC-150`**:
+both `aggregate_weekly_summary()` and `fetch_trust_digest()` now
+require a real, resolved `user_id`.
 """
 from __future__ import annotations
 
