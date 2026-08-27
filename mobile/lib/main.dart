@@ -59,6 +59,13 @@
 /// closing the real, disclosed `DEC-126` gap and making a "Needs you
 /// now" card's own tap-through to `gate_reveal_screen.dart` genuinely
 /// reachable for the first time since Batch 6 (`DEC-080`).
+/// `fetchCareerDigest` joins them as of the same phase (`features/
+/// career_digest.py`, `DEC-147`) -- real, live, per-user-scoped
+/// `GET /career_pipeline/{application_id}/digest`, backed by a real
+/// Tavily search and a real Gemini summarization call, making
+/// `you_screen.dart`'s own `_CareerDigestLoader` tap-through from
+/// Career Pipeline genuinely reachable for the first time since Batch 7
+/// (`DEC-084`).
 /// `confirmDelete` is real and live too, as of `DEC-113` -- the real,
 /// irreversible `DELETE /account`, unblocked only once real user
 /// provisioning existed (`DEC-110`) to make a correctly per-user-scoped
@@ -72,6 +79,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:quorum_mobile/api/account_api.dart';
+import 'package:quorum_mobile/api/career_digest_api.dart';
 import 'package:quorum_mobile/api/career_pipeline_api.dart';
 import 'package:quorum_mobile/api/finance_api.dart';
 import 'package:quorum_mobile/api/gate_reveal_api.dart';
@@ -199,6 +207,10 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             fetchCareerApplications: createCareerPipelineFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            fetchCareerDigest: createCareerDigestFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),

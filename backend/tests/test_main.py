@@ -2072,3 +2072,181 @@ def test_email_ingestion_real_secret_and_matching_header_reaches_the_real_route_
         }
     finally:
         get_settings.cache_clear()
+
+
+# --- GET /career_pipeline/{application_id}/digest (Phase 6, DEC-147) ---
+
+
+async def test_career_digest_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
+    """Real, end-to-end: real-provisions a real user (DEC-110), inserts
+    a real `applications` row with a real, compiled digest scoped to
+    that exact user, confirms `GET /career_pipeline/{application_id}/
+    digest` genuinely round-trips through `fetch_company_digest()` with
+    a real, valid access token, then cleans up."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    application_id = uuid.uuid4()
+    digest_json = json.dumps({"summary_points": ["A real, live-tested summary point."], "source_count": 2})
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company, status, digest) VALUES ($1, $2, $3, $4, $5::jsonb)",
+        application_id, uuid.UUID(internal_user_id), "Real Test Company", "interview_scheduled", digest_json,
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/career_pipeline/{application_id}/digest", headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body == {"company": "Real Test Company", "summary_points": ["A real, live-tested summary point."], "source_count": 2}
+    finally:
+        await pool.execute("DELETE FROM applications WHERE application_id = $1", application_id)
+
+
+async def test_career_digest_endpoint_returns_404_when_the_real_digest_has_not_been_compiled_yet(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    application_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company, status) VALUES ($1, $2, $3, $4)",
+        application_id, uuid.UUID(internal_user_id), "Real Test Company", "interview_scheduled",
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/career_pipeline/{application_id}/digest", headers=headers)
+        assert response.status_code == 404
+    finally:
+        await pool.execute("DELETE FROM applications WHERE application_id = $1", application_id)
+
+
+async def test_career_digest_endpoint_returns_404_for_a_real_application_belonging_to_another_real_user(pool, provisioned_users):
+    headers_a, _user_a = await _provisioned_auth_header(pool, provisioned_users)
+    _headers_b, user_b = await _provisioned_auth_header(pool, provisioned_users)
+    application_id = uuid.uuid4()
+    digest_json = json.dumps({"summary_points": ["a point"], "source_count": 1})
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company, status, digest) VALUES ($1, $2, $3, $4, $5::jsonb)",
+        application_id, uuid.UUID(user_b), "Real Test Company", "interview_scheduled", digest_json,
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/career_pipeline/{application_id}/digest", headers=headers_a)
+        assert response.status_code == 404
+    finally:
+        await pool.execute("DELETE FROM applications WHERE application_id = $1", application_id)
+
+
+def test_career_digest_endpoint_a_real_syntactically_invalid_id_is_a_real_404_not_a_500():
+    with TestClient(app) as client:
+        response = client.get("/career_pipeline/not-a-real-uuid/digest", headers=_auth_header())
+    assert response.status_code == 404
+
+
+def test_career_digest_endpoint_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.get(f"/career_pipeline/{uuid.uuid4()}/digest")
+    assert response.status_code == 401
+
+
+def test_career_digest_endpoint_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
+    with TestClient(app) as client:
+        real_pool = app.state.db_pool
+        app.state.db_pool = None
+        try:
+            response = client.get(f"/career_pipeline/{uuid.uuid4()}/digest", headers=_auth_header())
+            health_response = client.get("/health")
+            assert response.status_code == 503
+            assert health_response.status_code == 200
+        finally:
+            app.state.db_pool = real_pool
+
+
+# --- POST /internal/career-digest (Phase 6, DEC-147) ---
+
+
+def test_career_digest_route_is_401_when_no_internal_secret_is_configured_at_all(monkeypatch):
+    monkeypatch.delenv("INTERNAL_DRAIN_SECRET", raising=False)
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/career-digest")
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_career_digest_route_is_401_with_a_real_configured_secret_but_the_wrong_header_value(monkeypatch):
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/career-digest", headers={"X-Internal-Secret": "not-the-real-secret"})
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_career_digest_route_is_503_when_the_secret_is_real_but_tavily_is_not_configured(monkeypatch):
+    """Real, honest `503` when either real provider isn't configured --
+    checked BEFORE this route's own auth-passing logic ever reaches
+    `run_career_digest()`. Uses the same real, established `model_copy()`
+    fix `/internal/backfill-negotiation-detail`'s own test already
+    documents: `monkeypatch.delenv(...)` alone has no effect since
+    pydantic-settings reads `backend/.env` as a file, not this shell's
+    own OS environment."""
+    from quorum_backend import main as main_module
+
+    fake_settings = get_settings().model_copy(
+        update={"tavily_api_key": None, "internal_drain_secret": "a-real-configured-secret"}
+    )
+    monkeypatch.setattr(main_module, "get_settings", lambda: fake_settings)
+    with TestClient(app) as client:
+        response = client.post("/internal/career-digest", headers={"X-Internal-Secret": "a-real-configured-secret"})
+    assert response.status_code == 503
+
+
+def test_career_digest_route_is_503_when_the_secret_is_real_but_gemini_is_not_configured(monkeypatch):
+    from quorum_backend import main as main_module
+
+    fake_settings = get_settings().model_copy(
+        update={"gemini_api_key": None, "internal_drain_secret": "a-real-configured-secret"}
+    )
+    monkeypatch.setattr(main_module, "get_settings", lambda: fake_settings)
+    with TestClient(app) as client:
+        response = client.post("/internal/career-digest", headers={"X-Internal-Secret": "a-real-configured-secret"})
+    assert response.status_code == 503
+
+
+def test_career_digest_route_real_secret_and_matching_header_reaches_the_real_route_wiring(monkeypatch):
+    """Proves this route's own real auth dependency, real provider-
+    configured precondition, and real response mapping, WITHOUT a real,
+    unscoped call to `run_career_digest()` -- the same real safety
+    precedent every other `/internal/*` route test in this file already
+    established. That function's own real, deep logic is covered
+    directly and safely in `test_career_digest.py`, scoped to real,
+    test-owned application_ids only."""
+    from quorum_backend.features.career_digest import CareerDigestRunResult
+
+    async def _fake_run_career_digest(pool, *, tavily_api_key, compile_digest_call):
+        return CareerDigestRunResult(
+            applications_scanned=1, applications_failed=0, digests_compiled=1,
+            outcome_counts={"ALREADY_DIGESTED": 0, "DIGESTED": 1},
+        )
+
+    monkeypatch.setattr("quorum_backend.main.run_career_digest", _fake_run_career_digest)
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    monkeypatch.setenv("TAVILY_API_KEY", "a-real-configured-tavily-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "a-real-configured-gemini-key")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/career-digest", headers={"X-Internal-Secret": "a-real-configured-secret"})
+        assert response.status_code == 200
+        assert response.json() == {
+            "applications_scanned": 1,
+            "applications_failed": 0,
+            "digests_compiled": 1,
+            "outcome_counts": {"ALREADY_DIGESTED": 0, "DIGESTED": 1},
+        }
+    finally:
+        get_settings.cache_clear()
