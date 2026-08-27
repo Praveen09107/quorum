@@ -190,6 +190,38 @@ async def test_drain_due_jobs_do_nothing_option_produces_zero_actions_and_delete
     assert await pool.fetchrow("SELECT 1 FROM retry_queue WHERE retry_id = $1", retry_id) is None
 
 
+async def test_drain_due_jobs_processes_a_real_update_budget_job_and_genuinely_writes_the_new_ceiling(pool, user_id):
+    """`DEC-148`: the real, end-to-end capstone -- a chosen finance
+    negotiation option translated to `update_budget` (S2, `router.
+    STAKES_TABLE`), approved by the real Judge, now genuinely executes
+    through `action_executor.py::execute_approved_action()`'s own new
+    branch, closing the exact gap this whole pipeline previously
+    stopped short of for this one action type."""
+    retry_id = await _seed_job(pool, user_id=user_id, source_domains=["finance"])
+    translation_call = await _fake_translation_call_factory(
+        {"finance": {"action": "update_budget", "amount": 80000.0, "category": "discretionary", "payee": None}}
+    )
+
+    result = await drain_due_jobs(pool, translation_call=translation_call, critic_call=_fake_critic_call, judge_call=_fake_judge_approve)
+
+    assert result.jobs_succeeded == 1
+    assert result.downstream_actions_produced == 1
+    assert result.downstream_actions_executed == 1
+    assert await pool.fetchrow("SELECT 1 FROM retry_queue WHERE retry_id = $1", retry_id) is None
+
+    event = await pool.fetchrow(
+        "SELECT action_type, stakes, gate_decision, outcome, resolved_at FROM action_events WHERE user_id = $1", uuid.UUID(user_id)
+    )
+    assert event["action_type"] == "update_budget"
+    assert event["stakes"] == "S2"
+    assert event["gate_decision"] == "approve"
+    assert event["outcome"] == "approved_unchanged"
+    assert event["resolved_at"] is not None
+
+    row = await pool.fetchrow("SELECT monthly_budget_limit FROM users WHERE user_id = $1", uuid.UUID(user_id))
+    assert float(row["monthly_budget_limit"]) == 80000.0
+
+
 async def test_drain_due_jobs_an_unsupported_domain_fails_loud_via_the_real_retry_path(pool, user_id):
     """A real, structural guard: `source_domains` should only ever
     contain `finance`/`tasks`/`calendar` (`Position.domain`'s own real

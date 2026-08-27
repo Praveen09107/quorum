@@ -202,7 +202,7 @@ from quorum_backend.features.negotiation_trigger_support import (
     fetch_month_to_date_spend,
     fetch_remaining_monthly_budget,
 )
-from quorum_backend.features.today import TODAY_MONTHLY_BUDGET_LIMIT
+from quorum_backend.features.today import fetch_monthly_budget_limit
 from quorum_backend.gate.schemas import ImpactDelta, NegotiationOption, ResourceClaim
 from quorum_backend.negotiation.gemini_calls import make_gemini_position_call, make_gemini_synthesis_call
 from quorum_backend.negotiation.impact_simulator import DomainSnapshot, OptionEffect
@@ -265,46 +265,57 @@ def _tasks_context(tasks_claim: ResourceClaim, tasks_state: DomainState) -> str:
 
 async def _build_deadline_watch_state(
     conn: asyncpg.Connection, *, user_id: str
-) -> tuple[list[ResourceClaim], dict[str, DomainState], dict[str, str]] | None:
+) -> tuple[list[ResourceClaim], dict[str, DomainState], dict[str, str], float] | None:
     """Real state rebuild for a `'deadline_watch'`-sourced negotiation --
     mirrors `deadline_watch.py::scan_one_user`'s own real claim shape
     exactly. Returns `None` honestly when the user no longer has a real
     open task with a future deadline (the real precondition that job's
     own `NO_CLAIM` outcome already encodes) -- the caller treats this the
-    same as `SITUATION_RESOLVED`."""
+    same as `SITUATION_RESOLVED`.
+
+    RESOLVED, `DEC-148`: the returned tuple now carries a fourth real
+    element, this user's own real `monthly_budget_limit` (migration
+    `0015`) -- `_build_baseline()` needs it to convert a real remaining-
+    amount into a real remaining-fraction, and it has no `conn`/`user_id`
+    of its own to look it up itself."""
     tasks = await build_tasks_claim_and_state(conn, user_id=user_id)
     if tasks is None:
         return None
     tasks_claim, tasks_state = tasks
     spent = await fetch_month_to_date_spend(conn, user_id=user_id)
-    remaining = max(0.0, TODAY_MONTHLY_BUDGET_LIMIT - spent)
+    monthly_limit = await fetch_monthly_budget_limit(conn, user_id=user_id)
+    remaining = max(0.0, monthly_limit - spent)
     finance_claim = ResourceClaim(claim_type="money", amount=spent, unit="currency_minor_units")
     finance_state = DomainState(domain="finance", available=remaining, unit="currency_minor_units")
-    spent_pct = (spent / TODAY_MONTHLY_BUDGET_LIMIT) * 100 if TODAY_MONTHLY_BUDGET_LIMIT else 0.0
+    spent_pct = (spent / monthly_limit) * 100 if monthly_limit else 0.0
     context = {
         "tasks": _tasks_context(tasks_claim, tasks_state),
         "finance": (
-            f"Rs.{spent:,.0f} of this month's Rs.{TODAY_MONTHLY_BUDGET_LIMIT:,.0f} budget "
+            f"Rs.{spent:,.0f} of this month's Rs.{monthly_limit:,.0f} budget "
             f"has already been spent ({spent_pct:.0f}%), leaving Rs.{remaining:,.0f} "
             "remaining this month."
         ),
     }
-    return [tasks_claim, finance_claim], {"tasks": tasks_state, "finance": finance_state}, context
+    return [tasks_claim, finance_claim], {"tasks": tasks_state, "finance": finance_state}, context, monthly_limit
 
 
 async def _build_spend_alert_state(
     conn: asyncpg.Connection, *, user_id: str
-) -> tuple[list[ResourceClaim], dict[str, DomainState], dict[str, str]] | None:
+) -> tuple[list[ResourceClaim], dict[str, DomainState], dict[str, str], float] | None:
     """Real state rebuild for a `'spend_alert'`-sourced negotiation --
     mirrors `spend_alert.py::scan_one_user`'s own real claim shape
     exactly (real SUM of every currently-detected subscription, real
     tasks claim only when a real one still exists). Returns `None`
     honestly when no real recurring subscription is detected anymore --
-    the real precondition that job's own `NO_CLAIM` outcome encodes."""
+    the real precondition that job's own `NO_CLAIM` outcome encodes.
+    See `_build_deadline_watch_state`'s own docstring for why the
+    returned tuple's fourth element (the real per-user monthly budget
+    limit) exists, `DEC-148`."""
     subscriptions = await fetch_detected_subscriptions_via_conn(conn, user_id=user_id)
     if not subscriptions:
         return None
     total_recurring_cost = sum(sub.average_amount for sub in subscriptions)
+    monthly_limit = await fetch_monthly_budget_limit(conn, user_id=user_id)
     remaining = await fetch_remaining_monthly_budget(conn, user_id=user_id)
     finance_claim = ResourceClaim(claim_type="money", amount=total_recurring_cost, unit="currency_minor_units")
     finance_state = DomainState(domain="finance", available=remaining, unit="currency_minor_units")
@@ -314,7 +325,7 @@ async def _build_spend_alert_state(
         "finance": (
             f"Currently detected real recurring subscriptions total Rs.{total_recurring_cost:,.0f}/month "
             f"across {len(subscriptions)} real payee(s), but only Rs.{remaining:,.0f} remains in this "
-            f"month's Rs.{TODAY_MONTHLY_BUDGET_LIMIT:,.0f} budget."
+            f"month's Rs.{monthly_limit:,.0f} budget."
         ),
     }
     tasks = await build_tasks_claim_and_state(conn, user_id=user_id)
@@ -323,22 +334,31 @@ async def _build_spend_alert_state(
         resource_claims.append(tasks_claim)
         domain_states["tasks"] = tasks_state
         context["tasks"] = _tasks_context(tasks_claim, tasks_state)
-    return resource_claims, domain_states, context
+    return resource_claims, domain_states, context, monthly_limit
 
 
-def _build_baseline(resource_claims: list[ResourceClaim], domain_states: dict[str, DomainState]) -> DomainSnapshot:
+def _build_baseline(
+    resource_claims: list[ResourceClaim], domain_states: dict[str, DomainState], *, monthly_budget_limit: float
+) -> DomainSnapshot:
     """Real, current-data-derived baseline for `negotiation/impact_
     simulator.py`'s own `DomainSnapshot` -- the three real standing
     metrics it needs, computed from the exact same real claim/state
-    values just rebuilt above, never a hardcoded scenario number."""
+    values just rebuilt above, never a hardcoded scenario number.
+
+    RESOLVED, `DEC-148`: `monthly_budget_limit` is now a real, required
+    parameter (this user's own real `users.monthly_budget_limit`) rather
+    than the module-level `TODAY_MONTHLY_BUDGET_LIMIT` constant this
+    function used to close over -- this function itself has no `conn`/
+    `user_id` to look the real value up on its own, so both real callers
+    thread it through from their own state rebuild."""
     tasks_state = domain_states.get("tasks")
     tasks_claim = next((c for c in resource_claims if c.claim_type == "effort"), None)
     finance_state = domain_states.get("finance")
     task_hours_committed = tasks_claim.amount if tasks_claim is not None else 0.0
     deadline_slack_hours = (tasks_state.available - task_hours_committed) if tasks_state is not None else 0.0
     budget_remaining_fraction = (
-        finance_state.available / TODAY_MONTHLY_BUDGET_LIMIT
-        if finance_state is not None and TODAY_MONTHLY_BUDGET_LIMIT
+        finance_state.available / monthly_budget_limit
+        if finance_state is not None and monthly_budget_limit
         else 0.0
     )
     return DomainSnapshot(
@@ -499,8 +519,8 @@ async def generate_detail_for_one_negotiation(
     if state is None:
         return BackfillOutcome.SITUATION_RESOLVED
 
-    resource_claims, domain_states, context = state
-    baseline = _build_baseline(resource_claims, domain_states)
+    resource_claims, domain_states, context, monthly_budget_limit = state
+    baseline = _build_baseline(resource_claims, domain_states, monthly_budget_limit=monthly_budget_limit)
 
     # A real, cheap, zero-LLM-cost re-confirmation BEFORE any real Gemini
     # call -- lets this function bail out on a moot or duplicate real

@@ -75,7 +75,7 @@ import asyncpg
 
 from quorum_backend.features.retry_queue_drainer import fetch_committed_hours_before
 from quorum_backend.features.subscription_detective import DetectedSubscription, detect_subscriptions
-from quorum_backend.features.today import TODAY_MONTHLY_BUDGET_LIMIT, TODAY_WORKING_HOURS_PER_DAY
+from quorum_backend.features.today import TODAY_WORKING_HOURS_PER_DAY, fetch_monthly_budget_limit
 from quorum_backend.gate.schemas import ResourceClaim
 from quorum_backend.negotiation.trigger import DomainState
 
@@ -172,9 +172,16 @@ async def fetch_month_to_date_spend(conn: asyncpg.Connection, *, user_id: str) -
 async def fetch_remaining_monthly_budget(conn: asyncpg.Connection, *, user_id: str) -> float:
     """Real, shared finance-domain `available` figure -- never
     negative (a real month that's already run over shows `0.0` real
-    remaining budget, not a nonsensical negative number)."""
+    remaining budget, not a nonsensical negative number).
+
+    RESOLVED, `DEC-148`: previously subtracted spend from the module-
+    level `TODAY_MONTHLY_BUDGET_LIMIT` constant -- now reads the real,
+    per-user `users.monthly_budget_limit` (migration `0015`) instead, so
+    a real `UPDATE_BUDGET` execution genuinely changes what this
+    function returns."""
     spent = await fetch_month_to_date_spend(conn, user_id=user_id)
-    return max(0.0, TODAY_MONTHLY_BUDGET_LIMIT - spent)
+    monthly_limit = await fetch_monthly_budget_limit(conn, user_id=user_id)
+    return max(0.0, monthly_limit - spent)
 
 
 async def fetch_detected_subscriptions_via_conn(conn: asyncpg.Connection, *, user_id: str) -> list[DetectedSubscription]:

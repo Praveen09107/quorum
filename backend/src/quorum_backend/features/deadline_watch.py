@@ -129,9 +129,9 @@ from quorum_backend.features.negotiation_trigger_support import (
     build_tasks_claim_and_state,
     create_bare_negotiation,
     fetch_month_to_date_spend,
+    fetch_remaining_monthly_budget,
     has_blocking_negotiation,
 )
-from quorum_backend.features.today import TODAY_MONTHLY_BUDGET_LIMIT
 from quorum_backend.gate.schemas import ResourceClaim
 from quorum_backend.negotiation.trigger import DomainState, scan_for_conflicts
 
@@ -187,12 +187,23 @@ async def scan_one_user(conn: asyncpg.Connection, *, user_id: str) -> tuple[Scan
         return ScanOutcome.NO_CLAIM, None
     tasks_claim, tasks_state = tasks_claim_and_state
 
-    # A single real query for the raw spend figure -- both this
-    # module's own real finance CLAIM (spent this month) and its real
-    # available capacity (remaining budget) derive from the same one
-    # real number, never fetched twice.
+    # RESOLVED, `DEC-148`: `remaining_budget` now comes from the real,
+    # shared `fetch_remaining_monthly_budget()` (real per-user
+    # `users.monthly_budget_limit`, migration `0015`) instead of a
+    # module-local duplicate of that same subtraction against a
+    # hardcoded constant -- the exact real inconsistency that would have
+    # let this job silently ignore a real UPDATE_BUDGET execution while
+    # `spend_alert.py` (which already called the shared helper) honored
+    # it. A real, disclosed, accepted cost: `fetch_remaining_monthly_
+    # budget()` re-queries month-to-date spend internally, so this
+    # function's own real spend aggregate now runs twice per call
+    # (once directly below for the real finance CLAIM, once inside that
+    # shared helper) -- a cheap, single-row aggregate on a 30-minute
+    # cron job, not a per-request hot path, so correctness (never
+    # silently drifting from the real, current per-user limit) is worth
+    # more here than avoiding one small, duplicate query.
     spent_this_month = await fetch_month_to_date_spend(conn, user_id=user_id)
-    remaining_budget = max(0.0, TODAY_MONTHLY_BUDGET_LIMIT - spent_this_month)
+    remaining_budget = await fetch_remaining_monthly_budget(conn, user_id=user_id)
 
     resource_claims = [
         tasks_claim,

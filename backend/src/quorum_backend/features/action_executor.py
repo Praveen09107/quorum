@@ -1,20 +1,23 @@
 """The real execution layer -- `STATUS_INDEX.md` open item #28, closed
 here for the two real domains that are genuinely safe to close it for
-(`DEC-128`), and now extended to real Gmail execution (`DEC-142`,
-Phase 4's "execution half"). Confirmed by direct search before
-`DEC-127` even started designing the `retry_queue` drainer: no code
-anywhere in this backend had ever carried out a Gate-approved
-`ActionProposal`'s real effect -- every layer built so far (all 5
-agents, the Gate, negotiation, the drainer) stopped at producing a
-real, verified decision.
+(`DEC-128`), extended to real Gmail execution (`DEC-142`, Phase 4's
+"execution half"), and now to a real budget-ceiling write (`DEC-148`,
+Phase 6). Confirmed by direct search before `DEC-127` even started
+designing the `retry_queue` drainer: no code anywhere in this backend
+had ever carried out a Gate-approved `ActionProposal`'s real effect --
+every layer built so far (all 5 agents, the Gate, negotiation, the
+drainer) stopped at producing a real, verified decision.
 
-FIVE REAL ACTION TYPES ARE NOW GENUINELY, SAFELY EXECUTABLE --
-`CREATE_TASK`, `LOG_EXPENSE` (`DEC-128`), and `SEND_EMAIL`/
-`ARCHIVE_EMAIL`/`LABEL_EMAIL` (`DEC-142`, real Gmail API calls, using
-Phase 3's stored token). Confirmed by checking every other real
-`ActionType`'s real execution target before writing a line of code:
-  - `UPDATE_BUDGET` has no real execution target: no `budgets`-ceiling
-    table exists anywhere in this schema.
+SIX REAL ACTION TYPES ARE NOW GENUINELY, SAFELY EXECUTABLE --
+`CREATE_TASK`, `LOG_EXPENSE` (`DEC-128`), `SEND_EMAIL`/`ARCHIVE_EMAIL`/
+`LABEL_EMAIL` (`DEC-142`, real Gmail API calls, using Phase 3's stored
+token), and `UPDATE_BUDGET` (`DEC-148`, a real, direct `users.
+monthly_budget_limit` write, migration `0015`, closing the exact gap
+this docstring's own earlier version named -- "no `budgets`-ceiling
+table exists anywhere in this schema" -- by adding the real, small
+column that gap actually needed, not a separate table). Confirmed by
+checking every other real `ActionType`'s real execution target before
+writing a line of code:
   - `CREATE_CALENDAR_EVENT_LOCAL`/`_EXTERNAL` have no real execution
     target either: no `calendar_events` table exists anywhere in this
     schema, and `_EXTERNAL` would additionally need a real Google
@@ -167,6 +170,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import math
 import re
 import uuid
 from dataclasses import dataclass
@@ -354,6 +358,65 @@ async def _execute_approved_action_unsafe(
             datetime.fromisoformat(deadline_iso) if deadline_iso else None,
         )
         return ExecutionResult(executed=True, detail="Real task row created.")
+
+    if action_type == ActionType.UPDATE_BUDGET:
+        # RESOLVED, `DEC-148`: closes the real gap this module's own
+        # top-of-file docstring named -- `users.monthly_budget_limit`
+        # (migration `0015`) is the real, genuine, small budgets-ceiling
+        # concept that never existed before. `payload["amount"]`, per
+        # `agents/finance_agent.py::build_finance_proposal`'s own real,
+        # existing contract, is the real NEW ceiling itself (not a
+        # delta) -- confirmed directly against that function and
+        # `negotiation/downstream_translation.py`'s own real translation
+        # prompt ("changing a real budget ceiling itself") before
+        # writing this branch, not assumed.
+        #
+        # A real, structural safety check, not left implicit: every
+        # real per-user computation that divides by this value
+        # (`today.py::compute_budget_state`, `negotiation_detail_
+        # backfill.py::_build_baseline`'s own `budget_remaining_
+        # fraction`) would produce a real division-by-zero or an
+        # inverted-sign fraction for a non-positive real ceiling -- a
+        # genuinely different, worse failure mode than a merely
+        # implausible one, so rejected here before any real write,
+        # the same "reject a structurally unsafe value outright" choice
+        # `_reject_header_injection`/`_reject_malformed_gmail_id` above
+        # already make for their own real inputs. Raising `ValueError`
+        # here is deliberate, not an oversight -- the shared `except`
+        # in `execute_approved_action()` above turns it into the same
+        # real, honest `executed=False` every other malformed-payload
+        # case already gets.
+        new_limit = payload["amount"]
+        # `math.isfinite()` is load-bearing, not decorative: a real
+        # `float('nan')` genuinely satisfies `nan <= 0 == False` in
+        # live, hand-verified Python (NaN compares False against every
+        # relational operator except `!=`), and `float('inf')` also
+        # satisfies `inf <= 0 == False` -- both would silently slip past
+        # a bare `new_limit <= 0` check and then corrupt every real
+        # downstream division by this value (`compute_budget_state`,
+        # `_build_baseline`'s own `budget_remaining_fraction`) with a
+        # real, silent `NaN`/`0.0` result, never a loud failure.
+        if (
+            isinstance(new_limit, bool)
+            or not isinstance(new_limit, (int, float))
+            or not math.isfinite(new_limit)
+            or new_limit <= 0
+        ):
+            raise ValueError(f"real UPDATE_BUDGET amount must be a real, finite, positive number, got {new_limit!r}")
+
+        # A real, honest, live-found fact, matching LOG_EXPENSE's own
+        # already-disclosed precedent immediately below: `payload
+        # ["category"]` (real, translated content) is genuinely NOT
+        # persisted here -- this is a single, whole-account monthly
+        # ceiling, not a per-category one. The real, translated category
+        # still survives in the real `action_events.payload` JSONB the
+        # caller already persists alongside this write.
+        await conn.execute(
+            "UPDATE users SET monthly_budget_limit = $1 WHERE user_id = $2",
+            float(new_limit),
+            uuid.UUID(user_id),
+        )
+        return ExecutionResult(executed=True, detail=f"Real monthly budget limit updated to {float(new_limit)!r}.")
 
     if action_type == ActionType.LOG_EXPENSE:
         # A real, honest, live-found fact, not a bug: `payload["category"]`
