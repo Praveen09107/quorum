@@ -44,10 +44,21 @@ DELIBERATE CHOICE MATCHING THE FEATURE'S OWN STATED PURPOSE ("flagged
 before the collision happens, not after"): the current week is already
 partway resolved, too late for a person to act on all of it. Real
 historical weeks are pooled by real deadline-density proximity (within
-tolerance) to the real, current count of open tasks due next week; a
-real, non-empty pool's own pooled correction rate is what gets compared
-against the threshold -- never a single historical week judged alone,
-which would be a real, noisy signal at low task volumes.
+tolerance) to next week's own real deadline density; a real, non-empty
+pool's own pooled correction rate is what gets compared against the
+threshold -- never a single historical week judged alone, which would
+be a real, noisy signal at low task volumes.
+
+"DEADLINE DENSITY" USES THE IDENTICAL REAL DEFINITION FOR BOTH THE
+UPCOMING WEEK AND EVERY HISTORICAL WEEK, A REAL, STANDARD-TIER-REVIEW-
+FOUND CORRECTION: an earlier version counted only currently-`open`
+tasks toward the upcoming week's density while counting every real
+task (any status) toward a historical week's -- a genuine apples-to-
+oranges comparison in the one place this feature's whole logic depends
+on comparing densities on the same real yardstick. Both counts now
+include every real task with a deadline in the relevant week,
+regardless of status -- a task marked done or cancelled early still
+genuinely had a real deadline that week.
 
 REAL, HONEST "NO DATA" CASE, matching this project's own established
 `success_rate: float | None` precedent (`honesty_log.py`): a genuinely
@@ -178,9 +189,24 @@ async def fetch_risk_assessment(pool: asyncpg.Pool, *, user_id: str, now: dateti
     tasks = [{"deadline": row["deadline"], "status": row["status"]} for row in rows]
     historical_weeks = compute_historical_weeks(tasks, now=now)
 
+    # RESOLVED, standard-tier review (MEDIUM): an earlier version
+    # counted only real, currently-`open` tasks toward `upcoming_
+    # density`, while `compute_historical_weeks()` counts every real
+    # task with a deadline in a given week regardless of its final
+    # status. That was a genuine apples-to-oranges comparison in the
+    # one place this feature's whole logic depends on comparing
+    # densities on the same real yardstick: a week's own real density
+    # must mean the same thing whether it's being measured as the
+    # assessed week or as a historical one, or the tolerance-based
+    # pooling above is comparing two different real quantities. Fixed
+    # by counting every real task due in the upcoming week here too,
+    # regardless of status -- "deadline density" is honestly just "how
+    # many real deadlines fall in this week," full stop, matching the
+    # real, plain parameter name `QUORUM_CONFIGURATION_CONSTANTS.md`
+    # §4 and the ADD's own description both use.
     upcoming_density = sum(
         1 for task in tasks
-        if task["status"] == "open" and task["deadline"] is not None and _week_start(task["deadline"]) == upcoming_week
+        if task["deadline"] is not None and _week_start(task["deadline"]) == upcoming_week
     )
     return assess_upcoming_week(
         historical_weeks, upcoming_deadline_density=upcoming_density, upcoming_week_start=upcoming_week

@@ -1,6 +1,8 @@
-// UNVERIFIED IN SANDBOX: no Dart or Flutter SDK exists anywhere this file
-// was written. Zero Flutter dependencies -- plain Dart, `dart test` is
-// the real verification.
+// Zero Flutter dependencies -- plain Dart, `dart test` is the real
+// verification, genuinely run this session (a real Flutter/Dart SDK has
+// existed on this machine since `DEC-103` -- no "unverified in sandbox"
+// disclaimer needed here, unlike several older files in this directory
+// written before that SDK existed).
 //
 // A REAL, DISCLOSED SCOPE DECISION, matching `backend/src/quorum_backend/
 // features/predictive_risk.py`'s own top-of-file docstring exactly: no

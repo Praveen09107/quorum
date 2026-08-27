@@ -135,6 +135,26 @@ def test_assess_upcoming_week_pools_weeks_within_the_real_tolerance_boundary():
     assert result.matching_historical_weeks == 2
 
 
+def test_assess_upcoming_week_genuinely_pools_by_task_count_never_averages_per_week_rates():
+    """RESOLVED, standard-tier review (MEDIUM): every prior test's own
+    fixture happened to use equal `total_count` per matching week, so a
+    version of this code that (incorrectly) averaged per-week rates
+    instead of pooling by real task count would have passed unnoticed.
+    This test deliberately uses UNEQUAL real task counts per week to
+    mechanically distinguish the two: pooled = (5+11)/(10+11) ≈ 0.762;
+    naive per-week average = (0.5+1.0)/2 = 0.75 -- genuinely different
+    real numbers, hand-verified."""
+    weeks = [
+        HistoricalWeek(week_start=_NOW, deadline_density=10, corrected_count=5, total_count=10),  # rate 0.5
+        HistoricalWeek(week_start=_NOW, deadline_density=11, corrected_count=11, total_count=11),  # rate 1.0
+    ]
+    result = assess_upcoming_week(weeks, upcoming_deadline_density=10, upcoming_week_start=_NOW)
+
+    assert result.matching_historical_weeks == 2
+    assert result.pooled_correction_rate == 16 / 21  # (5+11)/(10+11) -- pooled by real task count
+    assert result.pooled_correction_rate != (0.5 + 1.0) / 2  # NOT the naive per-week average (0.75)
+
+
 def test_assess_upcoming_week_a_real_empty_pool_is_an_honest_no_data_case_not_a_fabricated_result():
     result = assess_upcoming_week([], upcoming_deadline_density=3, upcoming_week_start=_NOW)
     assert result.matching_historical_weeks == 0
@@ -208,11 +228,18 @@ async def test_fetch_risk_assessment_a_real_live_end_to_end_risk_flag(pool, user
     assert result.is_at_risk is True
 
 
-async def test_fetch_risk_assessment_never_counts_a_real_done_or_cancelled_task_toward_upcoming_density(pool, user_id):
-    """`upcoming_deadline_density` only counts real, currently-OPEN
-    tasks -- a real task already done or cancelled represents no real
-    upcoming pressure, even if its deadline technically falls next
-    week."""
+async def test_fetch_risk_assessment_upcoming_density_counts_every_real_task_regardless_of_status(pool, user_id):
+    """RESOLVED, standard-tier review (MEDIUM): an earlier version of
+    this test asserted the OPPOSITE -- that `upcoming_deadline_density`
+    counted only currently-`open` tasks. The review correctly found
+    that a genuine apples-to-oranges comparison: `compute_historical_
+    weeks()` counts every real task with a deadline in a given week
+    regardless of final status, so `upcoming_density` must use the
+    identical real definition, or the tolerance-based pooling in
+    `assess_upcoming_week()` compares two different real quantities.
+    "Deadline density" honestly means "how many real deadlines fall in
+    this week," full stop -- a task marked done/cancelled early still
+    genuinely had a real deadline that week."""
     upcoming = _week_start(_NOW) + timedelta(weeks=1)
     await _seed_task(pool, user_id=user_id, deadline=upcoming + timedelta(days=1), status="done")
     await _seed_task(pool, user_id=user_id, deadline=upcoming + timedelta(days=2), status="cancelled")
@@ -220,7 +247,7 @@ async def test_fetch_risk_assessment_never_counts_a_real_done_or_cancelled_task_
 
     result = await fetch_risk_assessment(pool, user_id=user_id, now=_NOW)
 
-    assert result.deadline_density == 1
+    assert result.deadline_density == 3
 
 
 async def test_fetch_risk_assessment_never_counts_another_real_users_tasks(pool, user_id):
