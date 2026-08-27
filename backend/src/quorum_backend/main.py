@@ -57,6 +57,11 @@ from quorum_backend.auth.user_provisioning import get_or_create_user, resolve_in
 from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
 from quorum_backend.core.embeddings import EmbeddingError
+from quorum_backend.features.career_digest import (
+    fetch_company_digest,
+    make_gemini_compile_digest_call,
+    run_career_digest,
+)
 from quorum_backend.features.career_pipeline import fetch_career_pipeline
 from quorum_backend.features.deadline_watch import run_deadline_watch
 from quorum_backend.features.email_ingestion import run_email_ingestion
@@ -137,6 +142,11 @@ app = FastAPI(title="Quorum Backend", lifespan=_lifespan)
 # exact same real detail text, not two independently-drifting copies.
 _NEGOTIATION_NOT_FOUND_DETAIL = "No negotiation found with that id."
 _GATE_REVEAL_NOT_FOUND_DETAIL = "No action found with that id."
+# Deliberately the same real detail text for "no such application" and
+# "a real application exists but its digest hasn't been compiled yet" --
+# see `features/career_digest.py::fetch_company_digest`'s own docstring
+# for why these two real, different states share one client-visible 404.
+_CAREER_DIGEST_NOT_FOUND_DETAIL = "No digest found for that application."
 
 
 def _get_db_pool(request: Request) -> asyncpg.Pool:
@@ -579,6 +589,40 @@ async def career_pipeline(
         }
         for record in records
     ]
+
+
+@app.get("/career_pipeline/{application_id}/digest")
+async def career_digest_endpoint(
+    application_id: str,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live -- Phase 6, `QUORUM_PRODUCTION_COMPLETION_PLAN.md`,
+    `QUORUM_DATA_CONTRACTS.md` §5.11, closing the real, disclosed gap
+    `career_digest_logic.dart`'s own header already named: no backend
+    for this has ever existed, despite `mobile/lib/features/
+    career_digest/` having a real, tested screen since Batch 7
+    (`DEC-084`), and `you_screen.dart`'s own `_CareerDigestLoader`
+    already wiring a real tap-through from Career Pipeline to it.
+
+    A real, honest `404` if `application_id` isn't a real, syntactically
+    valid UUID, doesn't resolve to an `applications` row this caller
+    owns, OR resolves to one whose `digest` hasn't been compiled yet --
+    all three cases share the exact same response, the same "never
+    confirm another user's data exists" discipline `GET /gate_reveal/
+    {proposal_id}` already established, extended here to also cover
+    "not yet researched" (`features/career_digest.py::
+    fetch_company_digest`'s own docstring has the full account of why
+    that's the correct, deliberate choice, not an oversight)."""
+    try:
+        application_uuid = uuid.UUID(application_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=_CAREER_DIGEST_NOT_FOUND_DETAIL) from exc
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    digest = await fetch_company_digest(pool, user_id=internal_user_id, application_id=str(application_uuid))
+    if digest is None:
+        raise HTTPException(status_code=404, detail=_CAREER_DIGEST_NOT_FOUND_DETAIL)
+    return {"company": digest.company, "summary_points": digest.summary_points, "source_count": digest.source_count}
 
 
 @app.get("/waiting_on")
@@ -1179,4 +1223,46 @@ async def email_ingestion_route(
         "new_sent_messages": result.new_sent_messages,
         "new_replies_detected": result.new_replies_detected,
         "already_running": result.already_running,
+    }
+
+
+@app.post("/internal/career-digest")
+async def career_digest_route(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    _internal: None = Depends(_require_internal_secret),
+) -> dict:
+    """Real, live -- Phase 6 of `QUORUM_PRODUCTION_COMPLETION_PLAN.md`.
+    Iterates a real, small batch of real `applications` rows via
+    `features/career_digest.py::run_career_digest`: real Tavily search,
+    real Gemini-backed summarization, real code-computed `source_count`
+    -- nothing fabricated anywhere in the chain. A real, honest `503` if
+    either the Tavily or Gemini provider isn't configured, matching
+    `/internal/backfill-negotiation-detail`'s own established pattern
+    for the same real dependency shape.
+
+    A real, deliberate scope boundary, disclosed rather than silently
+    narrowed: this route's own real trigger signal is `applications.
+    status = 'interview_scheduled'`, not a real Email-classification-
+    based interview detector -- see `features/career_digest.py`'s own
+    top-of-file docstring for exactly why. Same shared
+    `_require_internal_secret` auth as every other `/internal/*` route.
+
+    Not yet scheduled live via `pg_cron` as of this writing -- see
+    `backend/scripts/enable_career_digest_cron.sql`'s own top comment
+    for the real, disclosed reason and what's needed before it is."""
+    settings = get_settings()
+    if settings.tavily_api_key is None or settings.gemini_api_key is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Career digest compilation is not currently available -- the Tavily or Gemini provider isn't configured.",
+        )
+    compile_digest_call = make_gemini_compile_digest_call(api_key=settings.gemini_api_key)
+    result = await run_career_digest(
+        pool, tavily_api_key=settings.tavily_api_key, compile_digest_call=compile_digest_call
+    )
+    return {
+        "applications_scanned": result.applications_scanned,
+        "applications_failed": result.applications_failed,
+        "digests_compiled": result.digests_compiled,
+        "outcome_counts": result.outcome_counts,
     }
