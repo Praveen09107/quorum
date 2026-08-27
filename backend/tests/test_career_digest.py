@@ -381,6 +381,26 @@ async def test_compile_digest_for_one_application_a_real_full_pipeline_with_dete
     assert digest.source_count == 2  # code-computed from the real 2 Tavily results, never model-reported
 
 
+async def test_compile_digest_call_caps_summary_points_at_5_even_if_the_real_model_returns_more(monkeypatch):
+    """A real, live-discovered gap this codebase already found once for
+    this identical model (`negotiation/gemini_calls.py::make_gemini_
+    synthesis_call` asked for "exactly two" options, a real response
+    returned three) -- the prompt here asks for "at most 5" summary
+    points, but that's prose, not a mechanical guarantee. Code, not the
+    model, enforces the real cap (standard-tier review finding)."""
+    fake_client = _FakeCareerDigestHttpClient(
+        tavily_results=[{"content": "finding"}],
+        gemini_summary_points=[f"point {i}" for i in range(8)],
+    )
+    monkeypatch.setattr("quorum_backend.features.career_digest.httpx.AsyncClient", lambda **kwargs: fake_client)
+    compile_digest_call = make_gemini_compile_digest_call(api_key="fake-key-never-sent")
+
+    result = await compile_digest_call("Notion", ["finding"])
+
+    assert len(result["summary_points"]) == 5
+    assert result["summary_points"] == [f"point {i}" for i in range(5)]
+
+
 async def test_compile_digest_call_a_real_empty_search_still_produces_a_real_honest_digest(monkeypatch):
     """A real, genuine 'nothing found' search must still produce a real,
     valid digest with zero summary points -- never an error, and never

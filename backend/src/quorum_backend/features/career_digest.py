@@ -210,10 +210,17 @@ def make_gemini_compile_digest_call(*, api_key: str, max_retries: int = 2) -> Co
                 result = json.loads(text)
                 # source_count is code-computed, never asked of or
                 # trusted to the model -- see this module's own
-                # top-of-file docstring.
+                # top-of-file docstring. The prompt asks for "at most 5"
+                # points, but a real, live response is not mechanically
+                # bound by prose instructions -- the same real, live-
+                # discovered gap `negotiation/gemini_calls.py::
+                # make_gemini_synthesis_call` already found for this
+                # identical model (asked for "exactly two" options, a
+                # real response returned three). Sliced in code here for
+                # the same reason, a standard-tier review finding.
                 return {
                     "company": company,
-                    "summary_points": result["summary_points"],
+                    "summary_points": result["summary_points"][:5],
                     "source_count": len(search_findings),
                 }
             except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:

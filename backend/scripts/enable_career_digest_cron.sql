@@ -4,12 +4,18 @@
 -- NOT YET SCHEDULED LIVE as of this file's own first commit -- this
 -- job spends real Gemini calls (`make_gemini_compile_digest_call`)
 -- against the SAME real, disclosed, fluctuating free-tier quota
--- `/internal/backfill-negotiation-detail` already competes for
--- (`STATUS_INDEX.md` item #21), and that job's own `enable_backfill_
--- negotiation_detail_cron.sql` was, for the identical reason, left
--- deliberately unscheduled pending Preethish's own confirmation.
--- Written correctly now so enabling it later is a one-line `psql`/pool
--- command, not a new design decision made under time pressure.
+-- `/internal/backfill-negotiation-detail` ALREADY, ACTIVELY draws on
+-- (confirmed directly against the real, live `cron.job` table before
+-- writing this comment, not assumed from that job's own script's
+-- stale header -- see the real, disclosed correction now sitting atop
+-- `enable_backfill_negotiation_detail_cron.sql` for the full account,
+-- `DEC-147`). That job has been real, scheduled, and live since
+-- `DEC-136` -- so scheduling THIS one too means two real, autonomous
+-- consumers on one real, shared, fluctuating quota, not one competing
+-- against an already-idle slot. Written correctly now so enabling it
+-- later (once Preethish confirms real headroom exists) is a one-line
+-- `psql`/pool command, not a new design decision made under time
+-- pressure.
 --
 -- Offset chosen to avoid every other real job's own schedule (`:00`/
 -- `:30` -- deadline-watch/spend-alert; `*/5` -- drain-retry-queue;

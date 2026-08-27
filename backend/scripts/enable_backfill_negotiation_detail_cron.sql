@@ -1,14 +1,18 @@
 -- Real, ready-to-run SQL for scheduling `POST /internal/backfill-
 -- negotiation-detail` (Phase 2, `DEC-135`) via pg_cron/pg_net.
 --
--- NOT YET SCHEDULED LIVE as of this file's own first commit -- real
--- Gemini free-tier quota is currently exhausted from this PR's own
--- CRITICAL-tier review (`STATUS_INDEX.md` item #21's own disclosed,
--- fluctuating quota, live-proven again here), so enabling this now
--- would only retry-and-fail until quota resets; a real, deliberate
--- decision to write this script correctly now and enable it once
--- quota resets and/or Preethish confirms, rather than either skip
--- writing it or enable it blind.
+-- REAL, LIVE, ON A REAL SCHEDULE AS OF `DEC-136` -- this comment
+-- previously said "not yet scheduled" as of this file's first commit;
+-- that was true only briefly (real Gemini quota was exhausted at the
+-- time this file was first written). Corrected here (`DEC-147`, found
+-- while that session's own standard-tier review checked this file's
+-- claim against `cron.job` directly rather than trusting a stale
+-- comment): `SELECT * FROM cron.job WHERE jobname =
+-- 'backfill-negotiation-detail'` confirms this job is real, active,
+-- and has been since `DEC-136`. If you're deciding whether to schedule
+-- a NEW job that also spends real Gemini quota, check `cron.job`
+-- directly, the same way this correction was found -- don't trust this
+-- file's own history of what it once said.
 --
 -- **A REAL, DISCLOSED CORRECTION TO THIS SESSION'S OWN ORIGINAL PLAN:**
 -- the `DEC-135` log entry originally said this script would reuse
