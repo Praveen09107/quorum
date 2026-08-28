@@ -25,8 +25,22 @@ def test_local_event_produces_create_calendar_event_local():
 
 
 def test_external_event_produces_create_calendar_event_external():
-    proposal = build_event_proposal(_now(), _now(), "vendor call", has_external_invitee=True)
+    proposal = build_event_proposal(
+        _now(), _now(), "vendor call", has_external_invitee=True, invitee_email="vendor@example.com"
+    )
     assert proposal.action_type == ActionType.CREATE_CALENDAR_EVENT_EXTERNAL
+    assert proposal.payload["invitee_email"] == "vendor@example.com"
+
+
+def test_external_event_without_a_real_invitee_email_fails_loud():
+    """RESOLVED, `DEC-151`: a real, honest external booking needs a real
+    email to invite -- never fabricated, never silently proceeding
+    without one."""
+    try:
+        build_event_proposal(_now(), _now(), "vendor call", has_external_invitee=True, invitee_email=None)
+        raise AssertionError("should have raised ValueError")
+    except ValueError:
+        pass
 
 
 def test_graph_compiles_as_a_real_compiled_state_graph():
@@ -41,10 +55,26 @@ async def test_graph_invocation_produces_a_real_proposal():
         "proposed_end": _now(),
         "title": "1:1",
         "has_external_invitee": False,
+        "invitee_email": None,
         "proposal": None,
     }
     result = await graph.ainvoke(state)
     assert result["proposal"].action_type == ActionType.CREATE_CALENDAR_EVENT_LOCAL
+
+
+async def test_graph_invocation_produces_a_real_external_proposal_with_a_real_invitee():
+    graph = build_calendar_agent_graph()
+    state: CalendarAgentState = {
+        "proposed_start": _now(),
+        "proposed_end": _now(),
+        "title": "vendor call",
+        "has_external_invitee": True,
+        "invitee_email": "vendor@example.com",
+        "proposal": None,
+    }
+    result = await graph.ainvoke(state)
+    assert result["proposal"].action_type == ActionType.CREATE_CALENDAR_EVENT_EXTERNAL
+    assert result["proposal"].payload["invitee_email"] == "vendor@example.com"
 
 
 def test_calendar_domain_is_authorized_for_its_own_tools():
@@ -77,7 +107,9 @@ def test_local_and_external_events_route_to_genuinely_different_real_stakes():
     # ActionType differs, but that IMPL_09's real get_stakes() resolves
     # each to the correct, different stakes level.
     local = build_event_proposal(_now(), _now(), "team sync", has_external_invitee=False)
-    external = build_event_proposal(_now(), _now(), "vendor call", has_external_invitee=True)
+    external = build_event_proposal(
+        _now(), _now(), "vendor call", has_external_invitee=True, invitee_email="vendor@example.com"
+    )
     from quorum_backend.gate.schemas import Stakes
 
     assert get_stakes(local.action_type) == Stakes.S2

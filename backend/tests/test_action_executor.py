@@ -1,9 +1,11 @@
 """Real tests for features/action_executor.py (DEC-128, extended
-DEC-142) -- real inserts against the real, live database for
-`CREATE_TASK`/`LOG_EXPENSE`, real Gmail API calls for `SEND_EMAIL`/
-`ARCHIVE_EMAIL`/`LABEL_EMAIL` (against the real sandbox account, Rule
-5), and a real, exhaustive proof that every other real `ActionType`
-returns an honest, non-executing result, per CLAUDE.md Rule 5.
+DEC-142, DEC-148, DEC-151) -- real inserts against the real, live
+database for `CREATE_TASK`/`LOG_EXPENSE`, real Gmail API calls for
+`SEND_EMAIL`/`ARCHIVE_EMAIL`/`LABEL_EMAIL`, a real Google Calendar API
+call for `CREATE_CALENDAR_EVENT_EXTERNAL` (all against the real
+sandbox account, Rule 5), and a real, exhaustive proof that every
+other real `ActionType` returns an honest, non-executing result, per
+CLAUDE.md Rule 5.
 """
 import base64
 import uuid
@@ -556,6 +558,131 @@ async def test_execute_approved_action_label_email_a_real_gmail_rejection_is_a_d
     assert "genuinely rejected" in result.detail
 
 
+# --- CREATE_CALENDAR_EVENT_EXTERNAL: DEC-151's own real execution branch, S3 ---
+
+_VALID_CALENDAR_PAYLOAD = {
+    "start": "2026-09-01T10:00:00+00:00",
+    "end": "2026-09-01T11:00:00+00:00",
+    "title": "vendor call",
+    "has_external_invitee": True,
+    "invitee_email": "vendor@example.com",
+}
+
+
+async def test_execute_approved_action_create_calendar_event_external_refuses_without_a_real_access_token_even_when_approved(pool, user_id):
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_CALENDAR_EVENT_EXTERNAL, payload=_VALID_CALENDAR_PAYLOAD,
+            user_id=user_id, approved_by_user_id=user_id,
+        )
+    assert result.executed is False
+    assert "no real Google access token" in result.detail
+
+
+async def test_execute_approved_action_create_calendar_event_external_refuses_without_a_real_http_client(pool, user_id):
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_CALENDAR_EVENT_EXTERNAL, payload=_VALID_CALENDAR_PAYLOAD,
+            user_id=user_id, approved_by_user_id=user_id, google_access_token="fake-access-token",
+        )
+    assert result.executed is False
+    assert "no real HTTP client" in result.detail
+
+
+async def test_execute_approved_action_create_calendar_event_external_a_real_malformed_payload_is_honest_not_a_crash(pool, user_id):
+    """Missing `invitee_email` -- a real, malformed payload, not a raw
+    `KeyError` escaping this function."""
+    payload = {k: v for k, v in _VALID_CALENDAR_PAYLOAD.items() if k != "invitee_email"}
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_CALENDAR_EVENT_EXTERNAL, payload=payload, user_id=user_id,
+            approved_by_user_id=user_id, google_access_token="fake-access-token", http_client=_FakePostClient(),
+        )
+    assert result.executed is False
+    assert "malformed" in result.detail.lower()
+
+
+async def test_execute_approved_action_create_calendar_event_external_a_real_blank_invitee_email_is_refused(pool, user_id):
+    """A real, disclosed possibility for THIS specific action type: a
+    Judge-authored `revised_payload` (S3 -- see this module's own
+    `UPDATE_BUDGET`/`CREATE_CALENDAR_EVENT_EXTERNAL` docstring section)
+    could carry a real, present-but-blank `invitee_email`, which
+    `agents/calendar_agent.py::build_event_proposal()`'s own pre-Gate
+    check would never have let through -- this branch's own
+    independent check must refuse it too, never silently book a real
+    external event with no one real to invite."""
+    payload = {**_VALID_CALENDAR_PAYLOAD, "invitee_email": "   "}
+    fake_client = _FakePostClient()
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_CALENDAR_EVENT_EXTERNAL, payload=payload, user_id=user_id,
+            approved_by_user_id=user_id, google_access_token="fake-access-token", http_client=fake_client,
+        )
+    assert result.executed is False
+    assert "malformed" in result.detail.lower()
+    assert fake_client.calls == []
+
+
+async def test_execute_approved_action_create_calendar_event_external_a_real_unparseable_datetime_is_refused(pool, user_id):
+    payload = {**_VALID_CALENDAR_PAYLOAD, "start": "not-a-real-datetime"}
+    fake_client = _FakePostClient()
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_CALENDAR_EVENT_EXTERNAL, payload=payload, user_id=user_id,
+            approved_by_user_id=user_id, google_access_token="fake-access-token", http_client=fake_client,
+        )
+    assert result.executed is False
+    assert "malformed" in result.detail.lower()
+    assert fake_client.calls == []
+
+
+async def test_execute_approved_action_create_calendar_event_external_a_real_google_rejection_is_a_definite_false(pool, user_id):
+    fake_client = _FakePostClient(status_code=400, body={"error": "fake: invalid attendee"})
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_CALENDAR_EVENT_EXTERNAL, payload=_VALID_CALENDAR_PAYLOAD,
+            user_id=user_id, approved_by_user_id=user_id, google_access_token="fake-access-token", http_client=fake_client,
+        )
+    assert result.executed is False
+    assert "genuinely rejected" in result.detail
+
+
+async def test_execute_approved_action_create_calendar_event_external_a_real_transport_failure_is_genuinely_unknown(pool, user_id):
+    """The same real three-valued-outcome discipline `SEND_EMAIL`
+    already established -- a transport failure never becomes a false
+    `executed=False`."""
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_CALENDAR_EVENT_EXTERNAL, payload=_VALID_CALENDAR_PAYLOAD,
+            user_id=user_id, approved_by_user_id=user_id, google_access_token="fake-access-token",
+            http_client=_FakeTimeoutPostClient(),
+        )
+    assert result.executed is None
+    assert "genuinely UNKNOWN" in result.detail
+
+
+async def test_execute_approved_action_create_calendar_event_external_succeeds_with_a_real_fake_google_response(pool, user_id):
+    fake_client = _FakePostClient(
+        body={"id": "evt-1", "htmlLink": "https://calendar.google.com/event?eid=evt-1", "status": "confirmed"}
+    )
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_CALENDAR_EVENT_EXTERNAL, payload=_VALID_CALENDAR_PAYLOAD,
+            user_id=user_id, approved_by_user_id=user_id, google_access_token="fake-access-token", http_client=fake_client,
+        )
+    assert result.executed is True
+    assert "evt-1" in result.detail
+    url, body, headers = fake_client.calls[0]
+    assert url == "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+    assert body == {
+        "summary": "vendor call",
+        "start": {"dateTime": "2026-09-01T10:00:00+00:00"},
+        "end": {"dateTime": "2026-09-01T11:00:00+00:00"},
+        "attendees": [{"email": "vendor@example.com"}],
+    }
+    assert headers["Authorization"] == "Bearer fake-access-token"
+
+
 # --- Real, live capstone tests (Rule 5) ---
 
 
@@ -681,6 +808,83 @@ async def test_execute_approved_action_archive_and_label_email_a_real_genuine_mo
         await _cleanup_real_gmail_messages_matching(pool, real_user_id, marker)
 
 
+async def test_execute_approved_action_create_calendar_event_external_a_real_genuine_booking_via_google_calendar(pool):
+    """The real capstone for `CREATE_CALENDAR_EVENT_EXTERNAL` (`DEC-
+    151`): a genuine, human-approved booking through Google Calendar's
+    real, live API v3 against this project's own dedicated sandbox
+    account (`quorum.dev.sandbox@gmail.com`, `DEC-139`) -- inviting the
+    sandbox account ITSELF (never a real, uninvolved third party, per
+    Rule 5), using a real access token resolved from the real POOL
+    before this call, exactly like the `SEND_EMAIL` capstone above.
+
+    Unlike a real, sent Gmail message (which can never be un-sent), a
+    real Google Calendar event genuinely CAN be cleaned up afterward --
+    this test does so directly against the real API, confirming both
+    the real create AND the real delete succeed, never leaving debris
+    in the real, live sandbox calendar."""
+    if not _HAS_REAL_GOOGLE_CONFIG:
+        pytest.skip("no real Google OAuth config in this environment")
+
+    from quorum_backend.auth.google_token_store import get_valid_google_access_token
+
+    settings = get_settings()
+    real_user_id = await _real_sandbox_user_id(pool)
+    if real_user_id is None:
+        pytest.skip("no real, live Google token stored for the real sandbox account (see DEC-139)")
+
+    access_token = await get_valid_google_access_token(
+        pool, internal_user_id=real_user_id, client_id=settings.google_oauth_client_id,
+        client_secret=settings.google_oauth_client_secret, encryption_key=settings.google_token_encryption_key,
+    )
+    marker = f"Real Quorum calendar execution test {uuid.uuid4()}"
+    start = datetime.now(timezone.utc).replace(microsecond=0)
+    end = start.replace(hour=(start.hour + 1) % 24)
+
+    real_event_id: str | None = None
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client, pool.acquire() as conn:
+            result = await execute_approved_action(
+                conn,
+                action_type=ActionType.CREATE_CALENDAR_EVENT_EXTERNAL,
+                payload={
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "title": marker,
+                    "has_external_invitee": True,
+                    "invitee_email": _SANDBOX_EMAIL,
+                },
+                user_id=real_user_id,
+                approved_by_user_id=real_user_id,
+                google_access_token=access_token,
+                http_client=client,
+            )
+            assert result.executed is True
+            assert "event_id" in result.detail
+
+            # Real, live follow-up GET -- proves a real event genuinely
+            # exists on the real calendar, not just that this module
+            # believes a `200` happened.
+            real_event_id = result.detail.split("event_id=")[1].split(",")[0].strip("'")
+            get_response = await client.get(
+                f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{real_event_id}",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            assert get_response.status_code == 200
+            real_event = get_response.json()
+            assert real_event["summary"] == marker
+            assert any(a.get("email") == _SANDBOX_EMAIL for a in real_event.get("attendees", []))
+    finally:
+        if real_event_id is not None:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                delete_response = await client.delete(
+                    f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{real_event_id}",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+                assert delete_response.status_code in (200, 204), (
+                    f"cleanup's own real Calendar delete call failed: {delete_response.text}"
+                )
+
+
 async def _poll_for_real_label_state(
     client: httpx.AsyncClient, access_token: str, message_id: str, *, present: str | None = None, absent: str | None = None,
     attempts: int = 10, delay_seconds: float = 1.0,
@@ -779,11 +983,11 @@ async def test_execute_approved_action_is_honest_about_every_genuinely_unimpleme
 
 async def test_execute_approved_action_create_calendar_event_external_also_hits_the_real_s3_backstop(pool, user_id):
     """The real, structural benefit of hoisting the S3 check (DEC-142
-    review finding H2): `CREATE_CALENDAR_EVENT_EXTERNAL` has no real
-    execution branch at all yet (Phase 5), but it is ALSO real
-    `Stakes.S3` -- a future session adding its own execution branch
-    gets this same real backstop automatically, with nothing to
-    remember to re-add."""
+    review finding H2), still proven true now that `CREATE_CALENDAR_
+    EVENT_EXTERNAL` has a real execution branch (`DEC-151`): the
+    backstop runs BEFORE that branch is ever reached, for the exact
+    same reason it always has -- `CREATE_CALENDAR_EVENT_EXTERNAL` is
+    real `Stakes.S3`, checked once, structurally, for every S3 type."""
     async with pool.acquire() as conn:
         result = await execute_approved_action(
             conn, action_type=ActionType.CREATE_CALENDAR_EVENT_EXTERNAL, payload={}, user_id=user_id,

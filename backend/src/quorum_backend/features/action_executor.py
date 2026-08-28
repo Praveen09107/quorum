@@ -8,20 +8,26 @@ had ever carried out a Gate-approved `ActionProposal`'s real effect --
 every layer built so far (all 5 agents, the Gate, negotiation, the
 drainer) stopped at producing a real, verified decision.
 
-SIX REAL ACTION TYPES ARE NOW GENUINELY, SAFELY EXECUTABLE --
+SEVEN REAL ACTION TYPES ARE NOW GENUINELY, SAFELY EXECUTABLE --
 `CREATE_TASK`, `LOG_EXPENSE` (`DEC-128`), `SEND_EMAIL`/`ARCHIVE_EMAIL`/
 `LABEL_EMAIL` (`DEC-142`, real Gmail API calls, using Phase 3's stored
-token), and `UPDATE_BUDGET` (`DEC-148`, a real, direct `users.
+token), `UPDATE_BUDGET` (`DEC-148`, a real, direct `users.
 monthly_budget_limit` write, migration `0015`, closing the exact gap
 this docstring's own earlier version named -- "no `budgets`-ceiling
 table exists anywhere in this schema" -- by adding the real, small
-column that gap actually needed, not a separate table). Confirmed by
+column that gap actually needed, not a separate table), and
+`CREATE_CALENDAR_EVENT_EXTERNAL` (`DEC-151`, Phase 5, a real Google
+Calendar API call, also using Phase 3's stored token). Confirmed by
 checking every other real `ActionType`'s real execution target before
 writing a line of code:
-  - `CREATE_CALENDAR_EVENT_LOCAL`/`_EXTERNAL` have no real execution
-    target either: no `calendar_events` table exists anywhere in this
-    schema, and `_EXTERNAL` would additionally need a real Google
-    Calendar API call -- real, external, Rule-5-gated scope for Phase 5.
+  - `CREATE_CALENDAR_EVENT_LOCAL` still has no real execution target:
+    no `calendar_events` table exists anywhere in this schema, and a
+    real local event's own ground truth genuinely belongs on-device
+    (the mobile `device_calendar` integration, `mobile/lib/features/
+    calendar_sync.dart`), not server-side -- a real, deliberate Phase 5
+    scope boundary, not an oversight; see this docstring's own
+    `CREATE_CALENDAR_EVENT_EXTERNAL` section below for why only the
+    external case genuinely needs a server-side Google API call at all.
   - `UPDATE_TASK`/`UPDATE_APPLICATION_STATUS` are never produced by any
     real code path that reaches this function yet.
   - `CREATE_NOTE` has no real execution target either: no `notes` table
@@ -64,6 +70,37 @@ REAL GMAIL API SHAPES, confirmed live against the real sandbox account
   `{"removeLabelIds": ["INBOX"]}` (real archive) or
   `{"addLabelIds": [label_id]}` (real label) both return
   `200 {"id","threadId","labelIds"}` with the real, updated label set.
+
+REAL GOOGLE CALENDAR API SHAPES, confirmed live against the real
+sandbox account (`quorum.dev.sandbox@gmail.com`) before writing this
+module's own `CREATE_CALENDAR_EVENT_EXTERNAL` branch (`DEC-151`) -- a
+real test event was created with the sandbox account itself as the
+invitee (to avoid emailing a real, uninvolved person) and then really
+deleted afterward as cleanup, confirming the full create-then-verify-
+then-clean-up cycle works, not just the create call in isolation:
+- `POST https://www.googleapis.com/calendar/v3/calendars/primary/
+  events` with `{"summary": title, "start": {"dateTime": iso}, "end":
+  {"dateTime": iso}, "attendees": [{"email": invitee_email}]}` returns
+  a real `200 {"id", "htmlLink", "status": "confirmed", "attendees":
+  [...], ...}`.
+- `DELETE .../events/{event_id}` returns a real `204 No Content` on
+  success (used only for this session's own live verification cleanup,
+  not by any code in this module -- Quorum never deletes a real
+  external booking on a user's behalf today).
+
+A REAL, DISCLOSED CALLER GAP FOR `CREATE_CALENDAR_EVENT_EXTERNAL`,
+matching the exact "real execution capability, no real caller path
+yet" pattern `SEND_EMAIL` already disclosed before `DEC-142`:
+`retry_queue_drainer.py`'s own calendar domain translation always sets
+`has_external_invitee=False` (a real, disclosed, deliberate choice --
+a negotiation option's free text never names a real external
+attendee's email address, and guessing one would be a real
+fabrication), so no real code path in this backend can produce a
+`CREATE_CALENDAR_EVENT_EXTERNAL` proposal today. This branch's own
+real execution is genuinely correct and live-verified regardless --
+Quorum's own architecture separates "can this be carried out safely"
+from "does anything ask for it yet" throughout, and this is another
+real instance of that same separation, not a mistake.
 
 REAL, DISCLOSED SCOPE BOUNDARIES for `ARCHIVE_EMAIL`/`LABEL_EMAIL`: no
 agent or route in this backend has ever proposed either action type
@@ -207,6 +244,14 @@ _MAX_BUDGET_LIMIT = 99_999_999.99
 # outright rather than interpolated unchecked into a real URL path.
 _REAL_GMAIL_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
+# No `calendar_ingestion.py` module exists in this codebase (unlike
+# Gmail's own `email_ingestion.py::GMAIL_MESSAGES_URL`) -- Calendar has
+# no real polling/ingestion counterpart yet (`DEC-151`'s own top-of-
+# file docstring section explains why only the external-booking case
+# needs a real Google Calendar API call at all), so this constant is
+# defined here directly rather than imported from a sibling module.
+_GOOGLE_CALENDAR_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+
 
 @dataclass(frozen=True)
 class ExecutionResult:
@@ -241,46 +286,55 @@ async def execute_approved_action(
     google_access_token: str | None = None,
     http_client: httpx.AsyncClient | None = None,
 ) -> ExecutionResult:
-    """Real, live writes for the six real, safely-executable action
+    """Real, live writes for the seven real, safely-executable action
     types; a real, honest non-execution for every other real
     `ActionType`. Runs on the SAME connection/transaction the caller is
     already inside for `CREATE_TASK`/`LOG_EXPENSE`/`UPDATE_BUDGET`
     (matching `retry_queue_drainer.py`'s own atomicity discipline) --
-    the three real Gmail-executing branches never touch `conn` at all;
-    see this module's own top-of-file docstring for why.
+    the four real Google-API-calling branches (three Gmail, one
+    Calendar) never touch `conn` at all; see this module's own
+    top-of-file docstring for why.
 
     `approved_by_user_id`/`google_access_token`/`http_client` are all
     optional, defaulting to `None` -- the one real caller today
-    (`retry_queue_drainer.py`) never produces a real Gmail-executable
-    action type (email is not a real negotiation domain), so it never
+    (`retry_queue_drainer.py`) never produces a real Gmail- or
+    Calendar-executable action type (neither email nor an external
+    calendar booking is a real negotiation domain today), so it never
     needs to pass them; a real, honest `executed=False` is returned for
-    `SEND_EMAIL`/`ARCHIVE_EMAIL`/`LABEL_EMAIL` when they're genuinely
-    needed but missing, never a crash from an unexpected `None`.
+    `SEND_EMAIL`/`ARCHIVE_EMAIL`/`LABEL_EMAIL`/`CREATE_CALENDAR_EVENT_
+    EXTERNAL` when they're genuinely needed but missing, never a crash
+    from an unexpected `None`.
 
     A REAL, VERIFIED SAFETY PROPERTY THIS FUNCTION RELIES ON FOR THREE
-    OF ITS SIX REAL BRANCHES, STATED EXPLICITLY RATHER THAN LEFT
+    OF ITS SEVEN REAL BRANCHES, STATED EXPLICITLY RATHER THAN LEFT
     IMPLICIT: `CREATE_TASK`/`LOG_EXPENSE` are real `Stakes.S1`, and
     `LABEL_EMAIL` is real `Stakes.S0` (confirmed against `router.
     STAKES_TABLE`) -- `gate/orchestration.py`'s own real state machine
     means Stage B never runs for S0/S1, so `payload` here is always the
     original, already-validated `proposal.payload` for those three.
-    `SEND_EMAIL` is real `Stakes.S3` and is checked once, structurally,
-    before every branch -- see `approved_by_user_id` above and this
-    module's own top-of-file docstring.
+    `SEND_EMAIL`/`CREATE_CALENDAR_EVENT_EXTERNAL` are real `Stakes.S3`
+    and are checked once, structurally, before every branch -- see
+    `approved_by_user_id` above and this module's own top-of-file
+    docstring.
 
-    A REAL, DIFFERENT, WEAKER GUARANTEE FOR THE REMAINING TWO --
+    A REAL, DIFFERENT, WEAKER GUARANTEE FOR THE REMAINING THREE --
     `ARCHIVE_EMAIL` (S1, included above for completeness) aside,
-    `UPDATE_BUDGET` is real `Stakes.S2`: Stage B DOES run for it (the
-    real Judge, never the Critic -- `run_stage_b()` only calls the
-    Critic for S3), and `orchestration.py`'s own real `review()` can
-    turn a Judge `decision="revise"` into a final `approve` carrying
-    that Judge's own `revised_payload` -- a real `dict` with no schema
-    guarantee beyond being one. `payload` reaching the `UPDATE_BUDGET`
-    branch below is therefore NOT always the original, pre-Gate-
-    validated value; that branch carries its own real, independent
-    bound checks as its actual defense (a CRITICAL-tier review finding,
-    `DEC-148`), not a restatement of a guarantee this docstring no
-    longer makes for it. Still handled defensively below regardless (a real
+    `UPDATE_BUDGET` (S2) and `CREATE_CALENDAR_EVENT_EXTERNAL` (S3) both
+    genuinely reach Stage B (S0/S1 skip it entirely; S2/S3 both run the
+    real Judge, and only S3 also runs the real Critic --
+    `run_stage_b()`'s own real logic, confirmed directly), and
+    `orchestration.py`'s own real `review()` can turn a Judge
+    `decision="revise"` into a final `approve` carrying that Judge's
+    own `revised_payload` -- a real `dict` with no schema guarantee
+    beyond being one, for S2 exactly as much as for S3. `payload`
+    reaching either the `UPDATE_BUDGET` or `CREATE_CALENDAR_EVENT_
+    EXTERNAL` branch below is therefore NOT always the original,
+    pre-Gate-validated value; each branch carries its own real,
+    independent checks as its actual defense (a CRITICAL-tier review
+    finding for `UPDATE_BUDGET`, `DEC-148`; the same discipline applied
+    up front for `CREATE_CALENDAR_EVENT_EXTERNAL`, `DEC-151`), not a
+    restatement of a guarantee this docstring no longer makes for
+    either. Still handled defensively below regardless (a real
     `KeyError`/`TypeError`/`ValueError` returns a real, honest
     `executed=False` rather than an unhandled exception)."""
     try:
@@ -345,6 +399,55 @@ async def _real_gmail_post(
         executed=True,
         detail=f"Real Gmail {action_type.value} call succeeded (message_id={real_message_id!r}); "
         f"real, current labelIds={real_label_ids!r}.",
+    )
+
+
+async def _real_google_calendar_post(
+    http_client: httpx.AsyncClient,
+    url: str,
+    body: dict,
+    *,
+    access_token: str,
+    action_type: ActionType,
+    user_id: str,
+) -> ExecutionResult:
+    """The real, Google-Calendar-side mirror of `_real_gmail_post`
+    above -- identical three-valued-outcome discipline (a transport
+    failure is genuinely UNKNOWN, never folded into `False`), against
+    the real, live-verified Google Calendar API v3 shape confirmed
+    this session (`DEC-151`, see this module's own top-of-file
+    docstring): `POST .../calendars/primary/events` returns a real
+    `200 {"id", "htmlLink", "status", "attendees", ...}` on success."""
+    try:
+        response = await http_client.post(url, json=body, headers={"Authorization": f"Bearer {access_token}"})
+    except httpx.HTTPError as exc:
+        return ExecutionResult(
+            executed=None,
+            detail=(
+                f"Real execution for {action_type.value!r} is genuinely UNKNOWN -- a transport-level failure "
+                f"happened while calling Google's real Calendar API; a real booking may or may not have gone "
+                f"through, never assume it did not: {exc}"
+            ),
+        )
+    if response.status_code != 200:
+        return ExecutionResult(
+            executed=False,
+            detail=f"Real execution for {action_type.value!r} was genuinely rejected by Google's real Calendar "
+            f"API ({response.status_code}), not carried out: {response.text}",
+        )
+    try:
+        response_body = response.json()
+    except ValueError:
+        response_body = {}
+    real_event_id = response_body.get("id", "<unknown>")
+    real_html_link = response_body.get("htmlLink", "<unknown>")
+    logger.warning(
+        "Real Google Calendar event created for user_id=%s event_id=%s htmlLink=%s",
+        user_id, real_event_id, real_html_link,
+    )
+    return ExecutionResult(
+        executed=True,
+        detail=f"Real Google Calendar event created (event_id={real_event_id!r}, htmlLink={real_html_link!r}).",
     )
 
 
@@ -550,6 +653,56 @@ async def _execute_approved_action_unsafe(
 
         return await _real_gmail_post(
             http_client, f"{GMAIL_MESSAGES_URL}/{message_id}/modify", modify_body,
+            access_token=google_access_token, action_type=action_type, user_id=user_id,
+        )
+
+    if action_type == ActionType.CREATE_CALENDAR_EVENT_EXTERNAL:
+        if google_access_token is None:
+            return ExecutionResult(executed=False, detail="Real CREATE_CALENDAR_EVENT_EXTERNAL execution skipped -- no real Google access token was provided to this call.")
+        if http_client is None:
+            return ExecutionResult(executed=False, detail="Real CREATE_CALENDAR_EVENT_EXTERNAL execution skipped -- no real HTTP client was provided to this call.")
+
+        # Real payload fields checked for real, sane types BEFORE any
+        # network call -- see this module's own UPDATE_BUDGET branch
+        # docstring for why an S3 payload reaching this function is not
+        # always `agents/calendar_agent.py::build_event_proposal()`'s
+        # own already-validated shape (a Judge-authored revised_payload
+        # is a real dict with no schema guarantee beyond that). Unlike
+        # SEND_EMAIL's raw MIME headers or the Gmail message/label ids
+        # interpolated into a real URL path, none of these three fields
+        # are ever used anywhere but a JSON request body here, so there
+        # is no real header- or path-injection vector to guard against
+        # -- Google's own real Calendar API is the actual source of
+        # truth for whether a title/email/datetime is well-formed,
+        # matching this module's own "let the real system reject real
+        # hostile content" precedent rather than inventing a phantom
+        # check for a vector that doesn't exist on this path.
+        title = payload["title"]
+        invitee_email = payload["invitee_email"]
+        start_iso = payload["start"]
+        end_iso = payload["end"]
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError("real CREATE_CALENDAR_EVENT_EXTERNAL title must be a real, non-empty string")
+        if not isinstance(invitee_email, str) or not invitee_email.strip():
+            raise ValueError("real CREATE_CALENDAR_EVENT_EXTERNAL invitee_email must be a real, non-empty string")
+        if not isinstance(start_iso, str) or not isinstance(end_iso, str):
+            raise ValueError("real CREATE_CALENDAR_EVENT_EXTERNAL start/end must be real ISO datetime strings")
+        try:
+            datetime.fromisoformat(start_iso)
+            datetime.fromisoformat(end_iso)
+        except ValueError as exc:
+            raise ValueError(
+                f"real CREATE_CALENDAR_EVENT_EXTERNAL start/end are not real, parseable ISO datetimes: {exc}"
+            ) from exc
+
+        body = {
+            "summary": title,
+            "start": {"dateTime": start_iso},
+            "end": {"dateTime": end_iso},
+            "attendees": [{"email": invitee_email}],
+        }
+        return await _real_google_calendar_post(
+            http_client, _GOOGLE_CALENDAR_EVENTS_URL, body,
             access_token=google_access_token, action_type=action_type, user_id=user_id,
         )
 

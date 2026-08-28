@@ -3389,4 +3389,26 @@ The review also independently re-derived the `uncertain_no_data` exclusion formu
 
 ---
 
-*Next entry: DEC-151*
+## DEC-151: real `CREATE_CALENDAR_EVENT_EXTERNAL` execution -- Phase 5's real, narrow cloud slice
+
+**CRITICAL tier** -- touches `action_executor.py`, a real S3 external-irreversible-action path, per `CLAUDE.md` Rule 6, the same tier `DEC-142`'s original Gmail execution work carried.
+
+**Direction confirmed directly by Preethish** (`AskUserQuestion`, "Phase 5: real Calendar (Recommended)") as the next real implementation focus after Phase 6 closed out. Scoped deliberately narrow, matching `QUORUM_PRODUCTION_COMPLETION_PLAN.md`'s own Phase 5 language: Calendar's real ground truth belongs on-device (the already-built-but-dormant `mobile/lib/features/calendar_sync.dart`), so this session builds only the one piece that genuinely needs a server-side Google API call -- inviting a real external attendee -- and deliberately defers the on-device `device_calendar` wiring and the server-side `CalendarAdapter` bridge question until a real device is reconnected (both real, open, disclosed items, not abandoned).
+
+**Real API shapes confirmed live before writing any code** (Rule: never assume a spec's API shape, verify it), against the real sandbox account (`quorum.dev.sandbox@gmail.com`): `POST https://www.googleapis.com/calendar/v3/calendars/primary/events` with `{"summary", "start": {"dateTime"}, "end": {"dateTime"}, "attendees": [{"email"}]}` returns a real `200 {"id", "htmlLink", "status": "confirmed", "attendees": [...]}`; `DELETE .../events/{event_id}` returns a real `204`. A real test event was created (sandbox account as its own invitee, never a real uninvolved third party, per Rule 5) and then really deleted, confirming the full create-verify-delete cycle works before any implementation code existed.
+
+**A real, necessary schema gap found and closed first:** `agents/calendar_agent.py::build_event_proposal()` never carried a real external attendee email at all -- `has_external_invitee` was a bare boolean with nothing real to invite. `invitee_email` is now a real, required parameter whenever `has_external_invitee=True`, raising `ValueError` loud (never fabricated, never guessed) when missing -- the same "never invent what wasn't genuinely provided" discipline `negotiation/downstream_translation.py` already applies to this exact domain.
+
+**What was built:** a new `CREATE_CALENDAR_EVENT_EXTERNAL` branch in `action_executor.py`, mirroring `_real_gmail_post`'s established three-valued-outcome pattern (`_real_google_calendar_post`: a transport failure is genuinely `None`/unknown, a non-200 is a definite `False`, a real `200` is a definite `True` plus a durable `logger.warning()`). Payload fields (`title`/`invitee_email`/`start`/`end`) are checked for real, sane types and parseable ISO datetimes before any network call -- the same defensive posture `UPDATE_BUDGET` established at `DEC-148` for a Judge-revised S3/S2 payload that may not match the pre-Gate-validated shape. No header- or path-injection guard was added for these fields (unlike `SEND_EMAIL`'s MIME headers or the Gmail message/label ids in a URL path) because none of them are ever used anywhere but a JSON request body here -- Google's own real API is the correct source of truth for a malformed title/email/datetime, not a phantom check for a vector that doesn't exist on this path. The existing, structural S3 human-approval backstop (`DEC-142`) already covered this action type with zero new code, exactly as designed.
+
+**A real, disclosed caller gap, matching `SEND_EMAIL`'s own precedent exactly:** `retry_queue_drainer.py`'s calendar domain translation always sets `has_external_invitee=False` (a negotiation option's free text never names a real external attendee's email, and guessing one would be fabrication), so no real code path in this backend can produce a `CREATE_CALENDAR_EVENT_EXTERNAL` proposal today. Real execution capability now exists and is live-verified; no real caller exists yet. Disclosed, not hidden -- the same honest gap this project already lived with for `SEND_EMAIL` between `DEC-142` and today.
+
+**Tests:** `test_calendar_agent.py` -- one existing test updated for the new required parameter, one new fail-loud-without-email test, one new graph-invocation-with-a-real-invitee test (10 total, all passing). `test_action_executor.py` -- 9 new fake-client unit tests covering missing-token/missing-client refusals, a malformed payload, a blank `invitee_email`, an unparseable datetime, a definite Google rejection, a genuine transport failure, and a real success case asserting the exact real request body sent; plus one real, live capstone test (`test_execute_approved_action_create_calendar_event_external_a_real_genuine_booking_via_google_calendar`) that creates a real event via `execute_approved_action`, verifies it with a real follow-up `GET` against Google's live API, and really deletes it as cleanup -- confirmed to run (not skip) against the real sandbox account, all passing.
+
+**Verified live:** `ruff check backend` clean. See `STATUS_INDEX.md` for the current, live count rather than restating one here.
+
+**Affects:** `backend/src/quorum_backend/agents/calendar_agent.py`, `backend/src/quorum_backend/features/action_executor.py`, `backend/src/quorum_backend/features/retry_queue_drainer.py`, `backend/tests/test_calendar_agent.py`, `backend/tests/test_action_executor.py`, this log, `STATUS_INDEX.md`.
+
+---
+
+*Next entry: DEC-152*

@@ -33,10 +33,21 @@ BUDGET` now ALSO has a real execution target (`DEC-148`, `users.
 monthly_budget_limit`, migration `0015`) and genuinely executes through
 this exact call site -- the real `finance` domain's own translated
 `update_budget` action is the one real, live way this action type is
-reachable in production today. Both real calendar types still have no
-real execution target at all (Phase 5's own separate, Rule-5-gated
-scope). Never called for `reject`/`revise`/`escalate_to_human` -- only
-a genuine `approve` verdict.
+reachable in production today. `CREATE_CALENDAR_EVENT_EXTERNAL` now
+ALSO has a real execution target (`DEC-151`, Phase 5, a real Google
+Calendar API call) -- but, for the exact same reason as the three
+Gmail-executing types above, this module's own real `calendar` domain
+translation (`validate_and_build_calendar_proposal()` below) always
+sets `has_external_invitee=False`, since a real negotiation option's
+own free text never names a real external attendee's email address,
+and guessing one would be a real fabrication (`CLAUDE.md` Rule 4 and
+this module's own broader "never invent what wasn't genuinely
+provided" discipline). This drainer can therefore only ever produce
+`CREATE_CALENDAR_EVENT_LOCAL` -- which still has no real execution
+target at all (real local-event ground truth belongs on-device, per
+`action_executor.py`'s own top-of-file docstring) -- never the real,
+now-executable `_EXTERNAL` variant. Never called for `reject`/
+`revise`/`escalate_to_human` -- only a genuine `approve` verdict.
 
 STAGE A SCOPE, A REAL, DELIBERATE, PREETHISH-CONFIRMED CHOICE (`DEC-127`):
 `availability_check` needs a real ground-truth adapter this backend
