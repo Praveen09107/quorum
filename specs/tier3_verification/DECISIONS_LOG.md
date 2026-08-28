@@ -3385,6 +3385,8 @@ The review also independently re-derived the `uncertain_no_data` exclusion formu
 
 **Verified live:** `ruff check backend` clean. See `STATUS_INDEX.md` for the current, live count rather than restating one here.
 
+**Deployed to production** -- this closes a real, live, currently-deployed cross-user data-isolation bug, so it's shipped rather than left merged-but-undeployed, per the `DEC-134` lesson. Revision `quorum-backend-00023-8sm`, image tag `dec150-20260828`. Live-verified: `GET /health` → `200 {"status":"ok"}`.
+
 **Affects:** `backend/src/quorum_backend/features/trust_digest.py`, `backend/src/quorum_backend/features/honesty_log.py`, `backend/src/quorum_backend/main.py`, `backend/tests/test_trust_digest.py`, `backend/tests/test_main.py`, this log, `STATUS_INDEX.md`.
 
 ---
@@ -3415,6 +3417,8 @@ The review also independently re-derived the `uncertain_no_data` exclusion formu
 **Tests:** `test_calendar_agent.py` -- one existing test updated for the new required parameter, one new fail-loud-without-email test, one new graph-invocation-with-a-real-invitee test (10 total, all passing). `test_action_executor.py` -- 11 new fake-client unit tests (9 original plus the 2 review-driven regression tests above) plus one real, live capstone test (`test_execute_approved_action_create_calendar_event_external_a_real_genuine_booking_via_google_calendar`) that creates a real event via `execute_approved_action`, verifies it with a real follow-up `GET` against Google's live API, and really deletes it as cleanup -- confirmed to run (not skip) against the real sandbox account, all passing.
 
 **Verified live:** `ruff check backend` clean. Full backend suite (pre-review-fixes): 684 passed, 7 failed + 5 errors, all confirmed pre-existing Gemini-429-quota flakiness and its cascading pool-exhaustion fallout, none touching this session's files. See `STATUS_INDEX.md` for the current, live count rather than restating one here.
+
+**Deployed to production** -- real, live-verified execution capability, even without a real caller yet (the same "ship the real capability, disclose the caller gap honestly" pattern `SEND_EMAIL` already established at `DEC-142`), so it's shipped rather than left merged-but-undeployed, per the `DEC-134` lesson. Revision `quorum-backend-00024-mqm`, image tag `dec151-20260828`. Live-verified: `GET /health` → `200 {"status":"ok"}`.
 
 **Affects:** `backend/src/quorum_backend/agents/calendar_agent.py`, `backend/src/quorum_backend/features/action_executor.py`, `backend/src/quorum_backend/features/retry_queue_drainer.py`, `backend/tests/test_calendar_agent.py`, `backend/tests/test_action_executor.py`, this log, `STATUS_INDEX.md`.
 
