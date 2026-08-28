@@ -276,6 +276,21 @@ def _reject_malformed_gmail_id(value: str, *, field_name: str) -> None:
         raise ValueError(f"Real {field_name!r} value {value!r} does not look like a real Gmail id -- not carried out.")
 
 
+def _truncate_for_error(value: str, *, limit: int = 200) -> str:
+    """A real, disclosed fix (CRITICAL-tier review, `DEC-151`, L1): an
+    unbounded offending value echoed straight into a real `ValueError`
+    message can amplify -- a real, malicious or malformed multi-
+    megabyte `start`/`end` string would otherwise produce an equally
+    huge `ExecutionResult.detail`. Today's one real caller (`retry_
+    queue_drainer.py`) discards `.detail` on a non-executed result, so
+    the real impact is memory-only, but any future caller persisting
+    `detail` onto `action_events` would amplify straight into Postgres.
+    Truncated here rather than left for a future caller to discover."""
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit]}... (truncated, {len(value)} chars total)"
+
+
 async def execute_approved_action(
     conn: asyncpg.Connection,
     *,
@@ -305,38 +320,44 @@ async def execute_approved_action(
     EXTERNAL` when they're genuinely needed but missing, never a crash
     from an unexpected `None`.
 
-    A REAL, VERIFIED SAFETY PROPERTY THIS FUNCTION RELIES ON FOR THREE
+    A REAL, VERIFIED SAFETY PROPERTY THIS FUNCTION RELIES ON FOR FOUR
     OF ITS SEVEN REAL BRANCHES, STATED EXPLICITLY RATHER THAN LEFT
-    IMPLICIT: `CREATE_TASK`/`LOG_EXPENSE` are real `Stakes.S1`, and
-    `LABEL_EMAIL` is real `Stakes.S0` (confirmed against `router.
+    IMPLICIT, CORRECTED HERE (DEC-151 CRITICAL-tier review, M1 -- an
+    earlier version of this exact paragraph miscounted this same
+    grouping, and separately implied the S3 backstop answers the
+    payload-trust question for `SEND_EMAIL`, which it does not: that
+    backstop is about human APPROVAL, never about payload PROVENANCE):
+    `CREATE_TASK`/`LOG_EXPENSE`/`ARCHIVE_EMAIL` are real `Stakes.S1`,
+    and `LABEL_EMAIL` is real `Stakes.S0` (confirmed against `router.
     STAKES_TABLE`) -- `gate/orchestration.py`'s own real state machine
     means Stage B never runs for S0/S1, so `payload` here is always the
-    original, already-validated `proposal.payload` for those three.
-    `SEND_EMAIL`/`CREATE_CALENDAR_EVENT_EXTERNAL` are real `Stakes.S3`
-    and are checked once, structurally, before every branch -- see
-    `approved_by_user_id` above and this module's own top-of-file
-    docstring.
+    original, already-validated `proposal.payload` for these four.
 
     A REAL, DIFFERENT, WEAKER GUARANTEE FOR THE REMAINING THREE --
-    `ARCHIVE_EMAIL` (S1, included above for completeness) aside,
-    `UPDATE_BUDGET` (S2) and `CREATE_CALENDAR_EVENT_EXTERNAL` (S3) both
-    genuinely reach Stage B (S0/S1 skip it entirely; S2/S3 both run the
-    real Judge, and only S3 also runs the real Critic --
-    `run_stage_b()`'s own real logic, confirmed directly), and
-    `orchestration.py`'s own real `review()` can turn a Judge
+    `UPDATE_BUDGET` (S2), `SEND_EMAIL` (S3), and `CREATE_CALENDAR_EVENT_
+    EXTERNAL` (S3) all genuinely reach Stage B (S0/S1 skip it entirely;
+    S2/S3 both run the real Judge, and only S3 also runs the real
+    Critic -- `run_stage_b()`'s own real logic, confirmed directly),
+    and `orchestration.py`'s own real `review()` can turn a Judge
     `decision="revise"` into a final `approve` carrying that Judge's
     own `revised_payload` -- a real `dict` with no schema guarantee
     beyond being one, for S2 exactly as much as for S3. `payload`
-    reaching either the `UPDATE_BUDGET` or `CREATE_CALENDAR_EVENT_
-    EXTERNAL` branch below is therefore NOT always the original,
-    pre-Gate-validated value; each branch carries its own real,
-    independent checks as its actual defense (a CRITICAL-tier review
-    finding for `UPDATE_BUDGET`, `DEC-148`; the same discipline applied
-    up front for `CREATE_CALENDAR_EVENT_EXTERNAL`, `DEC-151`), not a
-    restatement of a guarantee this docstring no longer makes for
-    either. Still handled defensively below regardless (a real
-    `KeyError`/`TypeError`/`ValueError` returns a real, honest
-    `executed=False` rather than an unhandled exception)."""
+    reaching any of these three branches below is therefore NOT always
+    the original, pre-Gate-validated value; each branch carries its own
+    real, independent checks as its actual defense (a CRITICAL-tier
+    review finding for `UPDATE_BUDGET`, `DEC-148`; a real header-
+    injection fix for `SEND_EMAIL`, `DEC-142`; the same discipline
+    applied up front for `CREATE_CALENDAR_EVENT_EXTERNAL`, `DEC-151`),
+    not a restatement of a guarantee this docstring no longer makes for
+    any of them. The real, structural, once-checked S3 backstop
+    (`approved_by_user_id` above) is a SEPARATE, additional guarantee
+    for `SEND_EMAIL`/`CREATE_CALENDAR_EVENT_EXTERNAL` specifically --
+    it establishes that a real human approved the DECISION to act, not
+    that the resulting PAYLOAD is trustworthy; both guarantees are
+    needed, and neither substitutes for the other. Still handled
+    defensively below regardless (a real `KeyError`/`TypeError`/
+    `ValueError` returns a real, honest `executed=False` rather than an
+    unhandled exception)."""
     try:
         return await _execute_approved_action_unsafe(
             conn,
@@ -669,14 +690,24 @@ async def _execute_approved_action_unsafe(
         # own already-validated shape (a Judge-authored revised_payload
         # is a real dict with no schema guarantee beyond that). Unlike
         # SEND_EMAIL's raw MIME headers or the Gmail message/label ids
-        # interpolated into a real URL path, none of these three fields
+        # interpolated into a real URL path, none of these four fields
         # are ever used anywhere but a JSON request body here, so there
-        # is no real header- or path-injection vector to guard against
-        # -- Google's own real Calendar API is the actual source of
-        # truth for whether a title/email/datetime is well-formed,
-        # matching this module's own "let the real system reject real
-        # hostile content" precedent rather than inventing a phantom
-        # check for a vector that doesn't exist on this path.
+        # is no real header- or path-injection vector to guard against.
+        #
+        # A REAL, DISCLOSED RESIDUAL RISK, NOT ELIMINATED HERE, FOUND BY
+        # CRITICAL-TIER REVIEW (`DEC-151`, M4): Google's own real API is
+        # the correct source of truth for whether `title`/`invitee_
+        # email` are syntactically well-formed, but it has no way to
+        # judge whether they are LEGITIMATE -- a Judge-authored, real
+        # `revised_payload` could carry a syntactically valid but
+        # attacker-chosen `invitee_email` and an attacker-influenced
+        # `title`, and this branch would genuinely send a real Google
+        # Calendar invitation to that address with that subject line,
+        # from the real user's own Google account. What actually holds
+        # the line against that is the real, structural S3 human-
+        # approval backstop checked once above (`approved_by_user_id`),
+        # never a format check -- disclosed explicitly here rather than
+        # implying `invitee_email`'s free-form nature is itself safe.
         title = payload["title"]
         invitee_email = payload["invitee_email"]
         start_iso = payload["start"]
@@ -688,12 +719,42 @@ async def _execute_approved_action_unsafe(
         if not isinstance(start_iso, str) or not isinstance(end_iso, str):
             raise ValueError("real CREATE_CALENDAR_EVENT_EXTERNAL start/end must be real ISO datetime strings")
         try:
-            datetime.fromisoformat(start_iso)
-            datetime.fromisoformat(end_iso)
+            real_start = datetime.fromisoformat(start_iso)
+            real_end = datetime.fromisoformat(end_iso)
         except ValueError as exc:
             raise ValueError(
-                f"real CREATE_CALENDAR_EVENT_EXTERNAL start/end are not real, parseable ISO datetimes: {exc}"
+                f"real CREATE_CALENDAR_EVENT_EXTERNAL start/end are not real, parseable ISO datetimes "
+                f"(start={_truncate_for_error(start_iso)!r}, end={_truncate_for_error(end_iso)!r}): {exc}"
             ) from exc
+        # A real, disclosed gap fixed here, found by CRITICAL-tier
+        # review (`DEC-151`, L3): a real, timezone-NAIVE ISO string
+        # parses without error, but this branch's own `body` below
+        # sends it as a bare `dateTime` with no `timeZone` sibling --
+        # Google's own real interpretation of that is genuinely
+        # ambiguous. `agents/calendar_agent.py::build_event_proposal()`'s
+        # own real payload always originates from a tz-aware datetime's
+        # own `.isoformat()` (every real caller uses `datetime.now(
+        # timezone.utc)` or equivalent) -- reject anything that reaches
+        # this branch without one, the same "don't trust a Judge-
+        # revised shape" discipline this branch already applies above.
+        if real_start.tzinfo is None or real_end.tzinfo is None:
+            raise ValueError(
+                "real CREATE_CALENDAR_EVENT_EXTERNAL start/end must be real, timezone-aware ISO datetimes"
+            )
+        # A real, disclosed gap fixed here, found by CRITICAL-tier
+        # review (`DEC-151`, M2, matching that same review's own DEC-148
+        # precedent): `retry_queue_drainer.py::validate_and_build_
+        # calendar_proposal()`'s own pre-Gate check already enforces a
+        # real `end > start` for this exact domain, but a Judge-revised
+        # `revised_payload` can bypass that function entirely (see this
+        # branch's own docstring paragraph above) -- this branch's own
+        # last-line-of-defense duty means it cannot assume that upstream
+        # check already ran, the same reasoning `UPDATE_BUDGET`'s own
+        # bound check already established at `DEC-148`.
+        if real_end <= real_start:
+            raise ValueError(
+                f"real CREATE_CALENDAR_EVENT_EXTERNAL end ({real_end}) must be after start ({real_start})"
+            )
 
         body = {
             "summary": title,
@@ -701,8 +762,18 @@ async def _execute_approved_action_unsafe(
             "end": {"dateTime": end_iso},
             "attendees": [{"email": invitee_email}],
         }
+        # A real, disclosed gap fixed here, found by CRITICAL-tier
+        # review (`DEC-151`, H1): Google's real Calendar API genuinely
+        # does NOT email a real event's real attendees unless
+        # `sendUpdates` is explicitly set on the request -- omitting it
+        # (this branch's original version) silently books the event
+        # with the attendee merely recorded, never actually notified.
+        # Since this branch's entire real reason to exist is inviting a
+        # real external attendee -- not merely recording one on a
+        # calendar nobody else ever sees -- `sendUpdates=all` is a real,
+        # deliberate choice, not decoration.
         return await _real_google_calendar_post(
-            http_client, _GOOGLE_CALENDAR_EVENTS_URL, body,
+            http_client, f"{_GOOGLE_CALENDAR_EVENTS_URL}?sendUpdates=all", body,
             access_token=google_access_token, action_type=action_type, user_id=user_id,
         )
 

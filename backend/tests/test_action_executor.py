@@ -9,7 +9,7 @@ CLAUDE.md Rule 5.
 """
 import base64
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -673,7 +673,11 @@ async def test_execute_approved_action_create_calendar_event_external_succeeds_w
     assert result.executed is True
     assert "evt-1" in result.detail
     url, body, headers = fake_client.calls[0]
-    assert url == "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+    # A real, disclosed CRITICAL-tier review finding (DEC-151, H1):
+    # omitting `sendUpdates` means Google genuinely never emails a real
+    # event's real attendees -- `sendUpdates=all` is load-bearing for
+    # this branch's own stated reason to exist, not decoration.
+    assert url == "https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all"
     assert body == {
         "summary": "vendor call",
         "start": {"dateTime": "2026-09-01T10:00:00+00:00"},
@@ -681,6 +685,46 @@ async def test_execute_approved_action_create_calendar_event_external_succeeds_w
         "attendees": [{"email": "vendor@example.com"}],
     }
     assert headers["Authorization"] == "Bearer fake-access-token"
+
+
+async def test_execute_approved_action_create_calendar_event_external_a_real_end_before_start_is_refused(pool, user_id):
+    """A real, disclosed CRITICAL-tier review finding (DEC-151, M2):
+    `retry_queue_drainer.py::validate_and_build_calendar_proposal()`'s
+    own pre-Gate check already enforces `end > start` for this exact
+    domain, but a Judge-revised `revised_payload` can bypass that
+    function entirely -- this branch's own last-line-of-defense duty
+    means it must refuse an inverted real range itself, never trust
+    that the upstream check already ran."""
+    payload = {**_VALID_CALENDAR_PAYLOAD, "start": "2026-09-01T11:00:00+00:00", "end": "2026-09-01T10:00:00+00:00"}
+    fake_client = _FakePostClient()
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_CALENDAR_EVENT_EXTERNAL, payload=payload, user_id=user_id,
+            approved_by_user_id=user_id, google_access_token="fake-access-token", http_client=fake_client,
+        )
+    assert result.executed is False
+    assert "malformed" in result.detail.lower()
+    assert fake_client.calls == []
+
+
+async def test_execute_approved_action_create_calendar_event_external_a_real_timezone_naive_datetime_is_refused(pool, user_id):
+    """A real, disclosed CRITICAL-tier review finding (DEC-151, L3): a
+    real, timezone-NAIVE ISO string parses without error, but this
+    branch's own real request body sends it as a bare `dateTime` with
+    no `timeZone` sibling -- genuinely ambiguous to Google's real API.
+    `agents/calendar_agent.py::build_event_proposal()`'s own real
+    payload always originates from a tz-aware datetime, so a naive one
+    reaching this branch is never legitimate."""
+    payload = {**_VALID_CALENDAR_PAYLOAD, "start": "2026-09-01T10:00:00", "end": "2026-09-01T11:00:00"}
+    fake_client = _FakePostClient()
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_CALENDAR_EVENT_EXTERNAL, payload=payload, user_id=user_id,
+            approved_by_user_id=user_id, google_access_token="fake-access-token", http_client=fake_client,
+        )
+    assert result.executed is False
+    assert "malformed" in result.detail.lower()
+    assert fake_client.calls == []
 
 
 # --- Real, live capstone tests (Rule 5) ---
@@ -838,7 +882,15 @@ async def test_execute_approved_action_create_calendar_event_external_a_real_gen
     )
     marker = f"Real Quorum calendar execution test {uuid.uuid4()}"
     start = datetime.now(timezone.utc).replace(microsecond=0)
-    end = start.replace(hour=(start.hour + 1) % 24)
+    # A real, disclosed test bug fixed here (CRITICAL-tier review,
+    # `DEC-151`, M3): `start.replace(hour=(start.hour + 1) % 24)` never
+    # advances the real calendar DATE, so a real test run starting in
+    # the 23:00 UTC hour previously produced an `end` genuinely BEFORE
+    # `start` -- exactly the malformed shape this session's own new
+    # `end > start` check (M2) now correctly refuses. A real
+    # `timedelta` is the actual fix, not a narrower hour-wrap special
+    # case.
+    end = start + timedelta(hours=1)
 
     real_event_id: str | None = None
     try:
@@ -858,13 +910,21 @@ async def test_execute_approved_action_create_calendar_event_external_a_real_gen
                 google_access_token=access_token,
                 http_client=client,
             )
+            # A real, disclosed test bug fixed here (CRITICAL-tier
+            # review, `DEC-151`, L2): `real_event_id` is parsed
+            # immediately, BEFORE either assertion below -- if a real
+            # event were genuinely created but one of these assertions
+            # then failed, the old ordering would leave `real_event_id`
+            # at `None` and the `finally` block's own real cleanup
+            # would never run, leaking a real event into the live
+            # sandbox calendar.
+            real_event_id = result.detail.split("event_id=")[1].split(",")[0].strip("'") if result.executed else None
             assert result.executed is True
             assert "event_id" in result.detail
 
             # Real, live follow-up GET -- proves a real event genuinely
             # exists on the real calendar, not just that this module
             # believes a `200` happened.
-            real_event_id = result.detail.split("event_id=")[1].split(",")[0].strip("'")
             get_response = await client.get(
                 f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{real_event_id}",
                 headers={"Authorization": f"Bearer {access_token}"},
