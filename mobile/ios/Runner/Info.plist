@@ -27,9 +27,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<!-- Real, necessary for device_calendar's requestPermissions() on iOS
-	     (`DEC-152`) -- added for correctness; genuinely untested on a
-	     real iOS device, since no real iOS device exists in this
-	     project's environment (Android-only, confirmed real hardware). -->
+	     (DEC-152), added for correctness; genuinely untested on a real
+	     iOS device, since no real iOS device exists in this project's
+	     environment (Android-only, confirmed real hardware). -->
 	<key>NSCalendarsUsageDescription</key>
 	<string>Quorum reads your calendar to understand your real schedule and avoid proposing conflicting plans.</string>
 	<key>UIApplicationSceneManifest</key>
