@@ -171,7 +171,7 @@ STRUCTURALLY FIXED HERE (a genuinely new kind of risk `CREATE_TASK`/
 `LOG_EXPENSE` never faced, since neither has a real external side
 effect): this function runs on the SAME connection/transaction as the
 caller's own `action_events` insert (see `retry_queue_drainer.py::
-_persist_verdict`'s own real pattern). A real Gmail send can genuinely
+persist_gate_verdict`'s own real pattern). A real Gmail send can genuinely
 succeed and then have the SURROUNDING transaction roll back for an
 unrelated reason -- the real, already-sent email cannot be un-sent, but
 the `action_events` row recording it would vanish, and a naive retry-

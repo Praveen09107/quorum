@@ -82,6 +82,10 @@
 /// opens the real, on-device `CalendarMirror` table (real since Batch 5,
 /// never read by any real screen until now) to a real user for the
 /// first time.
+/// `captureTask` joins them as of Phase 7 (`DEC-153`) -- real, live
+/// `POST /quick_capture`, the first real write path in this app beyond
+/// negotiation-choice/account-deletion, reaching `MainShell`'s new
+/// floating action button for the first time.
 /// `confirmDelete` is real and live too, as of `DEC-113` -- the real,
 /// irreversible `DELETE /account`, unblocked only once real user
 /// provisioning existed (`DEC-110`) to make a correctly per-user-scoped
@@ -102,6 +106,7 @@ import 'package:quorum_mobile/api/gate_reveal_api.dart';
 import 'package:quorum_mobile/api/honesty_log_api.dart';
 import 'package:quorum_mobile/api/negotiation_api.dart';
 import 'package:quorum_mobile/api/predictive_risk_api.dart';
+import 'package:quorum_mobile/api/quick_capture_api.dart';
 import 'package:quorum_mobile/api/search_api.dart';
 import 'package:quorum_mobile/api/tasks_api.dart';
 import 'package:quorum_mobile/api/today_api.dart';
@@ -291,6 +296,10 @@ class _QuorumAppState extends State<QuorumApp> {
             ),
             syncCalendar: _calendarSync.syncNearTermEvents,
             fetchCalendarEvents: _fetchUpcomingCalendarEvents,
+            captureTask: createQuickCaptureFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
             confirmDelete: _handleAccountDeletion,
             onSignOut: _handleSignOut,
           ),

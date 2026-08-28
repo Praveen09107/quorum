@@ -68,7 +68,7 @@ non-fabricated `"user_request"` justification -- this action stems
 directly from a real, explicit choice the user just made, recorded in
 `negotiations.chosen_option_id`) plus `deadline_conflict_check` for the
 `tasks` domain specifically, since the real `tasks` table already holds
-enough real data to back it honestly, via `_PrefetchedCommittedHoursAdapter`
+enough real data to back it honestly, via `PrefetchedCommittedHoursAdapter`
 below.
 
 `available_hours_before_deadline` IS A REAL, DELIBERATELY SIMPLE
@@ -139,7 +139,7 @@ class DownstreamDrainError(Exception):
     `last_error` message, not different handling."""
 
 
-class _PrefetchedCommittedHoursAdapter:
+class PrefetchedCommittedHoursAdapter:
     """A real, minimal `TasksAdapter` (`gate/validators.py`'s own
     `Protocol`) satisfied synchronously from an already-fetched, real
     value -- `StageACheck` is a synchronous `Callable[[ActionProposal],
@@ -186,16 +186,18 @@ def available_hours_before_deadline(deadline: datetime, *, now: datetime | None 
     return whole_days * TODAY_WORKING_HOURS_PER_DAY
 
 
-async def _build_stage_a_checks(
+async def build_stage_a_checks_for_domain(
     conn: asyncpg.Connection, *, domain: str, proposal: ActionProposal, user_id: str
 ) -> list[StageACheck]:
     """`provenance_check` always -- this action's real justification is
-    genuinely `"user_request"`, since it exists only because a real user
-    just made a real, explicit negotiation choice; never fabricated.
-    `deadline_conflict_check` additionally for `tasks`, backed by a real,
-    live-fetched committed-hours value (see module docstring for why
-    `finance`/`calendar` don't get an equivalent real ground-truth
-    check)."""
+    genuinely `"user_request"` for every real caller of this function so
+    far: a real, explicit negotiation choice (this module's own caller),
+    or a real, freshly-typed piece of free text (`features/quick_capture
+    .py`'s own caller, `DEC-153`, made public specifically for this
+    reuse) -- never fabricated either way. `deadline_conflict_check`
+    additionally for `tasks`, backed by a real, live-fetched committed-
+    hours value (see module docstring for why `finance`/`calendar` don't
+    get an equivalent real ground-truth check)."""
     checks: list[StageACheck] = [lambda p: provenance_check(justification_sources=["user_request"])]
 
     if domain == "tasks":
@@ -203,7 +205,7 @@ async def _build_stage_a_checks(
         deadline_dt = datetime.fromisoformat(deadline) if deadline else None
         if deadline_dt is not None:
             committed = await fetch_committed_hours_before(conn, user_id=user_id, deadline=deadline_dt)
-            adapter = _PrefetchedCommittedHoursAdapter(committed)
+            adapter = PrefetchedCommittedHoursAdapter(committed)
             available = available_hours_before_deadline(deadline_dt)
             checks.append(
                 lambda p, dl=deadline_dt, avail=available, ad=adapter: deadline_conflict_check(
@@ -256,14 +258,55 @@ def validate_and_build_finance_proposal(args: dict) -> ActionProposal:
     return build_finance_proposal(action=action, amount=amount, category=args["category"], payee=args.get("payee"))
 
 
+_MAX_TASK_TITLE_LENGTH = 500
+
+
 def validate_and_build_task_proposal(args: dict) -> ActionProposal:
+    # RESOLVED, a real, disclosed CRITICAL-tier review BLOCKER (`DEC-153`
+    # B1): this real sibling to `validate_and_build_finance_proposal()`
+    # above was missing the identical `math.isfinite()` check that
+    # function's own docstring explains in full -- a genuine, live gap,
+    # not a hypothetical: `estimated_hours <= 0` and `estimated_hours >
+    # _MAX_ESTIMATED_HOURS` are BOTH real, live `False` for a real
+    # `float('nan')` (confirmed live), so a malformed extraction could
+    # reach `build_task_proposal()` and, from there, a real `tasks.
+    # estimated_hours NUMERIC(4,1)` write -- live-confirmed to genuinely
+    # ACCEPT a stored `NaN` value, which would then permanently poison
+    # every future `SUM(estimated_hours)` read for that user (`fetch_
+    # committed_hours_before()`, this module's own `today.py`-shared
+    # capacity queries) with no way to detect or repair it after the
+    # fact. Only real, incidental statement ORDERING (the `action_events`
+    # jsonb insert happens first and Postgres's own jsonb parser rejects
+    # a literal `NaN` token first) prevented this from ever being
+    # reachable through the one real caller that existed before this
+    # session (`DEC-148`'s own log entry explicitly anticipated exactly
+    # this: "a different future caller might not route through that
+    # same jsonb insert" -- `features/quick_capture.py` is that future
+    # caller).
     estimated_hours = float(args["estimated_hours"])
-    if estimated_hours <= 0:
-        raise DownstreamTranslationError(f"Translated estimated_hours must be positive, got {estimated_hours!r}")
+    if not math.isfinite(estimated_hours) or estimated_hours <= 0:
+        raise DownstreamTranslationError(f"Translated estimated_hours must be a real, finite, positive number, got {estimated_hours!r}")
     if estimated_hours > _MAX_ESTIMATED_HOURS:
         raise DownstreamTranslationError(
             f"Translated estimated_hours {estimated_hours!r} exceeds the real, max storable value {_MAX_ESTIMATED_HOURS}"
         )
+    # RESOLVED, a real, disclosed CRITICAL-tier review HIGH (`DEC-153`
+    # H1): `title` had zero real validation at all -- live-confirmed
+    # that a non-string `title` (a real dict) or a real `None` each
+    # reach a genuine, UNCAUGHT `asyncpg` error (`DataError`/
+    # `NotNullViolationError`) from the real `INSERT INTO tasks`, a real
+    # HTTP `500` rather than this module's own documented, honest `502`
+    # contract. A real, unbounded string title (50,000 real characters)
+    # was also live-confirmed to write successfully -- `tasks.title` is
+    # a real, unbounded `TEXT` column, so nothing stopped it. Checked
+    # here, the same "last line of defense against a Judge/model-
+    # authored value" discipline this function's own numeric checks
+    # already establish.
+    title = args["title"]
+    if not isinstance(title, str) or not title.strip():
+        raise DownstreamTranslationError(f"Translated title must be a real, non-empty string, got {title!r}")
+    if len(title) > _MAX_TASK_TITLE_LENGTH:
+        raise DownstreamTranslationError(f"Translated title exceeds the real, max plausible length {_MAX_TASK_TITLE_LENGTH}")
     deadline_iso = args.get("deadline_iso")
     deadline = datetime.fromisoformat(deadline_iso) if deadline_iso else None
     return build_task_proposal(title=args["title"], estimated_hours=estimated_hours, deadline=deadline, existing_task_id=None)
@@ -333,7 +376,7 @@ def map_verdict_to_outcome(verdict: GateVerdict) -> tuple[str | None, bool]:
     raise DownstreamDrainError(f"Unhandled GateVerdict.decision: {verdict.decision!r}")
 
 
-async def _persist_verdict(
+async def persist_gate_verdict(
     conn: asyncpg.Connection, *, proposal: ActionProposal, stakes: Stakes, verdict: GateVerdict, user_id: str
 ) -> bool:
     """Persists the real `action_events` row, then -- for a genuine
@@ -341,6 +384,14 @@ async def _persist_verdict(
     the SAME connection, so the real write (when one exists) commits or
     rolls back together with the real decision that authorized it.
     Returns whether a real execution genuinely happened.
+
+    Made public (`DEC-153`) -- this function is fully generic (no
+    negotiation-specific coupling anywhere in it), and `features/
+    quick_capture.py` needed the exact same real verdict-persistence
+    behavior for its own, genuinely different real caller. Reused
+    directly rather than re-derived, the same "don't duplicate a
+    once-CRITICAL-tier-review-fixed serialization detail" discipline
+    this whole docstring already documents below.
 
     REAL, LIVE PERSISTENCE OF THE GATE'S OWN FINDINGS/OBJECTIONS, closing
     the real, disclosed gap `DEC-126` found (migration `0013`, `DEC-146`):
@@ -450,7 +501,7 @@ async def process_negotiation_downstream_job(
     for domain in source_domains:
         proposal = await _translate_and_build_proposal(domain, option_description, translation_call)
         stakes = get_stakes(proposal.action_type)
-        stage_a_checks = await _build_stage_a_checks(conn, domain=domain, proposal=proposal, user_id=user_id)
+        stage_a_checks = await build_stage_a_checks_for_domain(conn, domain=domain, proposal=proposal, user_id=user_id)
         verdict = await review(proposal, stakes, stage_a_checks, critic_call, judge_call)
         reviewed.append((proposal, stakes, verdict))
 
@@ -474,7 +525,7 @@ async def process_negotiation_downstream_job(
     # disclosed rather than silently left unexamined.
     executed_count = 0
     for proposal, stakes, verdict in reviewed:
-        executed = await _persist_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
+        executed = await persist_gate_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
         if executed:
             executed_count += 1
 

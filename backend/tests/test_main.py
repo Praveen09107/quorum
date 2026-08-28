@@ -412,6 +412,77 @@ def test_tasks_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
             app.state.db_pool = real_pool
 
 
+# --- POST /quick_capture (Phase 7, DEC-153) ---
+
+
+def test_quick_capture_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.post("/quick_capture", json={"text": "finish the report"})
+    assert response.status_code == 401
+
+
+def test_quick_capture_rejects_blank_text_with_a_real_422_before_any_real_extraction_call():
+    with TestClient(app) as client:
+        response = client.post("/quick_capture", json={"text": "   "}, headers=_auth_header())
+    assert response.status_code == 422
+
+
+def test_quick_capture_returns_503_when_the_extraction_provider_is_not_configured(monkeypatch):
+    """Same real, established convention `test_search_returns_503_when_
+    the_embedding_provider_is_not_configured` already uses -- a real
+    `model_copy()` override, not a hand-rolled fake settings object
+    that would break the app's own real startup lifespan."""
+    from quorum_backend import main as main_module
+
+    fake_settings = get_settings().model_copy(update={"gemini_api_key": None})
+    monkeypatch.setattr(main_module, "get_settings", lambda: fake_settings)
+    with TestClient(app) as client:
+        response = client.post("/quick_capture", json={"text": "finish the report"}, headers=_auth_header())
+    assert response.status_code == 503
+
+
+@pytest.mark.skipif(get_settings().gemini_api_key is None, reason="no real GEMINI_API_KEY configured in this environment")
+async def test_quick_capture_endpoint_is_real_and_live_creates_a_real_task_end_to_end(pool, provisioned_users):
+    """The real, live, end-to-end proof `QUORUM_PRODUCTION_COMPLETION_
+    PLAN.md`'s own Phase 7 verification line asks for: a real proposal
+    created from real free text, reviewed by the real Gate, and
+    genuinely visible afterward (here, via a direct real `tasks` row
+    read -- the same real table `GET /today`'s own Holding Steady zone
+    and `GET /tasks` both already read from)."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    marker = f"real quick-capture test {uuid.uuid4()}"
+
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/quick_capture",
+                json={"text": f"{marker}, should take about one hour, no particular deadline"},
+                headers=headers,
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["stakes"] == "S1"
+        # A real, genuine approve is the overwhelmingly likely real
+        # outcome here (a fresh user, no existing tasks to conflict
+        # with) -- asserted directly rather than treated as optional,
+        # since a live, unexpected Gate rejection on this simple a
+        # real input would itself be a real, worth-investigating bug.
+        assert body["executed"] is True
+        assert body["decision"] == "approve"
+        assert marker in body["title"]
+
+        row = await pool.fetchrow(
+            "SELECT title, estimated_hours FROM tasks WHERE user_id = $1 AND title LIKE $2",
+            uuid.UUID(internal_user_id), f"%{marker}%",
+        )
+        assert row is not None
+        assert row["estimated_hours"] > 0
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE user_id = $1", uuid.UUID(internal_user_id))
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
 # --- GET /predictive_risk (Phase 6, DEC-149) ---
 
 

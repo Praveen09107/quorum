@@ -66,6 +66,16 @@
 // server round-trip, since Calendar's real ground truth is deliberately
 // local (ADD §9.2/§10.3), not a backend table. This is the first real,
 // fully local, no-network screen in this app's history.
+//
+// `captureTask` (Phase 7, `DEC-153`) is the first real WRITE path in
+// this app that isn't negotiation-choice or account deletion -- a real
+// floating action button, visible across all four tabs, opening a real
+// free-text capture screen. Real, deliberate scope decision, disclosed
+// in `features/quick_capture.py`'s own top-of-file docstring: only the
+// `tasks` domain is wired this session (the simplest real schema, no
+// recipient/external party to resolve); the other four domains remain
+// genuinely unreachable from this button today, a real, logged open
+// item, not silently promised.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -84,6 +94,8 @@ import 'package:quorum_mobile/features/negotiation/negotiation_logic.dart';
 import 'package:quorum_mobile/features/negotiation/negotiation_screen.dart';
 import 'package:quorum_mobile/features/pending_share_provider.dart';
 import 'package:quorum_mobile/features/predictive_risk/predictive_risk_logic.dart';
+import 'package:quorum_mobile/features/quick_capture/quick_capture_logic.dart';
+import 'package:quorum_mobile/features/quick_capture/quick_capture_screen.dart';
 import 'package:quorum_mobile/features/search/search_logic.dart';
 import 'package:quorum_mobile/features/share_intent_handler.dart';
 import 'package:quorum_mobile/features/tasks/tasks_logic.dart';
@@ -113,6 +125,7 @@ typedef SearchFetcher = Future<List<SearchResultItem>> Function(String query);
 typedef PredictiveRiskFetcher = Future<RiskAssessmentData> Function();
 typedef CalendarSyncTrigger = Future<CalendarSyncResult> Function();
 typedef CalendarEventsFetcher = Future<List<CalendarMirrorData>> Function();
+typedef QuickCaptureFetcher = Future<QuickCaptureResultData> Function(String text);
 
 class MainShell extends ConsumerStatefulWidget {
   final TodayDataFetcher? fetchToday;
@@ -133,6 +146,7 @@ class MainShell extends ConsumerStatefulWidget {
   final SearchFetcher? fetchSearch;
   final CalendarSyncTrigger? syncCalendar;
   final CalendarEventsFetcher? fetchCalendarEvents;
+  final QuickCaptureFetcher? captureTask;
 
   /// The real, live "sign out" action (`DEC-105`) -- distinct from
   /// `confirmDelete` above: signing out ends the current real session
@@ -160,6 +174,7 @@ class MainShell extends ConsumerStatefulWidget {
     this.fetchSearch,
     this.syncCalendar,
     this.fetchCalendarEvents,
+    this.captureTask,
     this.onSignOut,
   });
 
@@ -252,6 +267,21 @@ class _MainShellState extends ConsumerState<MainShell> {
     return Scaffold(
       appBar: AppBar(title: Text(_tabs[_selectedIndex].label)),
       body: SafeArea(child: _bodyForIndex(_selectedIndex)),
+      // Real, deliberately universal -- visible across all four tabs,
+      // not just Today, matching this feature's own real scope: type
+      // anything, any time, real proposals go through the real Gate the
+      // same way everything else in this app does (DEC-153). Hidden
+      // entirely (never a disabled/greyed-out button) whenever no real
+      // `captureTask` is configured -- the same honest, optional-fetcher
+      // gating every other real feature in this shell already uses.
+      floatingActionButton: widget.captureTask == null
+          ? null
+          : FloatingActionButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => QuickCaptureScreen(capture: widget.captureTask!)),
+              ),
+              child: const Icon(Icons.add),
+            ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         onDestinationSelected: _onDestinationSelected,

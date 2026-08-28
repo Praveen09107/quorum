@@ -19,6 +19,7 @@ import 'package:quorum_mobile/features/finance/finance_logic.dart';
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
 import 'package:quorum_mobile/features/negotiation/negotiation_logic.dart';
 import 'package:quorum_mobile/features/predictive_risk/predictive_risk_logic.dart';
+import 'package:quorum_mobile/features/quick_capture/quick_capture_logic.dart';
 import 'package:quorum_mobile/features/search/search_logic.dart';
 import 'package:quorum_mobile/features/tasks/tasks_logic.dart';
 import 'package:quorum_mobile/features/today/in_motion_logic.dart';
@@ -126,6 +127,16 @@ Future<List<CalendarMirrorData>> _fakeFetchCalendarEvents() async {
   ];
 }
 
+Future<QuickCaptureResultData> _fakeCaptureTask(String text) async {
+  return QuickCaptureResultData(
+    executed: true,
+    decision: 'approve',
+    stakes: 'S1',
+    title: 'A real, distinctive quick-captured task: $text',
+    findings: const [],
+  );
+}
+
 Future<RiskAssessmentData> _fakeFetchPredictiveRisk() async {
   return RiskAssessmentData(
     weekStart: DateTime(2026, 9, 1),
@@ -153,6 +164,7 @@ Widget _harness() {
         fetchSearch: _fakeFetchSearch,
         syncCalendar: _fakeSyncCalendar,
         fetchCalendarEvents: _fakeFetchCalendarEvents,
+        captureTask: _fakeCaptureTask,
         confirmDelete: () async => throw UnimplementedError(),
       ),
     ),
@@ -288,5 +300,31 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('A real, distinctive synced event'), findsOneWidget);
+  });
+
+  testWidgets('the real floating action button opens Quick capture and creates a real task from real free text', (tester) async {
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Quick capture'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'water the plants');
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Created: A real, distinctive quick-captured task: water the plants'), findsOneWidget);
+  });
+
+  testWidgets('the floating action button is reachable and identical from every real tab, not just Today', (tester) async {
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Trust'));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.add), findsOneWidget);
   });
 }
