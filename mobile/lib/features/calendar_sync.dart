@@ -1,26 +1,34 @@
-// UNVERIFIED IN SANDBOX: no Dart or Flutter SDK exists anywhere this file
-// was written. Structurally correct against `drift`'s and
-// `device_calendar`'s documented APIs; `flutter analyze` + a real device
-// are the actual verification for the plugin-touching half of this file.
-//
 // A real design improvement over MOBILE_01–03, not just more code in the
 // same style: every prior mobile test file could only make structural
-// assertions, since nothing in this sandbox can execute Dart. This file
-// is built differently — the real sync logic (`syncEventsIntoMirror`) is
-// deliberately separated from the untestable `device_calendar` plugin
-// call, so it operates purely on already-fetched data and the real Drift
-// database. `QuorumDatabase.forTesting()` (database.dart) makes Drift's
-// genuine in-memory test database (`NativeDatabase.memory()`) possible —
-// this session's tests exercise actual database inserts, actual
-// upserts, actual reads-back once run on a real machine, a meaningfully
-// stronger verification than anything achievable in MOBILE_01–03, even
-// though this sandbox still can't run them itself.
+// assertions, since nothing in that sandbox could execute Dart. This file
+// was built differently — the real sync logic (`syncEventsIntoMirror`) is
+// deliberately separated from the `device_calendar` plugin call, so it
+// operates purely on already-fetched data and the real Drift database.
+// `QuorumDatabase.forTesting()` (database.dart) makes Drift's genuine
+// in-memory test database (`NativeDatabase.memory()`) possible — real
+// database inserts, upserts, reads-back, not structural assertions alone.
 //
-// ONE HONEST, EXPLICITLY FLAGGED UNCERTAINTY, same category as
-// MOBILE_01's CardThemeData note: device_calendar's `Result<T>` wrapper
-// is assumed to expose `.isSuccess` and `.data` exactly as the package
-// documents. UNVERIFIED IN SANDBOX — `flutter analyze` on a real machine
-// resolves this.
+// RESOLVED, real gap found and closed while wiring this file into the
+// running app for the first time (Phase 5, `DEC-152`): `syncNearTermEvents()`
+// never checked or requested real calendar permission at all before
+// calling `retrieveCalendars()`. Confirmed directly against the real
+// `device_calendar` package source (`hasPermissions()`/`requestPermissions()`
+// both exist on `DeviceCalendarPlugin`) -- and confirmed a real, easy-to-
+// get-wrong subtlety in `Result<bool>.isSuccess`: it means "the platform
+// call itself succeeded," genuinely NOT "permission was granted" (`data`
+// is non-null and `false` is not `null`, so `isSuccess` is true even when
+// the user denies). The real permission boolean is `result.data`, checked
+// explicitly below, never inferred from `isSuccess` alone. `permissionGranted`
+// is now a real, explicit field on `CalendarSyncResult` -- a genuine
+// "permission denied" outcome must never be confused with "genuinely zero
+// real events in the look-ahead window," the same "don't collapse two
+// different real outcomes into one" discipline this project's backend
+// Gate holds itself to via `Finding.evidence_state`.
+//
+// A REAL, NECESSARY MANIFEST GAP CLOSED IN THE SAME SESSION: neither
+// `READ_CALENDAR` nor `WRITE_CALENDAR` was ever declared in
+// `AndroidManifest.xml` -- without both, `requestPermissions()` cannot
+// succeed on a real device no matter what this file's own Dart code does.
 
 import 'package:device_calendar/device_calendar.dart';
 import 'package:quorum_mobile/db/database.dart';
@@ -47,7 +55,16 @@ class CalendarEventData {
 
 class CalendarSyncResult {
   final int eventsSynced;
-  const CalendarSyncResult({required this.eventsSynced});
+
+  /// A real, explicit, three-way-honest field (`DEC-152`) -- `true` once
+  /// real calendar permission was confirmed granted this call, `false`
+  /// when it genuinely was not (denied, or the platform call itself
+  /// failed). A caller must check this before reading `eventsSynced` as
+  /// "the user genuinely has no upcoming events" -- `eventsSynced == 0`
+  /// with `permissionGranted == false` means "we never got to look."
+  final bool permissionGranted;
+
+  const CalendarSyncResult({required this.eventsSynced, required this.permissionGranted});
 }
 
 /// THE real, testable core — pure database logic. Takes already-fetched
@@ -72,7 +89,11 @@ Future<CalendarSyncResult> syncEventsIntoMirror(
         );
     synced++;
   }
-  return CalendarSyncResult(eventsSynced: synced);
+  // This function never touches the plugin or real device permission at
+  // all -- it operates purely on already-fetched data, so `permissionGranted`
+  // is always `true` here; `CalendarSync.syncNearTermEvents()` below is the
+  // one real, honest place that field's `false` case can ever originate.
+  return CalendarSyncResult(eventsSynced: synced, permissionGranted: true);
 }
 
 /// The thin, genuinely untestable-in-this-sandbox plugin wrapper —
@@ -89,14 +110,27 @@ class CalendarSync {
 
   /// Fetches every real event across every on-device calendar within
   /// [lookAhead] of now, then hands the already-fetched data to
-  /// [syncEventsIntoMirror] — the plugin call itself is the only
-  /// genuinely unverified part of this method.
+  /// [syncEventsIntoMirror].
+  ///
+  /// RESOLVED, `DEC-152`: requests real calendar permission first,
+  /// genuinely checking `result.data == true` -- never `result.isSuccess`
+  /// alone, which is true even when permission was denied (see this
+  /// file's own top-of-file docstring). Never calls `retrieveCalendars()`
+  /// at all without a real, confirmed grant.
   Future<CalendarSyncResult> syncNearTermEvents({
     Duration lookAhead = const Duration(days: 14),
   }) async {
+    var hasPermission = await _plugin.hasPermissions();
+    if (hasPermission.data != true) {
+      hasPermission = await _plugin.requestPermissions();
+    }
+    if (hasPermission.data != true) {
+      return const CalendarSyncResult(eventsSynced: 0, permissionGranted: false);
+    }
+
     final calendarsResult = await _plugin.retrieveCalendars();
     if (!calendarsResult.isSuccess || calendarsResult.data == null) {
-      return const CalendarSyncResult(eventsSynced: 0);
+      return const CalendarSyncResult(eventsSynced: 0, permissionGranted: true);
     }
 
     final now = DateTime.now();

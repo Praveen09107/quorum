@@ -58,10 +58,20 @@
 // file returned nothing before this session). Closed here, not
 // silently left as a second, undiscovered version of the same gap this
 // whole phase exists to fix.
+//
+// `syncCalendar`/`fetchCalendarEvents` join the You tab's "More" section
+// as of Phase 5 (`DEC-152`) -- genuinely different from every other
+// fetcher above: the real data source is on-device (`db/database.dart`'s
+// `CalendarMirror` table, kept current by `calendar_sync.dart`), never a
+// server round-trip, since Calendar's real ground truth is deliberately
+// local (ADD §9.2/§10.3), not a backend table. This is the first real,
+// fully local, no-network screen in this app's history.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:quorum_mobile/db/database.dart';
+import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
 import 'package:quorum_mobile/features/career_digest/career_digest_logic.dart';
 import 'package:quorum_mobile/features/finance/finance_logic.dart';
@@ -101,6 +111,8 @@ typedef FinanceFetcher = Future<List<DetectedSubscriptionData>> Function();
 typedef WaitingOnFetcher = Future<List<WaitingOnItem>> Function();
 typedef SearchFetcher = Future<List<SearchResultItem>> Function(String query);
 typedef PredictiveRiskFetcher = Future<RiskAssessmentData> Function();
+typedef CalendarSyncTrigger = Future<CalendarSyncResult> Function();
+typedef CalendarEventsFetcher = Future<List<CalendarMirrorData>> Function();
 
 class MainShell extends ConsumerStatefulWidget {
   final TodayDataFetcher? fetchToday;
@@ -119,6 +131,8 @@ class MainShell extends ConsumerStatefulWidget {
   final FinanceFetcher? fetchFinance;
   final WaitingOnFetcher? fetchWaitingOn;
   final SearchFetcher? fetchSearch;
+  final CalendarSyncTrigger? syncCalendar;
+  final CalendarEventsFetcher? fetchCalendarEvents;
 
   /// The real, live "sign out" action (`DEC-105`) -- distinct from
   /// `confirmDelete` above: signing out ends the current real session
@@ -144,6 +158,8 @@ class MainShell extends ConsumerStatefulWidget {
     this.fetchFinance,
     this.fetchWaitingOn,
     this.fetchSearch,
+    this.syncCalendar,
+    this.fetchCalendarEvents,
     this.onSignOut,
   });
 
@@ -210,6 +226,8 @@ class _MainShellState extends ConsumerState<MainShell> {
           fetchFinance: widget.fetchFinance,
           fetchWaitingOn: widget.fetchWaitingOn,
           fetchSearch: widget.fetchSearch,
+          syncCalendar: widget.syncCalendar,
+          fetchCalendarEvents: widget.fetchCalendarEvents,
           onSignOut: widget.onSignOut,
         );
       default:

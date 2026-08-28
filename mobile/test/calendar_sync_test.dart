@@ -1,11 +1,14 @@
-// UNVERIFIED IN SANDBOX: no Dart or Flutter SDK exists anywhere this
-// file was written. Structurally correct against `drift`'s and plain
-// `package:test`'s documented APIs (zero Flutter framework dependency —
-// `dart test` is the real command, not `flutter test`, per this
-// project's own documented distinction). `dart test` on a real machine
-// is the actual verification — and given this file's real test database
-// uses Drift's `NativeDatabase.memory()`, these are genuine database
-// inserts and upserts, not structural assertions alone.
+// RESOLVED, real correction (`DEC-152`): this file was previously a real,
+// zero-Flutter-dependency file, run via plain `dart test`. It no longer
+// is -- confirmed directly, not assumed: `device_calendar` (imported
+// below, needed for this session's own `_FakeCalendarPlugin`) transitively
+// imports `package:flutter/material.dart`, which the standalone Dart SDK
+// genuinely cannot compile (`dart test` fails to even LOAD this file with
+// real Dart-SDK-vs-Flutter-SDK type errors, confirmed live). `flutter
+// test` is the real command for this file now -- confirmed it loads and
+// passes cleanly there instead. `pubspec.yaml`'s own dev_dependencies
+// comment is corrected in the same session to stop naming this file
+// among the zero-Flutter-dependency set.
 //
 // THE REAL, HAND-VERIFIED PROOF of the trickiest logic in this session:
 // the range-filter test below depends on exact `>=`/`<` boundary
@@ -18,11 +21,48 @@
 // both ends), and the event just before `start_q` is genuinely excluded
 // too.
 
+import 'dart:collection';
+
+import 'package:device_calendar/device_calendar.dart';
 import 'package:drift/native.dart';
 import 'package:test/test.dart';
 
 import 'package:quorum_mobile/db/database.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
+
+/// A real, hand-built double for `DeviceCalendarPlugin` -- this project
+/// uses no mocking library anywhere (matching the backend's own
+/// `_FakePostClient` convention, `test_action_executor.py`), so this
+/// extends the real plugin class directly and overrides only the real
+/// methods `syncNearTermEvents()` actually calls. `DeviceCalendarPlugin
+/// .private()` is real, generative, and explicitly `@visibleForTesting`
+/// -- calling it from outside the package is the documented, intended
+/// use of that annotation, not a workaround.
+class _FakeCalendarPlugin extends DeviceCalendarPlugin {
+  _FakeCalendarPlugin({required this.permissionsAlreadyGranted, this.grantsOnRequest = false}) : super.private();
+
+  final bool permissionsAlreadyGranted;
+  final bool grantsOnRequest;
+  bool requestPermissionsCalled = false;
+  bool retrieveCalendarsCalled = false;
+
+  @override
+  Future<Result<bool>> hasPermissions() async {
+    return Result<bool>()..data = permissionsAlreadyGranted;
+  }
+
+  @override
+  Future<Result<bool>> requestPermissions() async {
+    requestPermissionsCalled = true;
+    return Result<bool>()..data = grantsOnRequest;
+  }
+
+  @override
+  Future<Result<UnmodifiableListView<Calendar>>> retrieveCalendars() async {
+    retrieveCalendarsCalled = true;
+    return Result<UnmodifiableListView<Calendar>>()..data = UnmodifiableListView<Calendar>(const []);
+  }
+}
 
 void main() {
   late QuorumDatabase db;
@@ -47,6 +87,7 @@ void main() {
     ]);
 
     expect(result.eventsSynced, 1);
+    expect(result.permissionGranted, true);
 
     final rows = await db.select(db.calendarMirror).get();
     expect(rows.length, 1);
@@ -150,6 +191,49 @@ void main() {
 
     expect(results.length, 1);
     expect(results.first.eventId, 'evt_in_range');
+  });
+
+  group('CalendarSync.syncNearTermEvents real permission handling (DEC-152)', () {
+    test('permission already granted -- never calls requestPermissions, proceeds to sync', () async {
+      final plugin = _FakeCalendarPlugin(permissionsAlreadyGranted: true);
+      final sync = CalendarSync(db, plugin: plugin);
+
+      final result = await sync.syncNearTermEvents();
+
+      expect(result.permissionGranted, true);
+      expect(result.eventsSynced, 0); // the fake's retrieveCalendars returns an empty list
+      expect(plugin.requestPermissionsCalled, false);
+      expect(plugin.retrieveCalendarsCalled, true);
+    });
+
+    test('permission not yet granted but genuinely granted on request -- proceeds to sync', () async {
+      final plugin = _FakeCalendarPlugin(permissionsAlreadyGranted: false, grantsOnRequest: true);
+      final sync = CalendarSync(db, plugin: plugin);
+
+      final result = await sync.syncNearTermEvents();
+
+      expect(result.permissionGranted, true);
+      expect(plugin.requestPermissionsCalled, true);
+      expect(plugin.retrieveCalendarsCalled, true);
+    });
+
+    test('permission genuinely denied, even after requesting -- refuses before any real calendar read', () async {
+      // A real, disclosed fix this session's own review of the pre-existing
+      // code found: `Result<bool>.isSuccess` is true even when `data` is
+      // `false` (a real, non-null, denied answer) -- this test would pass
+      // on a naive `if (result.isSuccess)` check even though permission was
+      // genuinely denied, which is exactly the bug this test exists to
+      // catch.
+      final plugin = _FakeCalendarPlugin(permissionsAlreadyGranted: false, grantsOnRequest: false);
+      final sync = CalendarSync(db, plugin: plugin);
+
+      final result = await sync.syncNearTermEvents();
+
+      expect(result.permissionGranted, false);
+      expect(result.eventsSynced, 0);
+      expect(plugin.requestPermissionsCalled, true);
+      expect(plugin.retrieveCalendarsCalled, false); // genuinely never reached a real calendar read
+    });
   });
 }
 

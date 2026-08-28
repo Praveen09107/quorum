@@ -73,11 +73,19 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   # Plain package:test, deliberately separate from flutter_test above --
-  # zero-Flutter-dependency logic files (model resolution, privacy gate,
-  # calendar sync) run via plain `dart test`, per this project's own
-  # documented distinction (CLAUDE.md) between that and `flutter test`
-  # for widget files like main_shell_test.dart. Keeping these separate is
-  # what lets the pure-logic suite run without a full Flutter toolchain.
+  # zero-Flutter-dependency logic files (model resolution, privacy gate)
+  # run via plain `dart test`, per this project's own documented
+  # distinction (CLAUDE.md) between that and `flutter test` for widget
+  # files like main_shell_test.dart. Keeping these separate is what lets
+  # the pure-logic suite run without a full Flutter toolchain.
+  #
+  # RESOLVED, real correction (`DEC-152`): `calendar_sync_test.dart` was
+  # named here until this session -- no longer accurate. It now imports
+  # `device_calendar` directly (for a real `DeviceCalendarPlugin`-
+  # extending test double), which transitively imports `package:flutter/
+  # material.dart`; the standalone Dart SDK genuinely cannot compile that,
+  # confirmed live (`dart test` fails to load the file at all). `flutter
+  # test` is the real, confirmed-working command for it now.
   test: ^1.25.2
   flutter_lints: ^4.0.0
   drift_dev: ^2.20.0
