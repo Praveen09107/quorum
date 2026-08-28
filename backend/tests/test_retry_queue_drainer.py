@@ -20,7 +20,7 @@ from quorum_backend.auth.user_provisioning import get_or_create_user
 from quorum_backend.core import db
 from quorum_backend.features.retry_queue_drainer import (
     _mark_job_failed,
-    _persist_verdict,
+    persist_gate_verdict,
     available_hours_before_deadline,
     drain_due_jobs,
     map_verdict_to_outcome,
@@ -243,7 +243,7 @@ async def test_drain_due_jobs_a_real_judge_revised_update_budget_payload_still_r
     `json.dumps` would otherwise emit (`InvalidTextRepresentationError:
     Token "NaN" is invalid`) -- so a `NaN`/`inf` `revised_payload`
     never even reaches `execute_approved_action()` through this real
-    path; it fails earlier, at `_persist_verdict()`'s own `INSERT INTO
+    path; it fails earlier, at `persist_gate_verdict()`'s own `INSERT INTO
     action_events` (the job fails and genuinely retries later). A real,
     finite-but-implausibly-large amount is NOT caught there -- it
     encodes as perfectly valid JSON -- so this test proves the part of
@@ -285,7 +285,7 @@ async def test_drain_due_jobs_a_real_judge_revised_update_budget_payload_with_na
     """The real, disclosed OTHER half of the B1 story: a `NaN`
     `revised_payload` never reaches `action_executor.py` at all through
     this real path -- Postgres's own `jsonb` type rejects it first, at
-    the real `INSERT INTO action_events` inside `_persist_verdict()`.
+    the real `INSERT INTO action_events` inside `persist_gate_verdict()`.
     This is a real, safe failure mode (the job fails and genuinely
     retries later, the hostile value is never persisted and never
     executed), just a different one than a naive reading of "add a
@@ -384,8 +384,8 @@ async def test_drain_due_jobs_processes_a_real_single_domain_job_and_persists_a_
     assert isinstance(json.loads(gate_reveal_row["findings"]), list)
 
 
-async def test_persist_verdict_writes_real_findings_and_objections_matching_the_real_verdict(pool, user_id):
-    """A real, direct unit test of `_persist_verdict()` itself (not the
+async def testpersist_gate_verdict_writes_real_findings_and_objections_matching_the_real_verdict(pool, user_id):
+    """A real, direct unit test of `persist_gate_verdict()` itself (not the
     full `drain_due_jobs()` pipeline) -- proves the real persistence
     mechanism handles a genuinely non-empty `objections` list correctly,
     a real state no domain this drainer can currently translate ever
@@ -399,7 +399,7 @@ async def test_persist_verdict_writes_real_findings_and_objections_matching_the_
     Also covers the real, CRITICAL-tier review finding this test
     previously missed (`DEC-146`): a `Finding`/`Objection` carrying a
     real `EvidenceRef` (a real `datetime` in `retrieved_at`) must
-    round-trip through `_persist_verdict()`'s `json.dumps(...,
+    round-trip through `persist_gate_verdict()`'s `json.dumps(...,
     mode="json")` without a `TypeError` -- the bare, default
     `.model_dump()` this test originally exercised never surfaced that
     bug because neither field it used ever set `source_ref`/
@@ -433,7 +433,7 @@ async def test_persist_verdict_writes_real_findings_and_objections_matching_the_
     )
 
     async with pool.acquire() as conn, conn.transaction():
-        await _persist_verdict(conn, proposal=proposal, stakes=Stakes.S1, verdict=verdict, user_id=user_id)
+        await persist_gate_verdict(conn, proposal=proposal, stakes=Stakes.S1, verdict=verdict, user_id=user_id)
 
     row = await pool.fetchrow(
         "SELECT findings, objections FROM action_events WHERE proposal_id = $1", proposal.proposal_id

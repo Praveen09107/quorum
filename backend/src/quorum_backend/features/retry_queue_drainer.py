@@ -68,7 +68,7 @@ non-fabricated `"user_request"` justification -- this action stems
 directly from a real, explicit choice the user just made, recorded in
 `negotiations.chosen_option_id`) plus `deadline_conflict_check` for the
 `tasks` domain specifically, since the real `tasks` table already holds
-enough real data to back it honestly, via `_PrefetchedCommittedHoursAdapter`
+enough real data to back it honestly, via `PrefetchedCommittedHoursAdapter`
 below.
 
 `available_hours_before_deadline` IS A REAL, DELIBERATELY SIMPLE
@@ -139,7 +139,7 @@ class DownstreamDrainError(Exception):
     `last_error` message, not different handling."""
 
 
-class _PrefetchedCommittedHoursAdapter:
+class PrefetchedCommittedHoursAdapter:
     """A real, minimal `TasksAdapter` (`gate/validators.py`'s own
     `Protocol`) satisfied synchronously from an already-fetched, real
     value -- `StageACheck` is a synchronous `Callable[[ActionProposal],
@@ -186,16 +186,18 @@ def available_hours_before_deadline(deadline: datetime, *, now: datetime | None 
     return whole_days * TODAY_WORKING_HOURS_PER_DAY
 
 
-async def _build_stage_a_checks(
+async def build_stage_a_checks_for_domain(
     conn: asyncpg.Connection, *, domain: str, proposal: ActionProposal, user_id: str
 ) -> list[StageACheck]:
     """`provenance_check` always -- this action's real justification is
-    genuinely `"user_request"`, since it exists only because a real user
-    just made a real, explicit negotiation choice; never fabricated.
-    `deadline_conflict_check` additionally for `tasks`, backed by a real,
-    live-fetched committed-hours value (see module docstring for why
-    `finance`/`calendar` don't get an equivalent real ground-truth
-    check)."""
+    genuinely `"user_request"` for every real caller of this function so
+    far: a real, explicit negotiation choice (this module's own caller),
+    or a real, freshly-typed piece of free text (`features/quick_capture
+    .py`'s own caller, `DEC-153`, made public specifically for this
+    reuse) -- never fabricated either way. `deadline_conflict_check`
+    additionally for `tasks`, backed by a real, live-fetched committed-
+    hours value (see module docstring for why `finance`/`calendar` don't
+    get an equivalent real ground-truth check)."""
     checks: list[StageACheck] = [lambda p: provenance_check(justification_sources=["user_request"])]
 
     if domain == "tasks":
@@ -203,7 +205,7 @@ async def _build_stage_a_checks(
         deadline_dt = datetime.fromisoformat(deadline) if deadline else None
         if deadline_dt is not None:
             committed = await fetch_committed_hours_before(conn, user_id=user_id, deadline=deadline_dt)
-            adapter = _PrefetchedCommittedHoursAdapter(committed)
+            adapter = PrefetchedCommittedHoursAdapter(committed)
             available = available_hours_before_deadline(deadline_dt)
             checks.append(
                 lambda p, dl=deadline_dt, avail=available, ad=adapter: deadline_conflict_check(
@@ -333,7 +335,7 @@ def map_verdict_to_outcome(verdict: GateVerdict) -> tuple[str | None, bool]:
     raise DownstreamDrainError(f"Unhandled GateVerdict.decision: {verdict.decision!r}")
 
 
-async def _persist_verdict(
+async def persist_gate_verdict(
     conn: asyncpg.Connection, *, proposal: ActionProposal, stakes: Stakes, verdict: GateVerdict, user_id: str
 ) -> bool:
     """Persists the real `action_events` row, then -- for a genuine
@@ -341,6 +343,14 @@ async def _persist_verdict(
     the SAME connection, so the real write (when one exists) commits or
     rolls back together with the real decision that authorized it.
     Returns whether a real execution genuinely happened.
+
+    Made public (`DEC-153`) -- this function is fully generic (no
+    negotiation-specific coupling anywhere in it), and `features/
+    quick_capture.py` needed the exact same real verdict-persistence
+    behavior for its own, genuinely different real caller. Reused
+    directly rather than re-derived, the same "don't duplicate a
+    once-CRITICAL-tier-review-fixed serialization detail" discipline
+    this whole docstring already documents below.
 
     REAL, LIVE PERSISTENCE OF THE GATE'S OWN FINDINGS/OBJECTIONS, closing
     the real, disclosed gap `DEC-126` found (migration `0013`, `DEC-146`):
@@ -450,7 +460,7 @@ async def process_negotiation_downstream_job(
     for domain in source_domains:
         proposal = await _translate_and_build_proposal(domain, option_description, translation_call)
         stakes = get_stakes(proposal.action_type)
-        stage_a_checks = await _build_stage_a_checks(conn, domain=domain, proposal=proposal, user_id=user_id)
+        stage_a_checks = await build_stage_a_checks_for_domain(conn, domain=domain, proposal=proposal, user_id=user_id)
         verdict = await review(proposal, stakes, stage_a_checks, critic_call, judge_call)
         reviewed.append((proposal, stakes, verdict))
 
@@ -474,7 +484,7 @@ async def process_negotiation_downstream_job(
     # disclosed rather than silently left unexamined.
     executed_count = 0
     for proposal, stakes, verdict in reviewed:
-        executed = await _persist_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
+        executed = await persist_gate_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
         if executed:
             executed_count += 1
 

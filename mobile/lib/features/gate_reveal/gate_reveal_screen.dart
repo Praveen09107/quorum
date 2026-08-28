@@ -54,7 +54,7 @@ class GateRevealScreen extends StatelessWidget {
             subtitle: Text("This action predates Gate Reveal, so its real findings were never saved."),
           )
         else
-          for (final finding in recordedFindings) _FindingRow(finding: finding),
+          for (final finding in recordedFindings) FindingRow(finding: finding),
         // Stage B only ever appears in the widget tree if it genuinely
         // ran -- an S0/S1 action's screen simply has no Stage B section
         // at all, never an empty or misleading placeholder for one.
@@ -76,10 +76,15 @@ class GateRevealScreen extends StatelessWidget {
   }
 }
 
-class _FindingRow extends StatelessWidget {
+/// Made public (`DEC-153`) -- `features/quick_capture/quick_capture_
+/// screen.dart` reuses this exact widget for the identical real reason
+/// it exists here: the same trusted icon/color mapping for a real
+/// `Finding`'s three-valued `evidence_state`, never a second, parallel
+/// rendering of the same real concept.
+class FindingRow extends StatelessWidget {
   final FindingSummary finding;
 
-  const _FindingRow({required this.finding});
+  const FindingRow({super.key, required this.finding});
 
   @override
   Widget build(BuildContext context) {

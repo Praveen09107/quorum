@@ -31,7 +31,7 @@ from typing import AsyncIterator
 import asyncpg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from quorum_backend.auth.access_token import (
     ACCESS_TOKEN_TTL_MINUTES,
@@ -90,6 +90,7 @@ from quorum_backend.features.today import (
     fetch_today_budget,
     fetch_today_capacity,
 )
+from quorum_backend.features.quick_capture import QuickCaptureError, capture_task_from_text, make_gemini_task_extraction_call
 from quorum_backend.features.trust_digest import fetch_trust_digest
 from quorum_backend.gate.llm_calls import make_gemini_judge_call, make_groq_critic_call
 from quorum_backend.negotiation.downstream_translation import make_gemini_downstream_translation_call
@@ -255,6 +256,23 @@ class ChooseNegotiationOptionRequest(BaseModel):
     chosen_option: str
 
 
+class QuickCaptureRequest(BaseModel):
+    """Real request shape, `DEC-153` -- a real user's own free text,
+    genuinely untrusted (see `features/quick_capture.py`'s own top-of-
+    file docstring for why this route is CRITICAL-tier, not standard).
+    A real, minimum length check refuses an empty/whitespace-only
+    submission before it ever reaches a real, billed Gemini call."""
+
+    text: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("text")
+    @classmethod
+    def _reject_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("text must not be blank")
+        return value
+
+
 class TokenPairResponse(BaseModel):
     access_token: str
     refresh_token: str
@@ -359,6 +377,61 @@ async def tasks(
         }
         for record in records
     ]
+
+
+@app.post("/quick_capture")
+async def quick_capture_endpoint(
+    body: QuickCaptureRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live -- Phase 7, `QUORUM_PRODUCTION_COMPLETION_PLAN.md`,
+    `DEC-153`. The first real write path in this backend that isn't
+    negotiation-choice or account deletion: a real user's own free
+    text, extracted into a real `CREATE_TASK` proposal, reviewed by the
+    real Gate, and -- for a genuine approve -- written as a real `tasks`
+    row, all synchronously in this one request (`CREATE_TASK` is real
+    `Stakes.S1`; Stage B never runs, so this stays fast). Real per-user
+    scoped from this route's first line. See `features/quick_capture.py`
+    for the full account of this session's own real scope decisions.
+
+    A real, honest `503` if the extraction provider isn't configured
+    (matching `GET /search`'s own established convention for the
+    identical real reason -- no `GEMINI_API_KEY` in this environment).
+    A real, honest `502` if a live extraction call itself fails after
+    retries -- never a fabricated task standing in for a genuine
+    failure."""
+    settings = get_settings()
+    if settings.gemini_api_key is None:
+        raise HTTPException(status_code=503, detail="Quick capture is not currently available -- the extraction provider isn't configured.")
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+
+    extraction_call = make_gemini_task_extraction_call(api_key=settings.gemini_api_key)
+    critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
+    judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                result = await capture_task_from_text(
+                    conn,
+                    user_id=internal_user_id,
+                    free_text=body.text,
+                    extraction_call=extraction_call,
+                    critic_call=critic_call,
+                    judge_call=judge_call,
+                )
+    except QuickCaptureError as exc:
+        raise HTTPException(status_code=502, detail=f"Couldn't turn that into a real task: {exc}") from exc
+
+    return {
+        "executed": result.executed,
+        "decision": result.decision,
+        "stakes": result.stakes,
+        "title": result.title,
+        "findings": [finding.model_dump(mode="json") for finding in result.findings],
+        "objections": [objection.model_dump(mode="json") for objection in result.objections],
+    }
 
 
 @app.get("/predictive_risk")
