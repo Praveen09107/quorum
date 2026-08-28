@@ -39,6 +39,9 @@
 
 import 'package:flutter/material.dart';
 
+import 'package:quorum_mobile/db/database.dart';
+import 'package:quorum_mobile/features/calendar/calendar_screen.dart';
+import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_screen.dart';
 import 'package:quorum_mobile/features/career_digest/career_digest_logic.dart';
@@ -61,6 +64,8 @@ class YouScreen extends StatefulWidget {
   final Future<List<DetectedSubscriptionData>> Function()? fetchFinance;
   final Future<List<WaitingOnItem>> Function()? fetchWaitingOn;
   final Future<List<SearchResultItem>> Function(String query)? fetchSearch;
+  final Future<CalendarSyncResult> Function()? syncCalendar;
+  final Future<List<CalendarMirrorData>> Function()? fetchCalendarEvents;
 
   /// The real, live "sign out" action (`DEC-105`) -- genuinely distinct
   /// stakes from `onConfirmDelete` below: this ends the current session
@@ -77,6 +82,8 @@ class YouScreen extends StatefulWidget {
     this.fetchFinance,
     this.fetchWaitingOn,
     this.fetchSearch,
+    this.syncCalendar,
+    this.fetchCalendarEvents,
     this.onSignOut,
   });
 
@@ -178,10 +185,26 @@ class _YouScreenState extends State<YouScreen> {
               ),
             ),
           ],
+          if (widget.syncCalendar != null && widget.fetchCalendarEvents != null) ...[
+            ListTile(
+              leading: const Icon(Icons.calendar_month_outlined),
+              title: const Text('Calendar'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => _CalendarLoader(
+                    sync: widget.syncCalendar!,
+                    fetchEvents: widget.fetchCalendarEvents!,
+                  ),
+                ),
+              ),
+            ),
+          ],
           if (widget.fetchCareerApplications != null ||
               widget.fetchFinance != null ||
               widget.fetchWaitingOn != null ||
-              widget.fetchSearch != null)
+              widget.fetchSearch != null ||
+              (widget.syncCalendar != null && widget.fetchCalendarEvents != null))
             const Divider(height: 32),
           if (widget.onSignOut != null) ...[
             OutlinedButton.icon(
@@ -355,6 +378,53 @@ class _FinanceLoader extends StatelessWidget {
             return Center(child: Text("Couldn't load your subscriptions: ${snapshot.error}"));
           }
           return FinanceScreen(subscriptions: snapshot.data!);
+        },
+      ),
+    );
+  }
+}
+
+/// A real, deliberately different loader shape from every other one in
+/// this file: it runs TWO real steps, not one -- a real sync attempt
+/// first (requesting real calendar permission if not already granted,
+/// see `calendar_sync.dart`), then a real read of whatever's now in the
+/// on-device mirror, REGARDLESS of whether this particular sync attempt
+/// succeeded. This is deliberate, not an oversight: a transient sync
+/// failure (or a since-revoked permission) must never blank out real
+/// events a PRIOR successful sync already stored -- `CalendarScreen`
+/// itself decides the honest empty-state message from the combination
+/// of `permissionGranted` and `events`, not this loader.
+class _CalendarLoader extends StatelessWidget {
+  final Future<CalendarSyncResult> Function() sync;
+  final Future<List<CalendarMirrorData>> Function() fetchEvents;
+
+  const _CalendarLoader({required this.sync, required this.fetchEvents});
+
+  Future<({CalendarSyncResult syncResult, List<CalendarMirrorData> events})> _load() async {
+    final syncResult = await sync();
+    final events = await fetchEvents();
+    return (syncResult: syncResult, events: events);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Calendar')),
+      body: FutureBuilder(
+        future: _load(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text("Couldn't sync your calendar: ${snapshot.error}"));
+          }
+          final data = snapshot.data!;
+          return CalendarScreen(
+            events: data.events,
+            permissionGranted: data.syncResult.permissionGranted,
+            now: DateTime.now(),
+          );
         },
       ),
     );

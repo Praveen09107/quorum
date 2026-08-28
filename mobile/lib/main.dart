@@ -73,6 +73,15 @@
 /// disclosed design decision built this session gives it a small,
 /// deliberately minimal real surface: a banner on the real Tasks
 /// screen (reached via Today's own "View tasks" link), not a new tab.
+/// `syncCalendar`/`fetchCalendarEvents` join them as of Phase 5
+/// (`DEC-152`) -- genuinely different from every fetcher above: both are
+/// backed by the real, on-device `QuorumDatabase`/`CalendarSync`
+/// (`db/database.dart`, `features/calendar_sync.dart`), instantiated for
+/// the first time anywhere in this app right here, not a server round-
+/// trip. Closes the You tab's own "More" section Calendar entry, and
+/// opens the real, on-device `CalendarMirror` table (real since Batch 5,
+/// never read by any real screen until now) to a real user for the
+/// first time.
 /// `confirmDelete` is real and live too, as of `DEC-113` -- the real,
 /// irreversible `DELETE /account`, unblocked only once real user
 /// provisioning existed (`DEC-110`) to make a correctly per-user-scoped
@@ -104,6 +113,8 @@ import 'package:quorum_mobile/auth/auth_controller.dart';
 import 'package:quorum_mobile/auth/login_screen.dart';
 import 'package:quorum_mobile/auth/token_store.dart';
 import 'package:quorum_mobile/config/api_config.dart';
+import 'package:quorum_mobile/db/database.dart';
+import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/you/you_logic.dart';
 import 'package:quorum_mobile/shell/main_shell.dart';
 import 'package:quorum_mobile/theme/quorum_theme.dart';
@@ -131,9 +142,22 @@ class _QuorumAppState extends State<QuorumApp> {
   late final AuthController _authController;
   _SessionState _sessionState = _SessionState.checking;
 
+  // Real, on-device storage (`db/database.dart`'s real Drift database) --
+  // `QuorumDatabase()` (the real, production constructor, distinct from
+  // `.forTesting()`) had never been instantiated anywhere in this app
+  // until this session (`DEC-152`), confirmed by direct search before
+  // writing this line: `CalendarMirror` and its sibling mirror tables
+  // have existed since Batch 5 with no real caller ever opening the
+  // database at all. Owned here, closed in `dispose()`, matching
+  // `_httpClient`'s own established real-resource-ownership pattern
+  // exactly.
+  final QuorumDatabase _db = QuorumDatabase();
+  late final CalendarSync _calendarSync;
+
   @override
   void initState() {
     super.initState();
+    _calendarSync = CalendarSync(_db);
     _authController = AuthController(
       api: AuthApi(client: _httpClient),
       saveTokens: const TokenStore().save,
@@ -147,7 +171,18 @@ class _QuorumAppState extends State<QuorumApp> {
   @override
   void dispose() {
     _httpClient.close();
+    _db.close();
     super.dispose();
+  }
+
+  /// The real, deliberately narrow read this app's own Calendar screen
+  /// needs -- the SAME real 14-day look-ahead `CalendarSync.
+  /// syncNearTermEvents()`'s own default keeps its mirror data fresh
+  /// within, so a fresh sync's own real events are never filtered back
+  /// out by a mismatched read-side window.
+  Future<List<CalendarMirrorData>> _fetchUpcomingCalendarEvents() {
+    final now = DateTime.now();
+    return _db.getCalendarEventsInRange(now, now.add(const Duration(days: 14)));
   }
 
   Future<void> _checkForRealExistingSession() async {
@@ -254,6 +289,8 @@ class _QuorumAppState extends State<QuorumApp> {
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
+            syncCalendar: _calendarSync.syncNearTermEvents,
+            fetchCalendarEvents: _fetchUpcomingCalendarEvents,
             confirmDelete: _handleAccountDeletion,
             onSignOut: _handleSignOut,
           ),

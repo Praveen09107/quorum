@@ -3,6 +3,17 @@
          flow, /trust_digest, and every future real endpoint) is a real
          network request. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Real, necessary, RESOLVED gap (DEC-152): neither was ever
+         declared, despite device_calendar (Batch 5) requiring both,
+         without these, DeviceCalendarPlugin.requestPermissions() could
+         never succeed on a real device no matter what
+         calendar_sync.dart's own Dart code does. WRITE_CALENDAR is
+         requested even though this app never writes a local calendar
+         event today (real read-only sync only); device_calendar's own
+         real, documented requestPermissions() call requests both
+         together, confirmed directly against the package source. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR"/>
+    <uses-permission android:name="android.permission.WRITE_CALENDAR"/>
     <application
         android:label="quorum_mobile"
         android:name="${applicationName}"

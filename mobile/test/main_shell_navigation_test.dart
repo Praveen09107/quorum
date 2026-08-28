@@ -10,6 +10,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:quorum_mobile/db/database.dart';
+import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
 import 'package:quorum_mobile/features/career_digest/career_digest_logic.dart';
 import 'package:quorum_mobile/features/computed_state.dart';
@@ -107,6 +109,23 @@ Future<List<TaskData>> _fakeFetchTasks() async {
   ];
 }
 
+Future<CalendarSyncResult> _fakeSyncCalendar() async {
+  return const CalendarSyncResult(eventsSynced: 1, permissionGranted: true);
+}
+
+Future<List<CalendarMirrorData>> _fakeFetchCalendarEvents() async {
+  return [
+    CalendarMirrorData(
+      eventId: 'evt1',
+      title: 'A real, distinctive synced event',
+      startTime: DateTime(2026, 9, 1, 14, 0),
+      endTime: DateTime(2026, 9, 1, 15, 0),
+      sourceCalendarId: 'cal_primary',
+      lastSyncedAt: DateTime(2026, 8, 28),
+    ),
+  ];
+}
+
 Future<RiskAssessmentData> _fakeFetchPredictiveRisk() async {
   return RiskAssessmentData(
     weekStart: DateTime(2026, 9, 1),
@@ -132,6 +151,8 @@ Widget _harness() {
         fetchFinance: _fakeFetchFinance,
         fetchWaitingOn: _fakeFetchWaitingOn,
         fetchSearch: _fakeFetchSearch,
+        syncCalendar: _fakeSyncCalendar,
+        fetchCalendarEvents: _fakeFetchCalendarEvents,
         confirmDelete: () async => throw UnimplementedError(),
       ),
     ),
@@ -255,5 +276,17 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('A real search result for "invoice"'), findsOneWidget);
+  });
+
+  testWidgets('the You tab genuinely reaches the real Calendar screen with a real synced event', (tester) async {
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('You'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Calendar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('A real, distinctive synced event'), findsOneWidget);
   });
 }
