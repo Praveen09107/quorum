@@ -60,14 +60,19 @@ Future<QuickCaptureResultData> Function(String text) createQuickCaptureFetcher({
       throw ApiException('Could not submit that right now.', statusCode: response.statusCode);
     }
 
-    final Map<String, dynamic> json;
+    // RESOLVED, a real, disclosed CRITICAL-tier review LOW (`DEC-153`
+    // L5): `_parseQuickCaptureResult()`'s own real field casts previously
+    // ran OUTSIDE this try/catch -- a real `200` response missing an
+    // expected key would have thrown a raw, uncaught type-cast error
+    // instead of the same honest `ApiException` every other malformed-
+    // response case here already produces. Both steps are now inside
+    // one real try/catch.
     try {
-      json = jsonDecode(response.body) as Map<String, dynamic>;
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      return _parseQuickCaptureResult(json);
     } catch (e) {
       throw const ApiException('Quorum sent back something this app could not understand.');
     }
-
-    return _parseQuickCaptureResult(json);
   };
 }
 

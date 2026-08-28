@@ -6,7 +6,7 @@ having real, tested logic and a real screen since Batch 6 (`DEC-080`),
 and `mobile/lib/shell/main_shell.dart`'s own `_TodayTab` already wiring
 a real tap-through from a "Needs you now" card to it.
 
-REAL DATA SOURCE: `retry_queue_drainer.py::_persist_verdict()` now
+REAL DATA SOURCE: `retry_queue_drainer.py::persist_gate_verdict()` now
 writes the real Gate's own `findings`/`objections` (migration `0013`)
 onto the exact same `action_events` row it already creates for every
 real, downstream-translated action -- no new table, no duplicated

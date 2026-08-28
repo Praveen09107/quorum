@@ -90,7 +90,11 @@ from quorum_backend.features.today import (
     fetch_today_budget,
     fetch_today_capacity,
 )
-from quorum_backend.features.quick_capture import QuickCaptureError, capture_task_from_text, make_gemini_task_extraction_call
+from quorum_backend.features.quick_capture import (
+    QuickCaptureError,
+    capture_task_from_extracted_args,
+    make_gemini_task_extraction_call,
+)
 from quorum_backend.features.trust_digest import fetch_trust_digest
 from quorum_backend.gate.llm_calls import make_gemini_judge_call, make_groq_critic_call
 from quorum_backend.negotiation.downstream_translation import make_gemini_downstream_translation_call
@@ -399,8 +403,17 @@ async def quick_capture_endpoint(
     (matching `GET /search`'s own established convention for the
     identical real reason -- no `GEMINI_API_KEY` in this environment).
     A real, honest `502` if a live extraction call itself fails after
-    retries -- never a fabricated task standing in for a genuine
-    failure."""
+    retries, or if its output genuinely can't be turned into a real
+    task -- never a fabricated task standing in for a genuine failure.
+
+    RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-153`
+    M2): the real Gemini extraction call happens BEFORE `pool.acquire()`
+    -- an earlier version held a real, pooled Postgres connection idle-
+    in-transaction for the extraction call's own real network latency
+    (up to ~60s worst case), a genuine resource-exhaustion risk on a
+    free-tier pool for a call that touches no database. See `features/
+    quick_capture.py::capture_task_from_text()`'s own docstring for the
+    full account."""
     settings = get_settings()
     if settings.gemini_api_key is None:
         raise HTTPException(status_code=503, detail="Quick capture is not currently available -- the extraction provider isn't configured.")
@@ -411,18 +424,28 @@ async def quick_capture_endpoint(
     judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
 
     try:
+        args = await extraction_call(body.text)
         async with pool.acquire() as conn:
             async with conn.transaction():
-                result = await capture_task_from_text(
+                result = await capture_task_from_extracted_args(
                     conn,
                     user_id=internal_user_id,
-                    free_text=body.text,
-                    extraction_call=extraction_call,
+                    args=args,
                     critic_call=critic_call,
                     judge_call=judge_call,
                 )
     except QuickCaptureError as exc:
-        raise HTTPException(status_code=502, detail=f"Couldn't turn that into a real task: {exc}") from exc
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except asyncpg.PostgresError as exc:
+        # RESOLVED, a real, disclosed CRITICAL-tier review HIGH (`DEC-153`
+        # H1): real, defense-in-depth -- `validate_and_build_task_proposal
+        # ()` now genuinely rejects a malformed `title`/`estimated_hours`
+        # before any real database write (the real gap this review
+        # finding closed), but this catches any OTHER genuinely
+        # unexpected real Postgres error the same honest way `action_
+        # executor.py`'s own outer wrapper already does, rather than a
+        # raw, unhandled `500` reaching a real user.
+        raise HTTPException(status_code=502, detail="Couldn't turn that into a real task -- please try rephrasing it.") from exc
 
     return {
         "executed": result.executed,

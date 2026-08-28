@@ -258,14 +258,55 @@ def validate_and_build_finance_proposal(args: dict) -> ActionProposal:
     return build_finance_proposal(action=action, amount=amount, category=args["category"], payee=args.get("payee"))
 
 
+_MAX_TASK_TITLE_LENGTH = 500
+
+
 def validate_and_build_task_proposal(args: dict) -> ActionProposal:
+    # RESOLVED, a real, disclosed CRITICAL-tier review BLOCKER (`DEC-153`
+    # B1): this real sibling to `validate_and_build_finance_proposal()`
+    # above was missing the identical `math.isfinite()` check that
+    # function's own docstring explains in full -- a genuine, live gap,
+    # not a hypothetical: `estimated_hours <= 0` and `estimated_hours >
+    # _MAX_ESTIMATED_HOURS` are BOTH real, live `False` for a real
+    # `float('nan')` (confirmed live), so a malformed extraction could
+    # reach `build_task_proposal()` and, from there, a real `tasks.
+    # estimated_hours NUMERIC(4,1)` write -- live-confirmed to genuinely
+    # ACCEPT a stored `NaN` value, which would then permanently poison
+    # every future `SUM(estimated_hours)` read for that user (`fetch_
+    # committed_hours_before()`, this module's own `today.py`-shared
+    # capacity queries) with no way to detect or repair it after the
+    # fact. Only real, incidental statement ORDERING (the `action_events`
+    # jsonb insert happens first and Postgres's own jsonb parser rejects
+    # a literal `NaN` token first) prevented this from ever being
+    # reachable through the one real caller that existed before this
+    # session (`DEC-148`'s own log entry explicitly anticipated exactly
+    # this: "a different future caller might not route through that
+    # same jsonb insert" -- `features/quick_capture.py` is that future
+    # caller).
     estimated_hours = float(args["estimated_hours"])
-    if estimated_hours <= 0:
-        raise DownstreamTranslationError(f"Translated estimated_hours must be positive, got {estimated_hours!r}")
+    if not math.isfinite(estimated_hours) or estimated_hours <= 0:
+        raise DownstreamTranslationError(f"Translated estimated_hours must be a real, finite, positive number, got {estimated_hours!r}")
     if estimated_hours > _MAX_ESTIMATED_HOURS:
         raise DownstreamTranslationError(
             f"Translated estimated_hours {estimated_hours!r} exceeds the real, max storable value {_MAX_ESTIMATED_HOURS}"
         )
+    # RESOLVED, a real, disclosed CRITICAL-tier review HIGH (`DEC-153`
+    # H1): `title` had zero real validation at all -- live-confirmed
+    # that a non-string `title` (a real dict) or a real `None` each
+    # reach a genuine, UNCAUGHT `asyncpg` error (`DataError`/
+    # `NotNullViolationError`) from the real `INSERT INTO tasks`, a real
+    # HTTP `500` rather than this module's own documented, honest `502`
+    # contract. A real, unbounded string title (50,000 real characters)
+    # was also live-confirmed to write successfully -- `tasks.title` is
+    # a real, unbounded `TEXT` column, so nothing stopped it. Checked
+    # here, the same "last line of defense against a Judge/model-
+    # authored value" discipline this function's own numeric checks
+    # already establish.
+    title = args["title"]
+    if not isinstance(title, str) or not title.strip():
+        raise DownstreamTranslationError(f"Translated title must be a real, non-empty string, got {title!r}")
+    if len(title) > _MAX_TASK_TITLE_LENGTH:
+        raise DownstreamTranslationError(f"Translated title exceeds the real, max plausible length {_MAX_TASK_TITLE_LENGTH}")
     deadline_iso = args.get("deadline_iso")
     deadline = datetime.fromisoformat(deadline_iso) if deadline_iso else None
     return build_task_proposal(title=args["title"], estimated_hours=estimated_hours, deadline=deadline, existing_task_id=None)

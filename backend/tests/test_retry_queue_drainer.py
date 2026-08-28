@@ -384,7 +384,7 @@ async def test_drain_due_jobs_processes_a_real_single_domain_job_and_persists_a_
     assert isinstance(json.loads(gate_reveal_row["findings"]), list)
 
 
-async def testpersist_gate_verdict_writes_real_findings_and_objections_matching_the_real_verdict(pool, user_id):
+async def test_persist_gate_verdict_writes_real_findings_and_objections_matching_the_real_verdict(pool, user_id):
     """A real, direct unit test of `persist_gate_verdict()` itself (not the
     full `drain_due_jobs()` pipeline) -- proves the real persistence
     mechanism handles a genuinely non-empty `objections` list correctly,

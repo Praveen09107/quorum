@@ -22,18 +22,39 @@ class _QuickCaptureScreenState extends State<QuickCaptureScreen> {
   final _controller = TextEditingController();
   Future<QuickCaptureResultData>? _result;
 
+  // RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-153`
+  // M4): this screen's own `Create` button was never disabled while a
+  // real request was already in flight -- a real, rapid double-tap
+  // (unlike `_SearchHost`'s own identical pattern, which is genuinely
+  // safe for a real READ) fired two real, billed extraction calls and
+  // could genuinely create two real `tasks` rows from one real user
+  // intent. `_isSubmitting` guards both the button and the text field's
+  // own `onSubmitted` the same way.
+  bool _isSubmitting = false;
+
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
+    if (_isSubmitting) return;
     final text = _controller.text.trim();
     if (text.isEmpty) return;
     setState(() {
+      _isSubmitting = true;
       _result = widget.capture(text);
     });
+    try {
+      await _result;
+    } catch (_) {
+      // The real error itself is already surfaced by the FutureBuilder
+      // below -- this catch exists only so `finally` below genuinely
+      // always runs, real success or real failure alike.
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
   }
 
   @override
@@ -54,6 +75,7 @@ class _QuickCaptureScreenState extends State<QuickCaptureScreen> {
                 hintText: "What do you want to get done? e.g. \"Finish the Q3 budget review by next Friday, 2 hours\"",
               ),
               textInputAction: TextInputAction.done,
+              enabled: !_isSubmitting,
               onSubmitted: (_) => _submit(),
             ),
           ),
@@ -61,7 +83,12 @@ class _QuickCaptureScreenState extends State<QuickCaptureScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: SizedBox(
               width: double.infinity,
-              child: FilledButton(onPressed: _submit, child: const Text('Create')),
+              child: FilledButton(
+                onPressed: _isSubmitting ? null : _submit,
+                child: _isSubmitting
+                    ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('Create'),
+              ),
             ),
           ),
           const SizedBox(height: 16),
