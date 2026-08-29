@@ -59,6 +59,13 @@ dependencies:
 
   cupertino_icons: ^1.0.6
   http: ^1.6.0
+  # Real typography (Phase 8, DEC-155) -- the real, deliberate IBM Plex
+  # Sans/Mono pairing `theme/quorum_theme.dart` now uses, replacing
+  # Flutter's own stock Material 3 default type scale. Google Fonts is
+  # this package's own real, documented distribution mechanism (fetches
+  # and caches the real font files on first real use); no local font
+  # asset files are bundled in this repository.
+  google_fonts: ^6.2.1
   sqlite3: ^3.5.1
   flutter_web_auth_2: ^5.1.0
   # Pinned to 10.3.1, the last pre-11.x release -- same real,
