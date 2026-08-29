@@ -3521,4 +3521,29 @@ Verified again after fixes: `flutter analyze` clean, `flutter test` 449/449 pass
 
 ---
 
-*Next entry: DEC-155*
+## DEC-155: Phase 8 Session 1 -- real design system foundation
+
+**Standard tier** -- entirely mobile, pure theme/visual work. Zero Gate/security/auth/secrets/external-action touch.
+
+**Authorized directly, via an approved plan.** "Go ahead and finish remaining, then continue implementing next two phases" (Phase 8, real visual design; Phase 9, production hardening) read, correctly, as a batch instruction -- which sits in direct, real tension with `CLAUDE.md`'s own binding cadence rule ("one session, explicit approval, then the next -- not a batch run through multiple sessions unsupervised"). Per this project's own decision protocol ("when my recommendation and Preethish's stated preference genuinely conflict: implement my recommendation, with the reasoning explained plainly"), a full session-by-session breakdown for both phases was drafted via plan mode and explicitly approved before any implementation began, rather than silently batch-running either phase or silently ignoring the instruction. This entry is Session 1 of that approved breakdown.
+
+**Real, confirmed starting point:** `quorum_theme.dart` was a single neutral seed color feeding `ColorScheme.fromSeed`, Flutter's own stock Material 3 type scale, and no formal spacing system -- `google_fonts` was not yet a dependency (confirmed directly against `pubspec.yaml` before adding it).
+
+**What was built:** Added `google_fonts` (`^6.2.1`, resolved `6.3.3`) -- no bundled font assets, this package's own real, documented distribution mechanism. `quorum_theme.dart` gained a real, explicit `TextTheme` (deliberate sizes/weights/line-heights for every role including `display*`, not Flutter's stock scale), rendered in IBM Plex Sans via `GoogleFonts.ibmPlexSansTextTheme()` -- a real typeface choice matching the file's own existing "instrument-grade clarity" language (ADD §12.1), deliberately distinct from this category's common Inter/Space Grotesk default. A real `tertiary` accent (teal-700, `0xFF0F766E`) was added to the existing `ColorScheme.fromSeed(...)` call, confirmed directly against the installed Flutter SDK source to be a real, accepted override. `QuorumTextStyles.metric()` (new) uses IBM Plex Mono with tabular figures for the app's prominent numeric readouts (capacity hours, budget/Trust percentages) -- not yet applied to any screen, by this session's own explicit scope boundary (later Phase 8 sessions apply it). New `theme/spacing.dart` -- `QuorumSpacing`, a real 4pt-based scale (`xs=4` ... `xxl=48`), also not retrofit onto existing screens this session.
+
+**Verified live:** `flutter analyze` clean, `flutter test` 449/449 passing (no regression). One flagged uncertainty (`ThemeData.cardTheme` expecting `CardThemeData` vs. `CardTheme` across recent Flutter versions, disclosed in the file's own header comment since this environment has no real compiler to pre-confirm it) resolved clean by this session's own real `flutter analyze` run -- no rename needed.
+
+**Standard-tier fresh-context review: 1 MEDIUM-HIGH + 1 MEDIUM + 1 LOW found, all fixed before merge.**
+- **MEDIUM-HIGH:** the new `tertiary` accent collided with an existing, real semantic color use -- `needs_you_now_zone.dart` already used `colorScheme.tertiary` (previously an auto-derived harmonized tone) as its S2 medium-stakes icon color, paired with `Icons.error_outline` per the project's own "color + icon shape, never color alone" discipline. Hardcoding `tertiary` to a fixed teal reserved for "interactive emphasis / primary call-to-action" would have collided that meaning with the pre-existing S2 severity signal in the same color. Fixed: `needs_you_now_zone.dart`'s S2 case now uses `QuorumStatusColors.needsAttention` (amber) directly -- reusing the real, already-established semantic status color rather than either the newly-repurposed `tertiary` or inventing a third parallel color system. Semantically apt besides: "S2, needs your attention" is exactly what that status color already means.
+- **MEDIUM:** the new type scale omitted `displayLarge/Medium/Small` entirely, silently contradicting its own doc comment that `ibmPlexSansTextTheme()` "applies IBM Plex Sans on top of these exact sizes, preserving them" -- traced directly against the installed `google_fonts` 6.3.3 source: a role left out of the base `TextTheme` resolves to a bare, unsized `TextStyle`, not Material 3's own stock display defaults. No current screen reads `textTheme.display*` (confirmed via a full grep), so nothing broke today, but it was a real, latent trap for the next screen that does. Fixed: real Material 3 baseline sizes/weights (57/64, 45/52, 36/44) added explicitly, kept rather than invented since no screen yet gives a real reason to deviate from them for display text.
+- **LOW, process:** this entry itself was initially missing from the same commit as the code -- flagged by the reviewer per this project's own disclosed-log discipline, fixed by adding it here before the session is called complete.
+
+Verified again after fixes: `flutter analyze` clean, `flutter test` 449/449 passing.
+
+**Genuinely NOT witnessed this session, disclosed rather than skipped:** the real device was disconnected throughout (checked via `adb devices -l`) -- the new type scale, accent color, and metric text style have not yet been seen rendering on a real physical screen. Same disclosed gap as `DEC-153`/`154`; the next real on-device pass should check all three together.
+
+**Affects:** `mobile/pubspec.yaml`, `mobile/pubspec.lock`, `mobile/lib/theme/quorum_theme.dart`, `mobile/lib/theme/spacing.dart` (new), `mobile/lib/features/today/needs_you_now_zone.dart`, this log, `STATUS_INDEX.md`.
+
+---
+
+*Next entry: DEC-156*
