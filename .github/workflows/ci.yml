@@ -273,13 +273,46 @@ jobs:
             --min-instances 0 \
             --max-instances 2
 
+          # A real, defensive reassertion, added after a real, live
+          # incident this exact job caused on its own first-ever real run
+          # (`DEC-161`): `gcloud run deploy` normally does shift 100%
+          # traffic to the revision it just created, BUT that default
+          # is genuinely, permanently overridden the moment ANYONE ever
+          # runs a `--no-traffic` deploy against this service -- gcloud's
+          # own documented behavior ("the LATEST revision will not
+          # receive traffic on future deployments"). This session's own
+          # earlier, real permission-testing deploys used `--no-traffic`
+          # deliberately (to avoid affecting live traffic while verifying
+          # IAM), which silently left the service permanently pinned to
+          # an old, explicit revision name -- so this job's own real
+          # first run built and deployed a genuinely new, healthy
+          # revision that never actually served a single real request,
+          # while still reporting success. Reasserting `--to-latest`
+          # here, on every real run, makes this job robust against that
+          # exact class of drift recurring for any reason in the future,
+          # rather than trusting an implicit default that a single
+          # manual command anywhere can silently and permanently change.
+          gcloud run services update-traffic quorum-backend --region asia-south1 --to-latest
+
       - name: Verify the real, live deployment
         # A real, live smoke test, not just a passing `gcloud` exit code
         # -- `gcloud run deploy` only reports success once Cloud Run's
-        # own health check confirms the new revision is Ready and
-        # serving traffic, but this step independently proves the public
-        # URL itself, not just the revision's internal readiness probe,
-        # actually answers correctly post-rollout.
+        # own health check confirms the new revision is Ready, but that
+        # alone does NOT prove the new revision is actually serving live
+        # traffic (see the real, live incident this exact gap caused,
+        # `DEC-161`, disclosed in the step above). This step checks BOTH
+        # real facts, not just one: that the revision Cloud Run considers
+        # "latest ready" is the exact one currently serving 100% of
+        # traffic, AND that the real public URL actually answers
+        # correctly post-rollout.
         run: |
           set -e
+          DEPLOYED_REVISION=$(gcloud run services describe quorum-backend --region asia-south1 --format="value(status.latestReadyRevisionName)")
+          SERVING_REVISION=$(gcloud run services describe quorum-backend --region asia-south1 --format="value(status.traffic[0].revisionName)")
+          echo "Latest ready revision: $DEPLOYED_REVISION"
+          echo "Revision actually serving traffic: $SERVING_REVISION"
+          if [ "$DEPLOYED_REVISION" != "$SERVING_REVISION" ]; then
+            echo "Real failure: the latest ready revision is not the one serving live traffic" >&2
+            exit 1
+          fi
           curl --fail --silent --show-error https://quorum-backend-649581407643.asia-south1.run.app/health
