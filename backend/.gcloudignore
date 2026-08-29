@@ -1,0 +1,25 @@
+# Real, disclosed gap closed here (CRITICAL-tier review, `DEC-160`):
+# `gcloud builds submit` resolves `.gcloudignore` -- falling back to
+# `.gitignore` only if this file is absent -- relative to the SOURCE
+# directory it's given, never the repo root and never `.dockerignore`.
+# Every manual deploy in this project's history (`DEC-098` through
+# `DEC-159`) has run `gcloud builds submit` from inside `backend/`
+# directly, with no file here to consult -- the repo root's own real
+# `.gitignore` (which does list `backend/.env`) was never actually
+# read for this specific operation, since a `.gcloudignore`/`.gitignore`
+# lookup relative to `backend/` looks for `backend/.gitignore`, which
+# has never existed. This file closes that gap directly, permanently,
+# for every future `gcloud builds submit` run from this directory --
+# CI's own build (`ci.yml`'s `deploy` job) was never actually at risk
+# (a real GitHub Actions checkout only ever has committed files on
+# disk to begin with), but every real manual deploy before this fix
+# genuinely could have uploaded `backend/.env`'s real contents into the
+# Cloud Build staging bucket's build-context tarball.
+.env
+.env.*
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+tests/
+.git/
