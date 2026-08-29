@@ -3564,4 +3564,32 @@ Verified again after fixes: `flutter analyze` clean, `flutter test` 449/449 pass
 
 ---
 
-*Next entry: DEC-157*
+## DEC-157: Phase 8 Session 3 -- Tasks + Finance + Career Pipeline screens, real componentry
+
+**Standard tier** -- entirely mobile, pure UI componentry building on `DEC-155`/`156`'s tokens. Zero Gate/security/auth/secrets/external-action touch.
+
+**Authorized directly, via the same approved Phase 8/9 session breakdown, brief check-in cadence ("Session 2 done, moving to Session 3").**
+
+**What was built:** `QuorumSpacing` tokens replace literal `16`/`8` values across all three screens. A new `QuorumTextStyles.metricSmall()` (`quorum_theme.dart`) -- the same real IBM Plex Mono + tabular-figures treatment as `metric()`, sized to `titleMedium` instead of `headlineMedium`, since a full headline-sized number would overwhelm a single row in a dense list the way it doesn't for a standalone Today/Trust readout. Every list row across all three screens now uses `ListView.separated`/an explicit `SizedBox` gap plus a `QuorumIconBadge` leading icon, matching Session 2's established pattern.
+
+**Tasks:** each row's icon SHAPE now signals `TaskStatus` (a real, closed, database-enforced set -- confirmed safe to switch on exhaustively, unlike Career Pipeline's genuinely open `applications.status`): `done` gets `QuorumStatusColors.verified` as a distinct color (a real, positive completed outcome); `open`/`cancelled` share a neutral tone, distinguished only by icon shape, since neither is inherently good or bad. The status `Chip` is now tinted to match. **A real, disclosed fix found while applying the new status-color system properly, not a pure reskin:** `_PredictiveRiskBanner` previously collapsed three real, distinct states -- genuinely no historical data yet, a real predicted busy week, a real all-clear -- into only two visual treatments, with "not enough data" rendering identically to "all clear." This is exactly the `no_data_found`-collapsed-into-a-pass mistake `CLAUDE.md`'s own `evidence_state` discipline exists to prevent elsewhere in this project; there was no reason this screen should be the standing exception. `riskMessage()`'s own three-way logic is untouched -- only which icon/color the UI selects around the same real message changed. The Card's own background no longer flips to `errorContainer` on risk -- status is now signaled through the badge alone, matching every other real screen's own "status via icon+badge, card stays neutral" pattern rather than being the one exception.
+
+**Standard-tier fresh-context review: 2 MEDIUM found (both on the same banner), fixed before merge.** The reviewer independently re-ran `flutter analyze`/`flutter test` in an isolated worktree (449/449 confirmed) and independently cross-checked `QuorumStatusColors`' real, established usage convention across every other file that uses it, rather than trusting this session's own inline justification.
+- **MEDIUM:** the banner's initial mapping used `QuorumStatusColors.uncertain` for "a real predicted busy week" -- backwards from this codebase's own real, established convention. Confirmed directly: `gate_reveal_screen.dart`'s `EvidenceVisualState.negative` and `negotiation_screen.dart`'s `MetricVisualDirection.worsens` both already map to `critical` for a real negative/failure outcome; `uncertain` is reserved for a genuinely NEUTRAL, unchanged state (`MetricVisualDirection.unchanged`), not a real warning. The initial mapping meant this banner's single most actionable state (a real, quantified predicted overload) read as LESS alarming than "we don't know yet" -- backwards from what a predictive-risk warning should communicate. Fixed: `isAtRisk` now maps to `critical`, matching the codebase's own two other real precedents for exactly this kind of outcome.
+- **MEDIUM, compounding the first:** removing the Card-level `errorContainer` background (in favor of the icon badge alone) was flagged as a real, disclosed reduction in visual weight for the banner's most severe state, on top of the wrong color choice. The `critical` fix substantially addresses this in practice (a strong, established red reads clearly even at the badge's own small scale) -- the badge-only presentation itself is kept, deliberately, to match every other real screen's own "status via icon+badge, card stays neutral" pattern rather than reintroducing the one screen that flips its whole card background, which was never how any other status signal in this app is shown.
+
+Verified again after fixes: `flutter analyze` clean, `flutter test` 449/449 passing.
+
+**Finance:** a neutral `Icons.autorenew` badge on every row (no per-subscription status exists to signal); the trailing amount uses `QuorumTextStyles.metricSmall()` -- tabular figures keep a column of real currency amounts visually aligned, the exact numeric-readout case that style was built for.
+
+**Career Pipeline:** a neutral `Icons.business_center` badge on every row, deliberately identical regardless of status -- `applications.status` is a genuinely open vocabulary (confirmed directly, again, against `career_pipeline_logic.dart`'s own header: only two of four `knownStatusOrder` values are real anywhere in this codebase today), so inventing a color per status now would mean guessing a meaning for values that don't exist yet -- exactly the unrequested architecture `CLAUDE.md` Rule 3 exists to prevent. Status sections also gained an explicit bottom gap between them, previously absent.
+
+**Verified live:** `flutter analyze` clean, `flutter test` 449/449 passing (no regression; confirmed no test in this repository asserts on `Chip`/`Card`/`ListTile` widget types, icon identity, or color values for any of the three screens before relying on that -- only text content, which is unchanged).
+
+**Genuinely NOT witnessed this session, disclosed rather than skipped:** the real device remained disconnected (checked via `adb devices -l`) -- this is now the fifth consecutive session (`DEC-153` through `DEC-157`) with a real, disclosed on-device verification gap. Worth closing before Phase 8 closes out.
+
+**Affects:** `mobile/lib/theme/quorum_theme.dart`, `mobile/lib/features/tasks/tasks_screen.dart`, `mobile/lib/features/finance/finance_screen.dart`, `mobile/lib/features/career/career_pipeline_screen.dart`, this log.
+
+---
+
+*Next entry: DEC-158*

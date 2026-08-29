@@ -178,6 +178,21 @@ class QuorumTextStyles {
       fontFeatures: const [FontFeature.tabularFigures()],
     );
   }
+
+  /// A smaller variant for a numeric value inside a dense list row (Phase
+  /// 8 Session 3, `DEC-157` -- Finance's per-subscription amount) -- the
+  /// same real IBM Plex Mono + tabular-figures treatment as `metric()`,
+  /// sized to `titleMedium` instead of `headlineMedium`. A full
+  /// headline-sized number reads right for a single, standalone Today/
+  /// Trust readout; the same size would overwhelm one row in a dense
+  /// list, so this gives list rows their own, smaller real numeric
+  /// treatment rather than reusing `metric()` at the wrong scale.
+  static TextStyle metricSmall(BuildContext context) {
+    return GoogleFonts.ibmPlexMono(
+      textStyle: Theme.of(context).textTheme.titleMedium,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
+  }
 }
 
 /// A real, considered componentry piece (Phase 8, `DEC-156`) -- a colored
