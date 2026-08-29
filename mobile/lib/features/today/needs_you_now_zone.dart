@@ -30,7 +30,7 @@ class NeedsYouNowZone extends StatelessWidget {
 
     if (sorted.isEmpty) {
       return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
+        padding: EdgeInsets.symmetric(vertical: QuorumSpacing.lg),
         child: Text('Nothing needs you right now.'),
       );
     }

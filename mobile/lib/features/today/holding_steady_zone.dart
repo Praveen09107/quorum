@@ -98,6 +98,12 @@ class _HoldingSteadyZoneState extends State<HoldingSteadyZone> {
               valueText: '${widget.capacity.hoursRemainingToday.toStringAsFixed(1)}h',
               source: widget.capacity.source,
             ),
+            // A real, disclosed 12px -> 8px tightening (`DEC-156` review
+            // finding), not an accidental token-rounding artifact:
+            // QuorumSpacing has no `12` value, and `sm` (8) reads as a
+            // deliberately tighter pairing between these two conceptually
+            // paired metrics than the looser `md` (16) gap already used
+            // above, between the headline and the first number.
             const SizedBox(height: QuorumSpacing.sm),
             _ComputedNumberRow(
               label: 'Budget remaining this month',
