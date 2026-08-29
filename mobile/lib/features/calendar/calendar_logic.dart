@@ -65,7 +65,16 @@ bool isSameCalendarDay(DateTime a, DateTime b) {
 /// for its own staleness labels).
 String formatEventDayLabel(DateTime start, DateTime now) {
   final today = DateTime(now.year, now.month, now.day);
-  final tomorrow = today.add(const Duration(days: 1));
+  // RESOLVED, a real, disclosed standard-tier review MEDIUM found while
+  // building `meeting_load_logic.dart`'s own multi-day projection
+  // (which carried the identical, real bug): real calendar-FIELD
+  // addition (`DateTime(year, month, day + 1)`), never `.add(Duration(
+  // days: 1))` -- Dart's own SDK documentation states a local-time
+  // `DateTime.add()` can genuinely shift across a real DST transition,
+  // landing on the wrong real calendar day. This project's actual
+  // deployment target (India, IST) observes no DST, so this was never
+  // reachable in practice, but the fix is cheap and correct regardless.
+  final tomorrow = DateTime(now.year, now.month, now.day + 1);
   if (isSameCalendarDay(start, today)) return 'Today';
   if (isSameCalendarDay(start, tomorrow)) return 'Tomorrow';
   final weekday = _weekdayNames[start.weekday - 1];

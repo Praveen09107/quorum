@@ -3510,6 +3510,13 @@ Verified again after fixes: `ruff check backend` clean; the 41 deterministic tes
 
 **Genuinely NOT witnessed this session, disclosed rather than skipped:** the real device was disconnected the entire session -- this feature has not yet been seen rendering against a real, synced calendar on a real physical device. The next real on-device pass should check it.
 
+**Standard-tier fresh-context review: no BLOCKER/HIGH, 1 MEDIUM + 2 LOW found, all fixed.** The reviewer independently built and ran the branch in an isolated copy (not the shared checkout), reproducing `flutter analyze`/`flutter test` (449/449) and the `dart test`-fails-to-load claim directly, and independently ran a Dart script to re-verify this session's own NaN/`.clamp()` behavioral claims rather than trusting the code comments.
+- **MEDIUM:** `computeWeeklyMeetingLoad()`'s `today.add(Duration(days: offset))` is not DST-safe -- Dart's own SDK documentation confirms a local-time `.add()` can shift across a real DST transition, landing on the wrong real calendar day, which `isSameCalendarDay` would then either double-count or silently drop. Fixed: real calendar-field construction (`DateTime(year, month, day + offset)`) instead, which Dart's own constructor normalizes correctly. The identical, pre-existing gap in `calendar_logic.dart::formatEventDayLabel()`'s own `tomorrow` calculation (predating this session) was fixed the same way while already in the area -- real, deployment-target India/IST observes no DST, so neither was ever reachable in practice, but both are now correct regardless.
+- **LOW:** this entry's own STATUS_INDEX line overclaimed "closing item #8's last real gap" -- item #8 still genuinely lists `style_reply.py`/`mem0`/`computed_state.py` as absent, unaffected by this session. Reworded to claim only the specific sub-gap this session actually closed.
+- **LOW, a real process note, not a code defect:** this is the third consecutive session (`DEC-152`/`153`/`154`) appending to `STATUS_INDEX.md`'s "Product Reality" section since the last full rewrite-checkpoint (`DEC-151`) -- `CLAUDE.md`'s own whole-system-checkpoint rule calls for one "at minimum every 2-3 sessions." One is now due before further sessions stack more bullets onto that section.
+
+Verified again after fixes: `flutter analyze` clean, `flutter test` 449/449 passing.
+
 **Affects:** `backend/src/quorum_backend/features/meeting_load.py`, `mobile/lib/features/meeting_load/meeting_load_logic.dart` (new), `mobile/lib/features/calendar/calendar_logic.dart`, `mobile/lib/features/calendar/calendar_screen.dart`, `mobile/test/meeting_load_logic_test.dart` (new), `mobile/test/calendar_logic_test.dart`, `mobile/test/main_shell_navigation_test.dart`, this log, `STATUS_INDEX.md`.
 
 ---

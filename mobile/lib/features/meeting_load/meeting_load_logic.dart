@@ -124,11 +124,27 @@ List<DailyMeetingLoad> computeWeeklyMeetingLoad(
   int lookAheadDays = 7,
 }) {
   final referenceNow = now ?? DateTime.now();
-  final today = DateTime(referenceNow.year, referenceNow.month, referenceNow.day);
 
+  // RESOLVED, a real, disclosed standard-tier review MEDIUM: real
+  // calendar-FIELD construction (`DateTime(year, month, day + offset)`),
+  // never `DateTime(...).add(Duration(days: offset))` -- Dart's own SDK
+  // documentation states directly that `DateTime.add()` on a local-time
+  // value can genuinely shift the time-of-day across a real DST
+  // transition, landing the result at 23:00 the day before or 01:00 the
+  // day after the intended real calendar date. Fed into
+  // `isSameCalendarDay`, that could have silently duplicated or dropped
+  // a real day's events during a real DST change. Dart's own `DateTime`
+  // constructor genuinely normalizes an out-of-range `day` value
+  // correctly (`DateTime(2026, 8, 32)` is a real, valid `2026-09-01`),
+  // so this real, calendar-field addition is immune to the same class
+  // of bug. Real, deployment-relevant note: this project's actual
+  // target (India, IST) observes no DST, so the pre-existing gap this
+  // finding also applies to (`calendar_logic.dart`'s own `tomorrow =
+  // today.add(const Duration(days: 1))`) was never reachable in
+  // practice -- fixed here regardless, since it's cheap and correct.
   return [
     for (var offset = 0; offset < lookAheadDays; offset++)
-      _dailyLoadFor(today.add(Duration(days: offset)), events),
+      _dailyLoadFor(DateTime(referenceNow.year, referenceNow.month, referenceNow.day + offset), events),
   ];
 }
 
