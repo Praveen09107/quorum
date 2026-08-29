@@ -29,16 +29,32 @@ hours figure is actually available, including fully offline (the ADD's
 own §10.3 point about `AvailabilityCheck` applies equally here).
 
 HONEST DISCLOSURE: no real backend route or caller invokes this
-function yet. The real, on-device `CalendarProvider` integration and
-the Dart port of this function are real, separate, substantial mobile
-work, tracked as Phase 5's own remaining scope -- not silently assumed
-done by this session. `gate/validators.py`'s own real, already-built
-`availability_check`/`temporal_fact_check` depend on a real
-`CalendarAdapter` implementation that has the same real, unresolved
-gap: none exists anywhere in this backend yet, on-device or otherwise,
-since no route today ever needs to construct a real Gate proposal
-carrying calendar context in the first place (the same "no real
-caller" gap `SEND_EMAIL` execution disclosed, `DEC-142`).
+function directly -- it remains the real, pure, single-day REFERENCE
+implementation, deliberately never given a real backend caller, since
+no real backend data source for genuine calendar meeting load exists
+(the real on-device `CalendarProvider`/`CalendarMirror` data DEC-152
+built is never mirrored server-side, a deliberate privacy decision,
+not an oversight).
+
+RESOLVED for real (Meeting-Load Defense session, following DEC-152's
+real on-device Calendar sync): the real Dart port this docstring
+always pointed to now exists --
+`mobile/lib/features/meeting_load/meeting_load_logic.dart`, a direct,
+hand-verified port of `compute_meeting_load()` above (identical real
+parameters, identical real defensive clamping, a real, hand-verified
+account of where Dart's own `NaN`-comparison semantics genuinely
+differ from Python's), extended there with the real, genuine multi-day
+projection this module's own single-day function was always meant to
+back -- computed entirely from real, already-synced on-device
+`CalendarMirror` events, with zero real backend involvement at all,
+surfaced as a real, live banner on the real Calendar screen
+(`calendar_screen.dart`). `gate/validators.py`'s own real
+`availability_check`/`temporal_fact_check` still depend on a real
+`CalendarAdapter` implementation that has the same real, deliberately
+unresolved gap disclosed at `DEC-151`/`152`: no real caller in this
+backend can construct a Gate proposal carrying calendar context in the
+first place, so building one remains genuinely unneeded today, not
+merely unbuilt.
 """
 from __future__ import annotations
 

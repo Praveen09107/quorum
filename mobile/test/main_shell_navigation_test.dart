@@ -147,7 +147,7 @@ Future<RiskAssessmentData> _fakeFetchPredictiveRisk() async {
   );
 }
 
-Widget _harness() {
+Widget _harness({Future<List<CalendarMirrorData>> Function()? fetchCalendarEvents}) {
   return ProviderScope(
     child: MaterialApp(
       home: MainShell(
@@ -163,7 +163,7 @@ Widget _harness() {
         fetchWaitingOn: _fakeFetchWaitingOn,
         fetchSearch: _fakeFetchSearch,
         syncCalendar: _fakeSyncCalendar,
-        fetchCalendarEvents: _fakeFetchCalendarEvents,
+        fetchCalendarEvents: fetchCalendarEvents ?? _fakeFetchCalendarEvents,
         captureTask: _fakeCaptureTask,
         confirmDelete: () async => throw UnimplementedError(),
       ),
@@ -300,6 +300,60 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('A real, distinctive synced event'), findsOneWidget);
+  });
+
+  testWidgets('the real Meeting-Load banner reassures when the next 7 real days are genuinely light', (tester) async {
+    // A real, single 1-hour event, genuinely far below the real 4.2h
+    // overload boundary -- computed relative to the real DateTime.now()
+    // at test-run time, never a fixed date that could drift into the
+    // past.
+    final now = DateTime.now();
+    Future<List<CalendarMirrorData>> lightWeek() async => [
+          CalendarMirrorData(
+            eventId: 'evt_light',
+            title: 'A real, light event',
+            startTime: now.add(const Duration(hours: 2)),
+            endTime: now.add(const Duration(hours: 3)),
+            sourceCalendarId: 'cal_primary',
+            lastSyncedAt: now,
+          ),
+        ];
+
+    await tester.pumpWidget(_harness(fetchCalendarEvents: lightWeek));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('You'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Calendar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Next 7 days look manageable.'), findsOneWidget);
+  });
+
+  testWidgets('the real Meeting-Load banner genuinely warns for a real, overloaded day within the next 7', (tester) async {
+    // A real, genuine 6-hour real commitment today -- exceeds the
+    // real, specified 4.2h default overload boundary (0.7 * 8.0 *
+    // 0.75), computed relative to the real DateTime.now().
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day, 9, 0);
+    Future<List<CalendarMirrorData>> overloadedWeek() async => [
+          CalendarMirrorData(
+            eventId: 'evt_heavy',
+            title: 'A real, heavy real commitment',
+            startTime: today,
+            endTime: today.add(const Duration(hours: 6)),
+            sourceCalendarId: 'cal_primary',
+            lastSyncedAt: now,
+          ),
+        ];
+
+    await tester.pumpWidget(_harness(fetchCalendarEvents: overloadedWeek));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('You'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Calendar'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Heavier than usual'), findsOneWidget);
   });
 
   testWidgets('the real floating action button opens Quick capture and creates a real task from real free text', (tester) async {

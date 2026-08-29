@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/db/database.dart';
 import 'package:quorum_mobile/features/calendar/calendar_logic.dart';
+import 'package:quorum_mobile/features/meeting_load/meeting_load_logic.dart';
 
 /// A real, deliberately minimal display of whatever's currently in the
 /// real, on-device `CalendarMirror` table (`db/database.dart`) -- this
@@ -51,11 +52,20 @@ class CalendarScreen extends StatelessWidget {
 
     final sorted = sortByStartTime(events);
 
+    // Real Meeting-Load Defense -- the real, genuine multi-day
+    // projection `backend/features/meeting_load.py`'s own docstring
+    // named this exact screen as its intended home: real, on-device
+    // synced events, pure and synchronous (no async fetch needed,
+    // unlike `_PredictiveRiskBanner`'s own real live backend call --
+    // this is genuinely local data already in hand).
+    final weeklyLoad = computeWeeklyMeetingLoad(events, now: now);
+
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: sorted.length,
+      itemCount: sorted.length + 1,
       itemBuilder: (context, index) {
-        final event = sorted[index];
+        if (index == 0) return _MeetingLoadBanner(weeklyLoad: weeklyLoad, now: now);
+        final event = sorted[index - 1];
         return Card(
           child: ListTile(
             leading: const Icon(Icons.event_outlined),
@@ -65,6 +75,42 @@ class CalendarScreen extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// A real, deliberately quiet summary of the next 7 real days' own
+/// real meeting load, matching `_PredictiveRiskBanner`'s own
+/// established restraint (`tasks_screen.dart`): a real, honest
+/// reassurance when nothing's overloaded, never a fabricated warning,
+/// and a real, specific list of which real days look overloaded
+/// otherwise -- never a bare "some days are busy."
+class _MeetingLoadBanner extends StatelessWidget {
+  final List<DailyMeetingLoad> weeklyLoad;
+  final DateTime now;
+
+  const _MeetingLoadBanner({required this.weeklyLoad, required this.now});
+
+  @override
+  Widget build(BuildContext context) {
+    final overloadedDays = weeklyLoad.where((d) => d.state.isOverloaded).toList();
+
+    if (overloadedDays.isEmpty) {
+      return const Card(
+        child: ListTile(
+          leading: Icon(Icons.check_circle_outline),
+          title: Text('Next 7 days look manageable.'),
+        ),
+      );
+    }
+
+    final dayLabels = overloadedDays.map((d) => formatEventDayLabel(d.day, now)).join(', ');
+    return Card(
+      color: Theme.of(context).colorScheme.errorContainer,
+      child: ListTile(
+        leading: const Icon(Icons.warning_amber_rounded),
+        title: Text('Heavier than usual: $dayLabels'),
+      ),
     );
   }
 }
