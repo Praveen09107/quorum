@@ -33,10 +33,11 @@
 // there was no reason this screen should be the one exception. Now: no
 // history -> `needsAttention` (a genuine ambiguity, matching that
 // color's own documented meaning exactly); a real predicted busy week ->
-// `uncertain` (a real, non-alarming heads-up, not a confirmed failure);
-// a real all-clear -> `verified`. `riskMessage()`'s own three-way logic
-// is untouched -- only which icon/color the UI selects around the same
-// real message changed.
+// `critical` (a real, quantified negative outcome -- corrected by review
+// from an initial, wrong `uncertain` choice; see the inline comment at
+// `_PredictiveRiskBanner` for the full reasoning); a real all-clear ->
+// `verified`. `riskMessage()`'s own three-way logic is untouched -- only
+// which icon/color the UI selects around the same real message changed.
 
 import 'package:flutter/material.dart';
 
@@ -129,10 +130,26 @@ class _PredictiveRiskBanner extends StatelessWidget {
         // now matches the "never collapse a genuine ambiguity into a
         // pass or fail" discipline this project already applies
         // elsewhere.
+        //
+        // Color choice corrected by review (`DEC-157` review finding):
+        // `critical`, not `uncertain`, is the real, established color for
+        // a negative/failure outcome -- confirmed directly against this
+        // codebase's own two other real precedents,
+        // `gate_reveal_screen.dart`'s `EvidenceVisualState.negative` and
+        // `negotiation_screen.dart`'s `MetricVisualDirection.worsens`,
+        // both of which already map to `critical`. `uncertain` is
+        // reserved for a genuinely NEUTRAL, unchanged state (that same
+        // file's own `MetricVisualDirection.unchanged`) -- a real
+        // predicted busy week (this banner's own most actionable state,
+        // carrying a real, quantified historical adjustment rate) is not
+        // that; using `uncertain` for it would have made this banner's
+        // single most important signal read as LESS alarming than "we
+        // don't know," backwards from what a predictive-risk warning
+        // should communicate.
         final (IconData icon, Color color) = risk.matchingHistoricalWeeks == 0
             ? (Icons.help_outline, QuorumStatusColors.needsAttention)
             : risk.isAtRisk
-                ? (Icons.warning_amber_rounded, QuorumStatusColors.uncertain)
+                ? (Icons.warning_amber_rounded, QuorumStatusColors.critical)
                 : (Icons.check_circle_outline, QuorumStatusColors.verified);
         return Padding(
           padding: const EdgeInsets.fromLTRB(QuorumSpacing.md, QuorumSpacing.md, QuorumSpacing.md, 0),
