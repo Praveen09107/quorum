@@ -1,29 +1,58 @@
 # Quorum backend — Cloud Run service definition template.
 #
-# Real content, converted faithfully from the exact `gcloud run deploy`
-# command documented in specs/tier2_implementation/IMPL_11_INFRA_CLOUD_RUN_DEPLOY.md
-# (read verbatim, not reconstructed from a description). Every setting
-# below traces to a real, documented decision -- see that session's own
-# text and specs/tier3_verification/DECISIONS_LOG.md for the reasoning.
+# REWRITTEN (`DEC-159`) to describe the real, live deployment, replacing a
+# stale, aspirational version written before a real Cloud Run project
+# existed. That original version was never updated once real deployment
+# actually happened (`DEC-098` onward) -- it still named a placeholder
+# `PROJECT_ID`, the wrong region (`us-central1`, not the real, live
+# `asia-south1` this project's own co-location rule requires), the wrong
+# `--max-instances` (10, not the real, live 2), and `--no-allow-
+# unauthenticated` (superseded by `DEC-102` once the real login system
+# became the actual security boundary). This version is a real, faithful
+# description of the live service as of `quorum-backend-00026-chc`, not
+# a forward-looking plan for a deployment that doesn't exist yet.
 #
-# No real Cloud Run project exists yet (see STATUS_INDEX.md open items) --
-# this is a real, deployable template, filled in with PROJECT_ID at the
-# point a real project actually exists, not asserted as already deployed.
+# Real project: `quorum-505909`. Real service: `quorum-backend`, region
+# `asia-south1`. Confirmed directly via `gcloud run services describe`
+# before writing this file, not reconstructed from memory or an old doc.
 #
-# HONEST NOTE: --no-allow-unauthenticated is an IAM policy setting, not
-# part of this service definition itself -- apply it separately:
-#   gcloud run services add-iam-policy-binding quorum-backend \
-#     --region=us-central1 --member=allUsers --role=roles/run.invoker \
-#     [never run this — this is the command that WOULD make it public;
-#      omitting any allUsers binding is what keeps --no-allow-unauthenticated's
-#      real effect in place]
+# `--allow-unauthenticated` is correct and current (`DEC-102`) -- the
+# real, live login system (`DEC-101`, Bearer-token auth on every endpoint
+# that needs one) is the real security boundary now, not Cloud Run's own
+# network layer.
+#
+# SECRET HANDLING (`DEC-159`): six of the real credentials this service
+# needs are Secret Manager references (`secretKeyRef`, real IAM-scoped
+# access for the service's own runtime service account,
+# `649581407643-compute@developer.gserviceaccount.com`) -- the six
+# ranked highest by real blast-radius if leaked, chosen under a real,
+# hard constraint: Secret Manager's own free tier allows exactly 6 active
+# secret versions per month project-wide (confirmed directly, not
+# assumed, before this migration -- see `DEC-159`'s own log entry for the
+# full ranking and reasoning). The remaining real credentials below stay
+# as plain environment variables, deliberately -- not overlooked:
+# `SUPABASE_SERVICE_KEY` (confirmed unused anywhere in this backend's own
+# code, and its real value is a Supabase "publishable"-type key, non-
+# secret by that provider's own design), `GOOGLE_OAUTH_CLIENT_ID` (not
+# confidential per the OAuth spec itself), `LANGFUSE_PUBLIC_KEY` (public
+# by that provider's own design), `UPSTASH_REDIS_URL` (a plain endpoint
+# hostname, not a credential), plus `GROQ_API_KEY`/`TAVILY_API_KEY`/
+# `UPSTASH_REDIS_REST_TOKEN`/`LANGFUSE_SECRET_KEY` -- real, billed/
+# access credentials that would ideally also move to Secret Manager, left
+# as plain env vars only because of the real 6-secret budget, a
+# real, disclosed, deliberately incomplete migration rather than a
+# silently-declared-finished one. A future session could migrate more of
+# these once/if the free-tier budget allows, or accept the small real
+# cost (~$0.06/secret/month) of exceeding it -- a genuine, disclosed open
+# item, not silently deferred without a record.
 
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   name: quorum-backend
-  # region: us-central1 -- a real, confirmed free-tier-eligible region
-  # (QUORUM_CONFIGURATION_CONSTANTS.md §9), not an arbitrary choice.
+  # region: asia-south1 -- matches Supabase's own real region
+  # (ap-south-1/Mumbai) per this project's explicit co-location rule
+  # (CLAUDE.md architecture fact) -- confirmed live, not assumed.
 spec:
   template:
     metadata:
@@ -31,44 +60,133 @@ spec:
         # concurrency=1, explicit -- closes a real cross-user
         # state-isolation risk (CLAUDE.md architecture fact). Never raised
         # without a documented reason.
-        autoscaling.knative.dev/maxScale: "10"
-        autoscaling.knative.dev/minScale: "0"  # genuine scale-to-zero
-        run.googleapis.com/execution-environment: gen2
+        autoscaling.knative.dev/maxScale: "2"
+        # minScale is deliberately absent here -- CRITICAL-tier review
+        # (`DEC-159`) confirmed the live service carries no explicit
+        # `minScale` annotation at all; `0` (genuine scale-to-zero) is
+        # Cloud Run's own real default when the annotation is omitted,
+        # not something this service sets explicitly. Stated as prose
+        # above, not as a YAML key this template doesn't actually carry
+        # live.
+        run.googleapis.com/startup-cpu-boost: "true"
     spec:
       containerConcurrency: 1
       containers:
-        - image: us-central1-docker.pkg.dev/PROJECT_ID/quorum/backend:latest
+        # A real, specific tag, not `:latest` -- CRITICAL-tier review
+        # (`DEC-159`) confirmed this Artifact Registry repository has no
+        # `:latest` tag at all; every real deploy in this project's
+        # history has used a real, dated tag (`decNNN-YYYYMMDD`, see
+        # DECISIONS_LOG.md's own deploy-record entries). Shown here as
+        # the real tag live at the time this template was last verified
+        # against the actual service -- expect this to be stale the
+        # moment the next real deploy happens; it's illustrative, not
+        # load-bearing (a real deploy always names its own real tag
+        # explicitly, per the CLI commands below, never relies on this
+        # file being current).
+        - image: asia-south1-docker.pkg.dev/quorum-505909/cloud-run-source-deploy/quorum-backend:dec153-20260829
           resources:
             limits:
               cpu: "1"
               memory: 512Mi
           env:
+            # Six real Secret Manager references (`DEC-159`) -- the
+            # highest-blast-radius credentials this service holds.
+            - name: JWT_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-signing-key
+                  key: latest
+            - name: SUPABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-url
+                  key: latest
+            - name: GOOGLE_TOKEN_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: google-token-encryption-key
+                  key: latest
+            - name: GOOGLE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: google-oauth-client-secret
+                  key: latest
+            - name: INTERNAL_DRAIN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: internal-drain-secret
+                  key: latest
             - name: GEMINI_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: gemini-api-key
                   key: latest
+            # Real, plain environment variables -- see the file header
+            # for exactly why each of these deliberately isn't a Secret
+            # Manager reference.
             - name: GROQ_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: groq-api-key
-                  key: latest
-            - name: SUPABASE_DB_URL
-              valueFrom:
-                secretKeyRef:
-                  name: supabase-db-url
-                  key: latest
+              value: "REDACTED -- real value set via --set-env-vars at deploy time, never committed here"
+            - name: TAVILY_API_KEY
+              value: "REDACTED -- real value set via --set-env-vars at deploy time, never committed here"
+            - name: SUPABASE_SERVICE_KEY
+              value: "REDACTED -- real value set via --set-env-vars at deploy time, never committed here"
+            - name: UPSTASH_REDIS_URL
+              value: "REDACTED -- real value set via --set-env-vars at deploy time, never committed here"
+            - name: UPSTASH_REDIS_REST_TOKEN
+              value: "REDACTED -- real value set via --set-env-vars at deploy time, never committed here"
+            - name: GOOGLE_OAUTH_CLIENT_ID
+              value: "REDACTED -- real value set via --set-env-vars at deploy time, never committed here"
+            - name: LANGFUSE_PUBLIC_KEY
+              value: "REDACTED -- real value set via --set-env-vars at deploy time, never committed here"
+            - name: LANGFUSE_SECRET_KEY
+              value: "REDACTED -- real value set via --set-env-vars at deploy time, never committed here"
 
-# Equivalent real gcloud CLI command, read verbatim from IMPL_11's spec,
-# preserved here since it's the form the original session actually used:
+# Equivalent real gcloud CLI commands -- the actual, current shape of
+# this deployment, not the declarative YAML above (this service has
+# always been deployed via `gcloud run deploy`/`gcloud run services
+# update`, never `gcloud run services replace` against this file
+# directly -- this template documents the real shape, it isn't itself
+# applied).
 #
-# gcloud run deploy quorum-backend \
-#   --image us-central1-docker.pkg.dev/PROJECT_ID/quorum/backend:latest \
-#   --region us-central1 \
-#   --concurrency 1 \
-#   --memory 512Mi \
-#   --cpu 1 \
-#   --min-instances 0 \
-#   --max-instances 10 \
-#   --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,GROQ_API_KEY=groq-api-key:latest,SUPABASE_DB_URL=supabase-db-url:latest" \
-#   --no-allow-unauthenticated
+# A fresh build + deploy (source code changed):
+#   gcloud builds submit --tag asia-south1-docker.pkg.dev/quorum-505909/cloud-run-source-deploy/quorum-backend:<tag>
+#   gcloud run deploy quorum-backend \
+#     --image asia-south1-docker.pkg.dev/quorum-505909/cloud-run-source-deploy/quorum-backend:<tag> \
+#     --region asia-south1 \
+#     --concurrency 1 \
+#     --min-instances 0 \
+#     --max-instances 2 \
+#     --allow-unauthenticated
+#   (real env vars/secrets persist across a plain `gcloud run deploy`
+#   with no --set-env-vars/--update-secrets flags, since they're already
+#   attached to the service -- only pass those flags when a credential
+#   value itself is actually changing.)
+#
+# A config-only change (no image rebuild), e.g. rotating a Secret
+# Manager-backed credential's value:
+#
+#   OLD_VERSION=$(gcloud secrets versions list jwt-signing-key --filter="state:ENABLED" --format="value(name)")
+#   printf '%s' "$NEW_VALUE" | gcloud secrets versions add jwt-signing-key --data-file=-
+#   gcloud secrets versions destroy "$OLD_VERSION" --secret=jwt-signing-key
+#
+#   THE `versions destroy` STEP IS NOT OPTIONAL (CRITICAL-tier review
+#   finding, `DEC-159`): this project sits at exactly 6/6 of Secret
+#   Manager's real free-tier active-version budget, with zero headroom --
+#   the same real constraint `DEC-159` names as the reason only 6 of this
+#   service's 14 real credentials were migrated at all. Google's own
+#   pricing terms bill a secret version as "active" in BOTH its Enabled
+#   AND Disabled states -- only `versions destroy` actually frees the
+#   slot. Running `versions add` alone, even followed by `versions
+#   disable`, silently pushes this project to 7 active versions and a
+#   real, small ($0.06/month) cost this project's own "free-tier only"
+#   constraint explicitly forbids. `destroy` is irreversible for that one
+#   version (the OLD value becomes permanently unrecoverable) -- correct
+#   here specifically because rotation means the old value is deliberately
+#   being retired, never wanted back.
+#
+#   No redeploy needed at all if the service references the secret as
+#   `:latest` -- the next real cold start picks up the new version
+#   automatically. A deliberate, real redeploy, e.g. to force immediate
+#   rollover on every current warm instance, uses
+#   `gcloud run services update quorum-backend --region asia-south1`
+#   with no other flags -- creates a new revision from the same image.
