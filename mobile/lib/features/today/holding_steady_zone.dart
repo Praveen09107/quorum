@@ -36,6 +36,8 @@ import 'package:flutter/material.dart';
 import 'package:quorum_mobile/features/computed_state.dart';
 import 'package:quorum_mobile/features/today/holding_steady_logic.dart';
 import 'package:quorum_mobile/features/today_widget_bridge.dart';
+import 'package:quorum_mobile/theme/quorum_theme.dart';
+import 'package:quorum_mobile/theme/spacing.dart';
 
 class HoldingSteadyZone extends StatefulWidget {
   final CapacityState capacity;
@@ -85,18 +87,18 @@ class _HoldingSteadyZoneState extends State<HoldingSteadyZone> {
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(QuorumSpacing.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(headline, style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 16),
+            const SizedBox(height: QuorumSpacing.md),
             _ComputedNumberRow(
               label: 'Capacity remaining today',
               valueText: '${widget.capacity.hoursRemainingToday.toStringAsFixed(1)}h',
               source: widget.capacity.source,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: QuorumSpacing.sm),
             _ComputedNumberRow(
               label: 'Budget remaining this month',
               valueText: '${(widget.budget.remainingFraction * 100).round()}%',
@@ -131,10 +133,10 @@ class _ComputedNumberRow extends StatelessWidget {
             children: [
               Text(label, style: Theme.of(context).textTheme.bodySmall),
               // Typography IS the visualization -- no chart, no gauge.
-              Text(
-                valueText,
-                style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w600),
-              ),
+              // IBM Plex Mono, tabular figures (Phase 8, `DEC-156`) --
+              // this is exactly the "prominent numeric readout"
+              // QuorumTextStyles.metric() was built for.
+              Text(valueText, style: QuorumTextStyles.metric(context)),
             ],
           ),
         ),
@@ -154,7 +156,7 @@ class _OfflineEstimateBadge extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(Icons.cloud_off, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
-        const SizedBox(width: 4),
+        const SizedBox(width: QuorumSpacing.xs),
         Text('Offline estimate', style: Theme.of(context).textTheme.labelSmall),
       ],
     );

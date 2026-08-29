@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/features/today/needs_you_now_logic.dart';
 import 'package:quorum_mobile/theme/quorum_theme.dart';
+import 'package:quorum_mobile/theme/spacing.dart';
 
 class NeedsYouNowZone extends StatelessWidget {
   final List<PendingActionSummary> actions;
@@ -34,10 +35,16 @@ class NeedsYouNowZone extends StatelessWidget {
       );
     }
 
+    // A real, deliberate gap between cards (Phase 8, `DEC-156`) --
+    // QuorumSpacing.sm, rather than relying on Card's own implicit
+    // default margin to create rhythm.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final action in sorted) _NeedsYouNowCard(action: action, onTap: onTapAction),
+        for (var i = 0; i < sorted.length; i++) ...[
+          if (i > 0) const SizedBox(height: QuorumSpacing.sm),
+          _NeedsYouNowCard(action: sorted[i], onTap: onTapAction),
+        ],
       ],
     );
   }
@@ -74,7 +81,7 @@ class _NeedsYouNowCard extends StatelessWidget {
 
     return Card(
       child: ListTile(
-        leading: Icon(icon, color: color),
+        leading: QuorumIconBadge(icon: icon, color: color),
         title: Text(summary.headline),
         subtitle: Text(summary.stakesLabel),
         onTap: onTap == null ? null : () => onTap!(action),
