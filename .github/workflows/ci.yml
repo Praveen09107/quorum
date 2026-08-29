@@ -129,3 +129,137 @@ jobs:
       - name: flutter test
         working-directory: mobile
         run: flutter test
+
+  # Real CI/CD auto-deploy (Phase 9-A, `DEC-160`) -- automates the exact
+  # `gcloud builds submit` + `gcloud run deploy` sequence every prior real
+  # deployment in this project's history (`DEC-098` through `DEC-159`) has
+  # run by hand. CRITICAL tier, not standard, per CLAUDE.md's own Rule 6:
+  # an automated pipeline that pushes real changes to production Cloud Run
+  # on every merge is a real external-action path, the same class of risk
+  # as any other CRITICAL-tier path already reviewed at this tier, even
+  # though no Gate/Gemini logic is touched here.
+  #
+  # Gated on BOTH real CI jobs above passing (`needs:`) AND a genuine push
+  # to `main` (never a pull_request event -- a PR from a fork must never
+  # be able to trigger a real deploy using this repo's own credentials).
+  # Reuses the exact real Workload Identity Federation auth already proven
+  # end-to-end by `test-gcp-auth.yml` (`DEC-098`) -- the same real
+  # `quorum-github-pool`/`quorum-github` provider, the same real
+  # `quorum-ci-deployer` service account -- never a downloaded service
+  # account key.
+  #
+  # Deliberately does NOT pass --set-env-vars/--update-secrets/
+  # --set-secrets anywhere in this job -- a plain `gcloud run deploy`
+  # with only --image/--region/--concurrency/--min-instances/
+  # --max-instances preserves every real credential (the 6 real Secret
+  # Manager references and the remaining real plain env vars, `DEC-159`)
+  # already attached to the live service, completely unchanged. This
+  # job's only real job is rolling out new application code -- it is
+  # structurally incapable of touching a real secret's value or
+  # reference, by what flags it simply never passes, not by a runtime
+  # check that could have a bug in it.
+  #
+  # Also deliberately does NOT pass --allow-unauthenticated, even though
+  # every prior manual deploy in this project's history has -- a real,
+  # disclosed, verified-live finding from building this job (`DEC-160`):
+  # that flag tries to (re-)set the service's `roles/run.invoker`/
+  # `allUsers` IAM policy binding on every single deploy, which needs
+  # `run.services.setIamPolicy` -- a real permission `quorum-ci-deployer`
+  # deliberately does NOT hold (least privilege; that's an IAM-admin-
+  # adjacent permission a routine code-deploy identity has no real need
+  # for). Live-verified directly, not assumed: a real, `--no-traffic`
+  # test deploy WITH the flag completed with only a warning (the IAM-set
+  # attempt failed, the code deploy itself still succeeded); the
+  # identical test WITHOUT the flag completed with zero warnings. Since
+  # this exact `allow-unauthenticated` binding is already correctly set
+  # on the live service (`DEC-102`) and nothing in this job's own scope
+  # ever needs to change it, omitting the flag here is the same "only
+  # pass a flag when the value it controls is actually changing"
+  # discipline this project already applies to secrets.
+  #
+  # The build step below uses `--async` + a real polling loop against
+  # `gcloud builds describe`, NOT the simpler synchronous `gcloud builds
+  # submit --tag ...` -- a second real, verified-live finding: the
+  # synchronous form's own log-streaming/polling mechanism requires
+  # project-level `roles/viewer`/`roles/owner` to tail the default Cloud
+  # Build logs bucket, which `quorum-ci-deployer` deliberately does not
+  # hold either. Confirmed live: the exact same synchronous command that
+  # verified this job's OTHER real permission gaps kept reporting a real
+  # `ERROR` from this log-streaming check even after the underlying
+  # Cloud Build job had already reached a real `SUCCESS` status --
+  # meaning the naive synchronous form would make this CI job report a
+  # false failure on every real run, despite the actual build succeeding
+  # every time. Submitting async and polling `builds describe` directly
+  # (a plain Cloud Build API status read, real, live-confirmed to work
+  # under this SA's actual permissions) avoids the log-streaming path
+  # entirely.
+  deploy:
+    needs: [backend, mobile]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: quorum-505909
+          workload_identity_provider: projects/649581407643/locations/global/workloadIdentityPools/quorum-github-pool/providers/quorum-github
+          service_account: quorum-ci-deployer@quorum-505909.iam.gserviceaccount.com
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Build the real backend image via Cloud Build
+        working-directory: backend
+        # Tagged with the real, triggering commit SHA -- a genuine,
+        # traceable identifier, matching this project's own established
+        # `decNNN-YYYYMMDD` manual-tag convention in spirit (real and
+        # specific, never a mutable `:latest`) without inventing a new
+        # scheme this workflow would need to track state to generate.
+        run: |
+          set -e
+          IMAGE="asia-south1-docker.pkg.dev/quorum-505909/cloud-run-source-deploy/quorum-backend:gha-${{ github.sha }}"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+          BUILD_ID=$(gcloud builds submit --async --tag "$IMAGE" --format="value(id)")
+          echo "Submitted build $BUILD_ID -- polling for a real terminal status"
+
+          for i in $(seq 1 60); do
+            STATUS=$(gcloud builds describe "$BUILD_ID" --format="value(status)")
+            echo "Poll $i: $STATUS"
+            case "$STATUS" in
+              SUCCESS) exit 0 ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "Real build failure: $STATUS" >&2
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "Build did not reach a terminal status within the real polling budget" >&2
+          exit 1
+
+      - name: Deploy the real image to Cloud Run
+        run: |
+          set -e
+          gcloud run deploy quorum-backend \
+            --image "$IMAGE" \
+            --region asia-south1 \
+            --concurrency 1 \
+            --min-instances 0 \
+            --max-instances 2
+
+      - name: Verify the real, live deployment
+        # A real, live smoke test, not just a passing `gcloud` exit code
+        # -- `gcloud run deploy` only reports success once Cloud Run's
+        # own health check confirms the new revision is Ready and
+        # serving traffic, but this step independently proves the public
+        # URL itself, not just the revision's internal readiness probe,
+        # actually answers correctly post-rollout.
+        run: |
+          set -e
+          curl --fail --silent --show-error https://quorum-backend-649581407643.asia-south1.run.app/health
