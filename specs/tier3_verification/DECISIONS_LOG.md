@@ -3546,4 +3546,22 @@ Verified again after fixes: `flutter analyze` clean, `flutter test` 449/449 pass
 
 ---
 
-*Next entry: DEC-156*
+## DEC-156: Phase 8 Session 2 -- Today + Trust screens, real componentry
+
+**Standard tier** -- entirely mobile, pure UI componentry using `DEC-155`'s own new tokens. Zero Gate/security/auth/secrets/external-action touch.
+
+**Authorized directly, via the same approved Phase 8/9 session breakdown `DEC-155` operates under** -- a brief check-in ("Session 1 done, moving to Session 2") rather than a new prompt, matching that plan's own stated cadence.
+
+**What was built:** a new, shared `QuorumIconBadge` (`quorum_theme.dart`) -- a colored icon inside a soft-tinted circular container, replacing bare leading `Icon`s in three places (`NeedsYouNowZone`'s stakes icon, `InMotionZone`'s sync icon, Trust's "View weekly trend"/Missed-scenario icons) with one shared, considered piece. Deliberately preserves every existing color+icon-shape pairing exactly -- this only adds a container around the same real signal a screen already computes, never changes what it means. `HoldingSteadyZone`'s two numbers and Trust's headline catch-rate now use `QuorumTextStyles.metric()` (IBM Plex Mono, tabular figures) instead of an ad hoc `TextStyle(fontSize: 36, ...)` literal -- Trust's own "No data yet" fallback (zero self-test scenarios) deliberately keeps the normal headline style instead, since that case is a sentence, not a number. `QuorumSpacing` tokens replace the literal `16`/`24`/`12`/`8`/`4` values across `today_screen.dart` and all three Today zone files. Trust's own "View weekly trend" link and each Missed scenario are now wrapped in a `Card`, matching the card-based list pattern every other real list in this app already uses, rather than a bare `ListTile` floating in the `ListView`. Missed scenarios use `QuorumStatusColors.critical` for their icon badge -- a real, confirmed self-test failure, not an ambiguity, so `critical` (not `needsAttention`) is the correct existing status color to reuse.
+
+**A real, disclosed scope decision made and then reverted within this same session:** `quorum_theme.dart`'s `cardTheme` was briefly changed to `margin: EdgeInsets.zero` (so a screen's own explicit `QuorumSpacing` gap would be the only source of rhythm between stacked cards), then reverted before committing once a direct grep found seven other real screens (Calendar, Tasks, Finance, Career Pipeline, Honesty Log, Waiting On, Negotiation) stacking `Card`s with no separator of their own, relying entirely on Card's own implicit default margin for spacing -- all seven are outside this session's own scope (several are later Phase 8 sessions' own job). Zeroing that margin now would have silently collided those screens' cards together, a real regression on unreviewed code introduced by a session that was supposed to touch only Today and Trust. Today's own zones instead add an explicit `QuorumSpacing.sm` gap on top of the existing default margin. A later session may zero it globally once every `Card`-using screen has its own explicit gap, not before.
+
+**Verified live:** `flutter analyze` clean, `flutter test` 449/449 passing (no regression; no test in this repository asserts on `Card`/`ListTile` widget types or hardcoded font sizes for either screen, confirmed by grep before relying on that).
+
+**Genuinely NOT witnessed this session, disclosed rather than skipped:** the real device remained disconnected (checked via `adb devices -l`) -- the plan's own stated verification for this session ("a real on-device screenshot... confirm real capacity/budget numbers and the real Trust percentage still render correctly under the new visual system") could not be performed. This is now the fourth consecutive session (`DEC-153` through `DEC-156`) with a real, disclosed on-device verification gap stacking up -- worth closing at the next real device reconnection before it becomes a fifth.
+
+**Affects:** `mobile/lib/theme/quorum_theme.dart`, `mobile/lib/features/today_screen.dart`, `mobile/lib/features/today/needs_you_now_zone.dart`, `mobile/lib/features/today/in_motion_zone.dart`, `mobile/lib/features/today/holding_steady_zone.dart`, `mobile/lib/features/trust/trust_screen.dart`, this log.
+
+---
+
+*Next entry: DEC-157*

@@ -22,6 +22,8 @@ import 'package:flutter/material.dart';
 import 'package:quorum_mobile/features/trust/trust_logic.dart';
 import 'package:quorum_mobile/features/trust_digest/trust_digest_logic.dart';
 import 'package:quorum_mobile/features/trust_digest/trust_digest_screen.dart';
+import 'package:quorum_mobile/theme/quorum_theme.dart';
+import 'package:quorum_mobile/theme/spacing.dart';
 
 class TrustScreen extends StatelessWidget {
   final TrustData trust;
@@ -31,38 +33,58 @@ class TrustScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(QuorumSpacing.md),
       children: [
+        // IBM Plex Mono, tabular figures (Phase 8, `DEC-156`) -- the same
+        // real numeric-readout treatment `HoldingSteadyZone`'s own two
+        // numbers use, applied here to Trust's own headline percentage.
+        // `formatCatchRate` can also return the real prose fallback "No
+        // data yet" (total == 0) -- the mono metric style is deliberately
+        // NOT applied to that case, since it's a sentence, not a number.
         Text(
           formatCatchRate(trust.caught, trust.total),
-          style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w600),
+          style: trust.total == 0 ? Theme.of(context).textTheme.headlineMedium : QuorumTextStyles.metric(context),
         ),
         // The load-bearing honesty label -- directly beneath the number,
         // not buried.
         Text(targetLabel(trust.target), style: Theme.of(context).textTheme.bodySmall),
-        const SizedBox(height: 8),
+        const SizedBox(height: QuorumSpacing.sm),
         Text('${trust.caught} of ${trust.total} adversarial scenarios caught'),
         if (onOpenTrustDigest != null) ...[
-          const SizedBox(height: 16),
-          ListTile(
-            leading: const Icon(Icons.trending_up),
-            title: const Text('View weekly trend'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => _TrustDigestLoader(fetch: onOpenTrustDigest!)),
+          const SizedBox(height: QuorumSpacing.md),
+          Card(
+            child: ListTile(
+              leading: QuorumIconBadge(icon: Icons.trending_up, color: colorScheme.tertiary),
+              title: const Text('View weekly trend'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => _TrustDigestLoader(fetch: onOpenTrustDigest!)),
+              ),
             ),
           ),
         ],
-        const SizedBox(height: 24),
+        const SizedBox(height: QuorumSpacing.lg),
         if (trust.missed.isNotEmpty) ...[
           Text('Missed', style: Theme.of(context).textTheme.titleSmall),
-          for (final scenario in trust.missed)
-            ListTile(
-              leading: const Icon(Icons.warning_amber),
-              title: Text('Scenario ${scenario.scenarioId}'),
-              subtitle: Text('Expected ${scenario.expected}, got ${scenario.actual}'),
+          const SizedBox(height: QuorumSpacing.sm),
+          for (var i = 0; i < trust.missed.length; i++) ...[
+            if (i > 0) const SizedBox(height: QuorumSpacing.sm),
+            Card(
+              child: ListTile(
+                // A real self-test scenario the Gate should have caught
+                // but didn't -- a genuine, confirmed failure, not an
+                // ambiguity, so this reuses QuorumStatusColors.critical
+                // rather than needsAttention (reserved for a real
+                // no_data_found ambiguity elsewhere in this app).
+                leading: const QuorumIconBadge(icon: Icons.warning_amber, color: QuorumStatusColors.critical),
+                title: Text('Scenario ${trust.missed[i].scenarioId}'),
+                subtitle: Text('Expected ${trust.missed[i].expected}, got ${trust.missed[i].actual}'),
+              ),
             ),
+          ],
         ],
       ],
     );

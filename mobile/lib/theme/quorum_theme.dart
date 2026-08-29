@@ -121,6 +121,20 @@ ThemeData buildQuorumLightTheme() {
       titleTextStyle: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface),
     ),
     // FLAGGED UNCERTAINTY: CardThemeData vs. CardTheme — see file header.
+    //
+    // margin deliberately left at Card's own Material 3 default here, not
+    // zeroed (considered and reverted during Phase 8 Session 2, `DEC-156`):
+    // several real screens outside this session's own scope (Calendar,
+    // Tasks, Finance, Career Pipeline, Honesty Log, Waiting On,
+    // Negotiation -- confirmed directly by grep) stack multiple `Card`s in
+    // a plain `ListView.builder`/`Column` with no separator or explicit
+    // gap of their own, relying entirely on this implicit margin for
+    // visual spacing. Zeroing it here would silently collide those
+    // screens' cards together -- a real regression on unreviewed screens,
+    // not a scoped improvement. Today's own zones (below) add an explicit
+    // QuorumSpacing gap on top of this default instead of replacing it;
+    // a later Phase 8 session may zero this globally once every Card-using
+    // screen has been migrated to its own explicit gap, not before.
     cardTheme: CardThemeData(
       elevation: 0,
       color: colorScheme.surfaceContainerLow,
@@ -162,6 +176,35 @@ class QuorumTextStyles {
     return GoogleFonts.ibmPlexMono(
       textStyle: Theme.of(context).textTheme.headlineMedium,
       fontFeatures: const [FontFeature.tabularFigures()],
+    );
+  }
+}
+
+/// A real, considered componentry piece (Phase 8, `DEC-156`) -- a colored
+/// icon inside a soft-tinted circular container, replacing a bare leading
+/// `Icon` wherever a screen wants real visual weight for a status/category
+/// icon. Deliberately still just a container around the SAME icon+color
+/// pair a screen already computes -- this never changes what color or
+/// icon shape a screen chooses, only gives that existing, meaningful pair
+/// a more considered presentation. Reused across Today's Needs-you-now/
+/// In-motion cards and Trust's Missed list, replacing three separate,
+/// slightly-different ad hoc `Icon(...)` leads with one shared piece.
+class QuorumIconBadge extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+
+  const QuorumIconBadge({super.key, required this.icon, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        shape: BoxShape.circle,
+      ),
+      child: Icon(icon, color: color, size: 20),
     );
   }
 }

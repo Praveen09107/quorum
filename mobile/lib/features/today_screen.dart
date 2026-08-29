@@ -50,6 +50,7 @@ import 'package:quorum_mobile/features/today/in_motion_logic.dart';
 import 'package:quorum_mobile/features/today/in_motion_zone.dart';
 import 'package:quorum_mobile/features/today/needs_you_now_logic.dart';
 import 'package:quorum_mobile/features/today/needs_you_now_zone.dart';
+import 'package:quorum_mobile/theme/spacing.dart';
 
 /// A real, disclosed bundling type -- no document in this project's
 /// spec corpus ever gave the Today screen's combined data shape a name;
@@ -108,7 +109,7 @@ class TodayScreen extends StatelessWidget {
     // rather than Column+Expanded, is the real correct fix for this
     // repository's real, non-internally-scrollable zones.
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(QuorumSpacing.md),
       children: [
         _ZoneSection(
           title: 'Needs you now',
@@ -147,7 +148,7 @@ class _ZoneSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.only(bottom: QuorumSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -158,7 +159,7 @@ class _ZoneSection extends StatelessWidget {
               if (trailing != null) trailing!,
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: QuorumSpacing.sm),
           child,
         ],
       ),
