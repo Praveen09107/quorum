@@ -106,6 +106,8 @@ import 'package:quorum_mobile/features/trust_digest/trust_digest_logic.dart';
 import 'package:quorum_mobile/features/waiting_on/waiting_on_logic.dart';
 import 'package:quorum_mobile/features/you/you_logic.dart';
 import 'package:quorum_mobile/features/you/you_screen.dart';
+import 'package:quorum_mobile/theme/motion.dart';
+import 'package:quorum_mobile/theme/spacing.dart';
 
 typedef TodayDataFetcher = Future<TodayScreenData> Function();
 typedef HonestyFeedFetcher = Future<HonestyFeedData> Function();
@@ -483,38 +485,53 @@ class _NegotiationLoaderState extends State<_NegotiationLoader> {
       // 202 Accepted semantics exactly: the choice is real and durably
       // recorded, the downstream action is real and genuinely queued,
       // but not yet processed. Never claims more happened than that.
-      body: _accepted
-          ? const Center(child: Text('Choice accepted -- this action is now queued.'))
-          : FutureBuilder<NegotiationBundle>(
-              future: _bundleFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState != ConnectionState.done) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return Center(child: Text("Couldn't load the negotiation: ${snapshot.error}"));
-                }
-                final bundle = snapshot.data!;
-                final canChoose = widget.chooseNegotiation != null && !_submitting;
-                return Column(
-                  children: [
-                    if (_submitError != null)
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Text("Couldn't submit your choice: $_submitError"),
+      //
+      // Real motion (Phase 8 Session 4, `DEC-158`): a negotiation choice
+      // being submitted resolves into this terminal state via a real
+      // cross-fade, not an instant swap -- "a negotiation choice being
+      // submitted" is one of this plan's own three explicitly named real
+      // motion targets. `AnimatedSwitcher` keys each branch by a fixed,
+      // distinct `ValueKey` so it recognizes the swap as a real
+      // transition, not a rebuild of the same widget.
+      body: AnimatedSwitcher(
+        duration: QuorumMotion.resolve(context, QuorumMotion.reveal),
+        child: _accepted
+            ? const Center(
+                key: ValueKey('accepted'),
+                child: Text('Choice accepted -- this action is now queued.'),
+              )
+            : FutureBuilder<NegotiationBundle>(
+                key: const ValueKey('choosing'),
+                future: _bundleFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState != ConnectionState.done) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.hasError) {
+                    return Center(child: Text("Couldn't load the negotiation: ${snapshot.error}"));
+                  }
+                  final bundle = snapshot.data!;
+                  final canChoose = widget.chooseNegotiation != null && !_submitting;
+                  return Column(
+                    children: [
+                      if (_submitError != null)
+                        Padding(
+                          padding: const EdgeInsets.all(QuorumSpacing.md),
+                          child: Text("Couldn't submit your choice: $_submitError"),
+                        ),
+                      if (_submitting) const LinearProgressIndicator(),
+                      Expanded(
+                        child: NegotiationScreen(
+                          positions: bundle.positions,
+                          options: bundle.options,
+                          onChoose: canChoose ? _handleChoose : null,
+                        ),
                       ),
-                    if (_submitting) const LinearProgressIndicator(),
-                    Expanded(
-                      child: NegotiationScreen(
-                        positions: bundle.positions,
-                        options: bundle.options,
-                        onChoose: canChoose ? _handleChoose : null,
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
+                    ],
+                  );
+                },
+              ),
+      ),
     );
   }
 }

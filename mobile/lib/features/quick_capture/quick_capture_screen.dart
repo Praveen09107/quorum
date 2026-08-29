@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_screen.dart';
 import 'package:quorum_mobile/features/quick_capture/quick_capture_logic.dart';
+import 'package:quorum_mobile/theme/quorum_theme.dart';
+import 'package:quorum_mobile/theme/spacing.dart';
 
 class QuickCaptureScreen extends StatefulWidget {
   final Future<QuickCaptureResultData> Function(String text) capture;
@@ -65,7 +67,7 @@ class _QuickCaptureScreenState extends State<QuickCaptureScreen> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(QuorumSpacing.md),
             child: TextField(
               controller: _controller,
               minLines: 2,
@@ -80,7 +82,7 @@ class _QuickCaptureScreenState extends State<QuickCaptureScreen> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: QuorumSpacing.md),
             child: SizedBox(
               width: double.infinity,
               child: FilledButton(
@@ -91,7 +93,7 @@ class _QuickCaptureScreenState extends State<QuickCaptureScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: QuorumSpacing.md),
           Expanded(
             child: result == null
                 ? const Center(child: Text('Real proposals go through the real Gate, just like everything else.'))
@@ -127,18 +129,28 @@ class _QuickCaptureResultView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(QuorumSpacing.md),
       children: [
+        // A real, disclosed fix (Phase 8 Session 4, `DEC-158`): this
+        // banner previously used a raw `Colors.green` literal for
+        // `executed == true` and no color at all otherwise -- the one
+        // real status signal in this app that had never been wired to
+        // `QuorumStatusColors`. `false` deliberately maps to
+        // `needsAttention`, not `critical`: a real Gate `revise`/
+        // `reject`/`escalate_to_human` decision here is an honest,
+        // informational outcome, not a confirmed failure -- the same
+        // uniform treatment this screen's own `describeQuickCaptureOutcome`
+        // already gives all three non-executed decisions collectively.
         ListTile(
-          leading: Icon(
-            result.executed ? Icons.check_circle : Icons.info_outline,
-            color: result.executed ? Colors.green : null,
+          leading: QuorumIconBadge(
+            icon: result.executed ? Icons.check_circle : Icons.info_outline,
+            color: result.executed ? QuorumStatusColors.verified : QuorumStatusColors.needsAttention,
           ),
           title: Text(describeQuickCaptureOutcome(result)),
         ),
-        const Divider(height: 32),
+        const Divider(height: QuorumSpacing.xl),
         Text('What the Gate checked', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
+        const SizedBox(height: QuorumSpacing.sm),
         for (final finding in result.findings) FindingRow(finding: finding),
       ],
     );

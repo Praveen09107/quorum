@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:quorum_mobile/db/database.dart';
 import 'package:quorum_mobile/features/calendar/calendar_logic.dart';
 import 'package:quorum_mobile/features/meeting_load/meeting_load_logic.dart';
+import 'package:quorum_mobile/theme/quorum_theme.dart';
+import 'package:quorum_mobile/theme/spacing.dart';
 
 /// A real, deliberately minimal display of whatever's currently in the
 /// real, on-device `CalendarMirror` table (`db/database.dart`) -- this
@@ -36,7 +38,7 @@ class CalendarScreen extends StatelessWidget {
     if (events.isEmpty && !permissionGranted) {
       return const Center(
         child: Padding(
-          padding: EdgeInsets.all(24),
+          padding: EdgeInsets.all(QuorumSpacing.lg),
           child: Text(
             "Quorum doesn't have permission to read your calendar yet. "
             'Allow calendar access in your device Settings to see your real, upcoming events here.',
@@ -61,17 +63,23 @@ class CalendarScreen extends StatelessWidget {
     final weeklyLoad = computeWeeklyMeetingLoad(events, now: now);
 
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(QuorumSpacing.md),
       itemCount: sorted.length + 1,
       itemBuilder: (context, index) {
         if (index == 0) return _MeetingLoadBanner(weeklyLoad: weeklyLoad, now: now);
         final event = sorted[index - 1];
-        return Card(
-          child: ListTile(
-            leading: const Icon(Icons.event_outlined),
-            title: Text(event.title),
-            subtitle: Text(formatEventTimeRange(event.startTime, event.endTime)),
-            trailing: Text(formatEventDayLabel(event.startTime, now)),
+        return Padding(
+          padding: const EdgeInsets.only(top: QuorumSpacing.sm),
+          child: Card(
+            child: ListTile(
+              leading: QuorumIconBadge(
+                icon: Icons.event_outlined,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+              title: Text(event.title),
+              subtitle: Text(formatEventTimeRange(event.startTime, event.endTime)),
+              trailing: Text(formatEventDayLabel(event.startTime, now)),
+            ),
           ),
         );
       },
@@ -85,6 +93,15 @@ class CalendarScreen extends StatelessWidget {
 /// reassurance when nothing's overloaded, never a fabricated warning,
 /// and a real, specific list of which real days look overloaded
 /// otherwise -- never a bare "some days are busy."
+///
+/// Phase 8 Session 4 (`DEC-158`): the overloaded state now signals
+/// through a `QuorumIconBadge` in `QuorumStatusColors.critical` (a real,
+/// quantified negative outcome, matching the same corrected precedent
+/// `tasks_screen.dart`'s own Predictive Risk banner already established
+/// in `DEC-157`'s own review), rather than flipping the whole Card's
+/// background to `errorContainer` -- consistent with every other real
+/// status signal in this app, "badge carries the meaning, card stays
+/// neutral."
 class _MeetingLoadBanner extends StatelessWidget {
   final List<DailyMeetingLoad> weeklyLoad;
   final DateTime now;
@@ -98,7 +115,7 @@ class _MeetingLoadBanner extends StatelessWidget {
     if (overloadedDays.isEmpty) {
       return const Card(
         child: ListTile(
-          leading: Icon(Icons.check_circle_outline),
+          leading: QuorumIconBadge(icon: Icons.check_circle_outline, color: QuorumStatusColors.verified),
           title: Text('Next 7 days look manageable.'),
         ),
       );
@@ -106,9 +123,8 @@ class _MeetingLoadBanner extends StatelessWidget {
 
     final dayLabels = overloadedDays.map((d) => formatEventDayLabel(d.day, now)).join(', ');
     return Card(
-      color: Theme.of(context).colorScheme.errorContainer,
       child: ListTile(
-        leading: const Icon(Icons.warning_amber_rounded),
+        leading: const QuorumIconBadge(icon: Icons.warning_amber_rounded, color: QuorumStatusColors.critical),
         title: Text('Heavier than usual: $dayLabels'),
       ),
     );
