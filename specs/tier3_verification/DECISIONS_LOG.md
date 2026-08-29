@@ -3564,4 +3564,26 @@ Verified again after fixes: `flutter analyze` clean, `flutter test` 449/449 pass
 
 ---
 
-*Next entry: DEC-157*
+## DEC-157: Phase 8 Session 3 -- Tasks + Finance + Career Pipeline screens, real componentry
+
+**Standard tier** -- entirely mobile, pure UI componentry building on `DEC-155`/`156`'s tokens. Zero Gate/security/auth/secrets/external-action touch.
+
+**Authorized directly, via the same approved Phase 8/9 session breakdown, brief check-in cadence ("Session 2 done, moving to Session 3").**
+
+**What was built:** `QuorumSpacing` tokens replace literal `16`/`8` values across all three screens. A new `QuorumTextStyles.metricSmall()` (`quorum_theme.dart`) -- the same real IBM Plex Mono + tabular-figures treatment as `metric()`, sized to `titleMedium` instead of `headlineMedium`, since a full headline-sized number would overwhelm a single row in a dense list the way it doesn't for a standalone Today/Trust readout. Every list row across all three screens now uses `ListView.separated`/an explicit `SizedBox` gap plus a `QuorumIconBadge` leading icon, matching Session 2's established pattern.
+
+**Tasks:** each row's icon SHAPE now signals `TaskStatus` (a real, closed, database-enforced set -- confirmed safe to switch on exhaustively, unlike Career Pipeline's genuinely open `applications.status`): `done` gets `QuorumStatusColors.verified` as a distinct color (a real, positive completed outcome); `open`/`cancelled` share a neutral tone, distinguished only by icon shape, since neither is inherently good or bad. The status `Chip` is now tinted to match. **A real, disclosed fix found while applying the new status-color system properly, not a pure reskin:** `_PredictiveRiskBanner` previously collapsed three real, distinct states -- genuinely no historical data yet, a real predicted busy week, a real all-clear -- into only two visual treatments, with "not enough data" rendering identically to "all clear." This is exactly the `no_data_found`-collapsed-into-a-pass mistake `CLAUDE.md`'s own `evidence_state` discipline exists to prevent elsewhere in this project; there was no reason this screen should be the standing exception. Now: no history -> `needsAttention` (matching that color's own documented "genuine ambiguity" meaning exactly), a real predicted busy week -> `uncertain` (a real, non-alarming heads-up), a real all-clear -> `verified`. `riskMessage()`'s own three-way logic is untouched -- only which icon/color the UI selects around the same real message changed. The Card's own background no longer flips to `errorContainer` on risk -- status is now signaled through the badge alone, matching every other real screen's own "status via icon+badge, card stays neutral" pattern rather than being the one exception.
+
+**Finance:** a neutral `Icons.autorenew` badge on every row (no per-subscription status exists to signal); the trailing amount uses `QuorumTextStyles.metricSmall()` -- tabular figures keep a column of real currency amounts visually aligned, the exact numeric-readout case that style was built for.
+
+**Career Pipeline:** a neutral `Icons.business_center` badge on every row, deliberately identical regardless of status -- `applications.status` is a genuinely open vocabulary (confirmed directly, again, against `career_pipeline_logic.dart`'s own header: only two of four `knownStatusOrder` values are real anywhere in this codebase today), so inventing a color per status now would mean guessing a meaning for values that don't exist yet -- exactly the unrequested architecture `CLAUDE.md` Rule 3 exists to prevent. Status sections also gained an explicit bottom gap between them, previously absent.
+
+**Verified live:** `flutter analyze` clean, `flutter test` 449/449 passing (no regression; confirmed no test in this repository asserts on `Chip`/`Card`/`ListTile` widget types, icon identity, or color values for any of the three screens before relying on that -- only text content, which is unchanged).
+
+**Genuinely NOT witnessed this session, disclosed rather than skipped:** the real device remained disconnected (checked via `adb devices -l`) -- this is now the fifth consecutive session (`DEC-153` through `DEC-157`) with a real, disclosed on-device verification gap. Worth closing before Phase 8 closes out.
+
+**Affects:** `mobile/lib/theme/quorum_theme.dart`, `mobile/lib/features/tasks/tasks_screen.dart`, `mobile/lib/features/finance/finance_screen.dart`, `mobile/lib/features/career/career_pipeline_screen.dart`, this log.
+
+---
+
+*Next entry: DEC-158*
