@@ -61,11 +61,29 @@ spec:
         # state-isolation risk (CLAUDE.md architecture fact). Never raised
         # without a documented reason.
         autoscaling.knative.dev/maxScale: "2"
-        autoscaling.knative.dev/minScale: "0"  # genuine scale-to-zero
+        # minScale is deliberately absent here -- CRITICAL-tier review
+        # (`DEC-159`) confirmed the live service carries no explicit
+        # `minScale` annotation at all; `0` (genuine scale-to-zero) is
+        # Cloud Run's own real default when the annotation is omitted,
+        # not something this service sets explicitly. Stated as prose
+        # above, not as a YAML key this template doesn't actually carry
+        # live.
+        run.googleapis.com/startup-cpu-boost: "true"
     spec:
       containerConcurrency: 1
       containers:
-        - image: asia-south1-docker.pkg.dev/quorum-505909/cloud-run-source-deploy/quorum-backend:latest
+        # A real, specific tag, not `:latest` -- CRITICAL-tier review
+        # (`DEC-159`) confirmed this Artifact Registry repository has no
+        # `:latest` tag at all; every real deploy in this project's
+        # history has used a real, dated tag (`decNNN-YYYYMMDD`, see
+        # DECISIONS_LOG.md's own deploy-record entries). Shown here as
+        # the real tag live at the time this template was last verified
+        # against the actual service -- expect this to be stale the
+        # moment the next real deploy happens; it's illustrative, not
+        # load-bearing (a real deploy always names its own real tag
+        # explicitly, per the CLI commands below, never relies on this
+        # file being current).
+        - image: asia-south1-docker.pkg.dev/quorum-505909/cloud-run-source-deploy/quorum-backend:dec153-20260829
           resources:
             limits:
               cpu: "1"
@@ -146,10 +164,29 @@ spec:
 #
 # A config-only change (no image rebuild), e.g. rotating a Secret
 # Manager-backed credential's value:
+#
+#   OLD_VERSION=$(gcloud secrets versions list jwt-signing-key --filter="state:ENABLED" --format="value(name)")
 #   printf '%s' "$NEW_VALUE" | gcloud secrets versions add jwt-signing-key --data-file=-
-#   (no redeploy needed at all if the service references the secret as
+#   gcloud secrets versions destroy "$OLD_VERSION" --secret=jwt-signing-key
+#
+#   THE `versions destroy` STEP IS NOT OPTIONAL (CRITICAL-tier review
+#   finding, `DEC-159`): this project sits at exactly 6/6 of Secret
+#   Manager's real free-tier active-version budget, with zero headroom --
+#   the same real constraint `DEC-159` names as the reason only 6 of this
+#   service's 14 real credentials were migrated at all. Google's own
+#   pricing terms bill a secret version as "active" in BOTH its Enabled
+#   AND Disabled states -- only `versions destroy` actually frees the
+#   slot. Running `versions add` alone, even followed by `versions
+#   disable`, silently pushes this project to 7 active versions and a
+#   real, small ($0.06/month) cost this project's own "free-tier only"
+#   constraint explicitly forbids. `destroy` is irreversible for that one
+#   version (the OLD value becomes permanently unrecoverable) -- correct
+#   here specifically because rotation means the old value is deliberately
+#   being retired, never wanted back.
+#
+#   No redeploy needed at all if the service references the secret as
 #   `:latest` -- the next real cold start picks up the new version
 #   automatically. A deliberate, real redeploy, e.g. to force immediate
 #   rollover on every current warm instance, uses
 #   `gcloud run services update quorum-backend --region asia-south1`
-#   with no other flags -- creates a new revision from the same image.)
+#   with no other flags -- creates a new revision from the same image.
