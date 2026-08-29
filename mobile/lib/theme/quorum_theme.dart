@@ -70,6 +70,21 @@ const Color _quorumAccentColor = Color(0xFF0F766E); // teal-700
 /// .ibmPlexSansTextTheme()` (below) applies the real IBM Plex Sans
 /// family on top of these exact sizes, preserving them.
 const TextTheme _quorumBaseTextTheme = TextTheme(
+  // Real, explicit display roles (`DEC-155` review finding) -- these are
+  // NOT currently read by any real screen in this app (confirmed via a
+  // full grep across mobile/lib before adding them), but leaving them
+  // implicitly unsized would be a real, latent trap for the next screen
+  // that does: `GoogleFonts.ibmPlexSansTextTheme()`'s own real behavior
+  // (confirmed against the installed 6.3.3 source) only ever adds a
+  // fontFamily on top of whatever TextStyle it's given per role -- a role
+  // left out of this base theme entirely resolves to a bare, unsized
+  // TextStyle, not Material 3's own stock display defaults. Real Material
+  // 3 baseline sizes/weights, kept rather than invented, since no screen
+  // yet gives this project a real reason to deviate from them for display
+  // text specifically.
+  displayLarge: TextStyle(fontSize: 57, height: 64 / 57, fontWeight: FontWeight.w600),
+  displayMedium: TextStyle(fontSize: 45, height: 52 / 45, fontWeight: FontWeight.w600),
+  displaySmall: TextStyle(fontSize: 36, height: 44 / 36, fontWeight: FontWeight.w600),
   headlineLarge: TextStyle(fontSize: 32, height: 40 / 32, fontWeight: FontWeight.w600),
   headlineMedium: TextStyle(fontSize: 28, height: 36 / 28, fontWeight: FontWeight.w600),
   headlineSmall: TextStyle(fontSize: 24, height: 32 / 24, fontWeight: FontWeight.w600),

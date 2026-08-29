@@ -11,6 +11,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/features/today/needs_you_now_logic.dart';
+import 'package:quorum_mobile/theme/quorum_theme.dart';
 
 class NeedsYouNowZone extends StatelessWidget {
   final List<PendingActionSummary> actions;
@@ -56,9 +57,18 @@ class _NeedsYouNowCard extends StatelessWidget {
     // Stakes-proportional weight: icon SHAPE changes, not just color --
     // S3 gets a real attention-grabbing icon, S2 a milder one, S0/S1 a
     // purely informational one. Never color alone.
+    //
+    // S2 deliberately uses QuorumStatusColors.needsAttention, not
+    // colorScheme.tertiary (`DEC-155` review finding) -- Phase 8 gave
+    // `tertiary` a real, fixed meaning of its own (interactive emphasis /
+    // primary call-to-action, see quorum_theme.dart), and reusing it here
+    // would collide that meaning with this file's own, pre-existing
+    // "S2 = needs your attention" signal. Reusing the real, already-
+    // established semantic status color is the correct fix, not
+    // inventing a third, parallel color system.
     final (icon, color) = switch (action.stakes) {
       'S3' => (Icons.priority_high, colorScheme.error),
-      'S2' => (Icons.error_outline, colorScheme.tertiary),
+      'S2' => (Icons.error_outline, QuorumStatusColors.needsAttention),
       _ => (Icons.info_outline, colorScheme.onSurfaceVariant),
     };
 
