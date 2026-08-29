@@ -200,6 +200,17 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # Real, CRITICAL-tier review finding (`DEC-160`): without this, two
+    # merges to `main` close enough together start two parallel deploy
+    # jobs with no ordering guarantee -- whichever `gcloud run deploy`
+    # finishes last wins, which can be the OLDER commit, and both jobs
+    # still report green (neither one individually fails). `cancel-in-
+    # progress: false` is deliberate, not the default choice: this queues
+    # a second real deploy to run after the first finishes, rather than
+    # killing an in-flight one partway through a real production rollout.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v5
 
@@ -228,7 +239,16 @@ jobs:
           BUILD_ID=$(gcloud builds submit --async --tag "$IMAGE" --format="value(id)")
           echo "Submitted build $BUILD_ID -- polling for a real terminal status"
 
-          for i in $(seq 1 60); do
+          # 90 x 10s = 15 real minutes -- a real, deliberate margin past
+          # Cloud Build's own 10-minute default per-build timeout
+          # (CRITICAL-tier review, `DEC-160`): the original 60-iteration
+          # budget (10 real minutes) left zero slack -- a build that
+          # genuinely finished right at that boundary could have hit
+          # this loop's own give-up path and reported a false failure
+          # for a build that actually succeeded, the same class of bug
+          # this exact polling loop was built to prevent in the first
+          # place (see this job's own top-of-file comment).
+          for i in $(seq 1 90); do
             STATUS=$(gcloud builds describe "$BUILD_ID" --format="value(status)")
             echo "Poll $i: $STATUS"
             case "$STATUS" in
