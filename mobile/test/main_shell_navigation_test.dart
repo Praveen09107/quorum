@@ -27,6 +27,7 @@ import 'package:quorum_mobile/features/today/needs_you_now_logic.dart';
 import 'package:quorum_mobile/features/today_screen.dart';
 import 'package:quorum_mobile/features/waiting_on/waiting_on_logic.dart';
 import 'package:quorum_mobile/shell/main_shell.dart';
+import 'package:quorum_mobile/theme/motion.dart';
 
 Future<TodayScreenData> _fakeFetchToday() async {
   return TodayScreenData(
@@ -195,6 +196,36 @@ void main() {
 
     expect(find.text('Stage A — automated checks'), findsOneWidget);
     expect(find.textContaining('within budget'), findsOneWidget);
+  });
+
+  // Real, disclosed follow-up (`DEC-158` standard-tier review, finding
+  // 1): the prior test above proves the Gate reveal's real timed
+  // animation resolves cleanly via `pumpAndSettle()`, but never asserted
+  // the actual STAGING -- that Stage B is genuinely absent immediately
+  // after Stage A appears, and genuinely present only once
+  // `QuorumMotion.reveal` has elapsed. Without this test, a logic
+  // inversion (Stage B showing immediately, or never showing at all)
+  // would still pass every other real test in this suite.
+  testWidgets('the real Gate verdict reveal stages Stage B in a beat after Stage A, not simultaneously', (tester) async {
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Send an email'));
+    // Deliberately NOT pumpAndSettle here -- two plain pumps are enough
+    // to let the real S3 action's route push and `_fakeFetchGateReveal`'s
+    // Future resolve, but stop well short of `QuorumMotion.reveal`
+    // (350ms), so Stage B's own real, timed absence is still genuinely
+    // observable.
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Stage A — automated checks'), findsOneWidget);
+    expect(find.text('Stage B — Critic review'), findsNothing);
+
+    await tester.pump(QuorumMotion.reveal);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Stage B — Critic review'), findsOneWidget);
   });
 
   testWidgets('tapping an In Motion negotiation card opens the real negotiation screen with real positions and options', (tester) async {

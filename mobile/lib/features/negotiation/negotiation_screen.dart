@@ -15,11 +15,21 @@
 // Every option renders with IDENTICAL visual weight -- same card style,
 // same button styling, no badge, no highlight, no ordering bias. This is
 // the concrete implementation of the neutral-disclosure principle.
+//
+// Phase 8 Session 4 (`DEC-158`): `QuorumSpacing` tokens replace most
+// literal values here, EXCEPT `_DeltaRow`'s own `vertical: 2`/`width: 6`
+// -- both are deliberately finer-grained than `QuorumSpacing.xs` (4), a
+// tight, intentional hairline gap for a compact inline delta row, not an
+// oversight. Card-internal padding (`12`) is rounded up to
+// `QuorumSpacing.md` (16), a real, disclosed 4px increase matching the
+// same card-internal-padding precedent `holding_steady_zone.dart`
+// already established, not a silent distortion.
 
 import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/features/negotiation/negotiation_logic.dart';
 import 'package:quorum_mobile/theme/quorum_theme.dart';
+import 'package:quorum_mobile/theme/spacing.dart';
 
 class NegotiationScreen extends StatelessWidget {
   final List<PositionData> positions;
@@ -36,14 +46,14 @@ class NegotiationScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(QuorumSpacing.md),
       children: [
         Text('What each domain is saying', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
+        const SizedBox(height: QuorumSpacing.sm),
         for (final position in positions) _PositionCard(position: position),
-        const SizedBox(height: 24),
+        const SizedBox(height: QuorumSpacing.lg),
         Text('Your options', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
+        const SizedBox(height: QuorumSpacing.sm),
         // Every option card below uses the exact same styling -- no
         // reordering, no highlighting, no badge on any one of them.
         for (final option in options) _OptionCard(option: option, onChoose: onChoose),
@@ -61,14 +71,14 @@ class _PositionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(QuorumSpacing.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(capitalizeDomain(position.domain), style: Theme.of(context).textTheme.labelLarge),
-            const SizedBox(height: 4),
+            const SizedBox(height: QuorumSpacing.xs),
             Text(position.concern),
-            const SizedBox(height: 4),
+            const SizedBox(height: QuorumSpacing.xs),
             Text('Proposes: ${position.proposedResolution}', style: Theme.of(context).textTheme.bodySmall),
           ],
         ),
@@ -87,14 +97,14 @@ class _OptionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(QuorumSpacing.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(option.description),
-            const SizedBox(height: 8),
+            const SizedBox(height: QuorumSpacing.sm),
             for (final delta in option.impact) _DeltaRow(delta: delta),
-            const SizedBox(height: 8),
+            const SizedBox(height: QuorumSpacing.sm),
             SizedBox(
               width: double.infinity,
               child: OutlinedButton(
@@ -124,6 +134,9 @@ class _DeltaRow extends StatelessWidget {
       MetricVisualDirection.unchanged => (Icons.trending_flat, QuorumStatusColors.uncertain),
     };
 
+    // Deliberately literal, not tokenized -- see file header: a
+    // hairline gap finer than QuorumSpacing.xs, for a compact inline
+    // row, not an oversight.
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(

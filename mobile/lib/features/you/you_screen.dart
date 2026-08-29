@@ -55,6 +55,8 @@ import 'package:quorum_mobile/features/search/search_screen.dart';
 import 'package:quorum_mobile/features/waiting_on/waiting_on_logic.dart';
 import 'package:quorum_mobile/features/waiting_on/waiting_on_screen.dart';
 import 'package:quorum_mobile/features/you/you_logic.dart';
+import 'package:quorum_mobile/theme/quorum_theme.dart';
+import 'package:quorum_mobile/theme/spacing.dart';
 
 class YouScreen extends StatefulWidget {
   final Future<DeletionResultData> Function() onConfirmDelete;
@@ -109,11 +111,13 @@ class _YouScreenState extends State<YouScreen> {
     if (result != null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(QuorumSpacing.lg),
           child: Text(formatDeletionSummary(result)),
         ),
       );
     }
+
+    final badgeColor = Theme.of(context).colorScheme.onSurfaceVariant;
 
     // A real, deliberate scrollable, added Batch 10 Phase 4: the real
     // content here grew past what a fixed-height Column safely fits --
@@ -124,25 +128,25 @@ class _YouScreenState extends State<YouScreen> {
     // Column with nothing to absorb real content taller than the
     // screen.
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(QuorumSpacing.lg),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (widget.onOpenMemories != null) ...[
             ListTile(
-              leading: const Icon(Icons.memory_outlined),
+              leading: QuorumIconBadge(icon: Icons.memory_outlined, color: badgeColor),
               title: const Text('Manage your memories'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => _MemoriesLoader(fetch: widget.onOpenMemories!)),
               ),
             ),
-            const Divider(height: 32),
+            const Divider(height: QuorumSpacing.xl),
           ],
           if (widget.fetchCareerApplications != null) ...[
             ListTile(
-              leading: const Icon(Icons.work_outline),
+              leading: QuorumIconBadge(icon: Icons.work_outline, color: badgeColor),
               title: const Text('Career pipeline'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
@@ -157,7 +161,7 @@ class _YouScreenState extends State<YouScreen> {
           ],
           if (widget.fetchFinance != null) ...[
             ListTile(
-              leading: const Icon(Icons.payments_outlined),
+              leading: QuorumIconBadge(icon: Icons.payments_outlined, color: badgeColor),
               title: const Text('Subscriptions'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
@@ -167,7 +171,7 @@ class _YouScreenState extends State<YouScreen> {
           ],
           if (widget.fetchWaitingOn != null) ...[
             ListTile(
-              leading: const Icon(Icons.hourglass_empty),
+              leading: QuorumIconBadge(icon: Icons.hourglass_empty, color: badgeColor),
               title: const Text('Waiting on'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
@@ -177,7 +181,7 @@ class _YouScreenState extends State<YouScreen> {
           ],
           if (widget.fetchSearch != null) ...[
             ListTile(
-              leading: const Icon(Icons.search),
+              leading: QuorumIconBadge(icon: Icons.search, color: badgeColor),
               title: const Text('Search'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
@@ -187,7 +191,7 @@ class _YouScreenState extends State<YouScreen> {
           ],
           if (widget.syncCalendar != null && widget.fetchCalendarEvents != null) ...[
             ListTile(
-              leading: const Icon(Icons.calendar_month_outlined),
+              leading: QuorumIconBadge(icon: Icons.calendar_month_outlined, color: badgeColor),
               title: const Text('Calendar'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
@@ -205,25 +209,25 @@ class _YouScreenState extends State<YouScreen> {
               widget.fetchWaitingOn != null ||
               widget.fetchSearch != null ||
               (widget.syncCalendar != null && widget.fetchCalendarEvents != null))
-            const Divider(height: 32),
+            const Divider(height: QuorumSpacing.xl),
           if (widget.onSignOut != null) ...[
             OutlinedButton.icon(
               onPressed: widget.onSignOut,
               icon: const Icon(Icons.logout),
               label: const Text('Sign out'),
             ),
-            const Divider(height: 32),
+            const Divider(height: QuorumSpacing.xl),
           ],
           const Text('This permanently deletes your account and all associated data. This cannot be undone.'),
-          const SizedBox(height: 16),
+          const SizedBox(height: QuorumSpacing.md),
           const Text('Type $requiredDeletionConfirmationText to confirm.'),
-          const SizedBox(height: 8),
+          const SizedBox(height: QuorumSpacing.sm),
           TextField(
             controller: _controller,
             decoration: const InputDecoration(border: OutlineInputBorder()),
             onChanged: (_) => setState(() {}),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: QuorumSpacing.md),
           FilledButton(
             onPressed: (isValidDeletionConfirmation(_controller.text) && !_deleting)
                 ? () async {
@@ -256,7 +260,7 @@ class _YouScreenState extends State<YouScreen> {
             child: _deleting ? const CircularProgressIndicator() : const Text('Delete my account'),
           ),
           if (_deleteError != null) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: QuorumSpacing.md),
             Text(_deleteError!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ],
         ],
@@ -503,7 +507,7 @@ class _SearchHostState extends State<_SearchHost> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(QuorumSpacing.md),
             child: TextField(
               controller: _controller,
               decoration: const InputDecoration(

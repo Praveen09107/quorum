@@ -12,6 +12,8 @@
 import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/features/search/search_logic.dart';
+import 'package:quorum_mobile/theme/quorum_theme.dart';
+import 'package:quorum_mobile/theme/spacing.dart';
 
 class SearchScreen extends StatelessWidget {
   final List<SearchResultItem> results;
@@ -24,14 +26,16 @@ class SearchScreen extends StatelessWidget {
       return const Center(child: Text('No results.'));
     }
 
+    final badgeColor = Theme.of(context).colorScheme.onSurfaceVariant;
+
     // No sort call here, deliberately -- see file header.
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(QuorumSpacing.md),
       itemCount: results.length,
       itemBuilder: (context, index) {
         final item = results[index];
         return ListTile(
-          leading: _iconForType(item.itemType),
+          leading: QuorumIconBadge(icon: _iconForType(item.itemType), color: badgeColor),
           title: Text(item.text),
           trailing: Text(labelForItemType(item.itemType)),
         );
@@ -39,20 +43,20 @@ class SearchScreen extends StatelessWidget {
     );
   }
 
-  Icon _iconForType(SearchItemType type) {
+  IconData _iconForType(SearchItemType type) {
     switch (type) {
       case SearchItemType.email:
-        return const Icon(Icons.email_outlined);
+        return Icons.email_outlined;
       case SearchItemType.task:
-        return const Icon(Icons.check_box_outlined);
+        return Icons.check_box_outlined;
       case SearchItemType.expense:
-        return const Icon(Icons.payments_outlined);
+        return Icons.payments_outlined;
       case SearchItemType.application:
-        return const Icon(Icons.work_outline);
+        return Icons.work_outline;
       case SearchItemType.decision:
-        return const Icon(Icons.gavel_outlined);
+        return Icons.gavel_outlined;
       case SearchItemType.unknown:
-        return const Icon(Icons.help_outline);
+        return Icons.help_outline;
     }
   }
 }

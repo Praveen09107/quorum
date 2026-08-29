@@ -3,10 +3,14 @@
 // API; `flutter analyze` on a real machine is the actual verification.
 //
 // Typography as the visualization, literally, not just in principle: the
-// computed numbers render as large (36px, weight 600) numerals directly
-// -- no chart widget, no gauge, no decorative graphic standing in for
-// the number. The locked design principle from the ADD, implemented
-// exactly as written.
+// computed numbers render as large numerals directly -- no chart widget,
+// no gauge, no decorative graphic standing in for the number. The locked
+// design principle from the ADD, implemented exactly as written. (A
+// real, disclosed correction: this line used to hardcode "36px, weight
+// 600" -- accurate only before Phase 8 Session 2 (`DEC-156`) replaced
+// that literal `TextStyle` with `QuorumTextStyles.metric()`, this app's
+// real, shared numeric-readout style. Stated generally here now, rather
+// than re-pinning a specific size this file no longer controls.)
 //
 // The F4 fix's UI requirement, honored to the letter: when a number's
 // source is DataSource.localMirror, the card shows "Offline estimate"
@@ -36,6 +40,7 @@ import 'package:flutter/material.dart';
 import 'package:quorum_mobile/features/computed_state.dart';
 import 'package:quorum_mobile/features/today/holding_steady_logic.dart';
 import 'package:quorum_mobile/features/today_widget_bridge.dart';
+import 'package:quorum_mobile/theme/motion.dart';
 import 'package:quorum_mobile/theme/quorum_theme.dart';
 import 'package:quorum_mobile/theme/spacing.dart';
 
@@ -142,7 +147,24 @@ class _ComputedNumberRow extends StatelessWidget {
               // IBM Plex Mono, tabular figures (Phase 8, `DEC-156`) --
               // this is exactly the "prominent numeric readout"
               // QuorumTextStyles.metric() was built for.
-              Text(valueText, style: QuorumTextStyles.metric(context)),
+              //
+              // Real motion (Phase 8 Session 4, `DEC-158`): "Today's
+              // capacity/budget numbers updating" is one of this plan's
+              // own three explicitly named real motion targets --
+              // `AnimatedSwitcher`, keyed by the value text itself, so a
+              // real change (e.g. "8.0h" -> "7.5h" after a task is
+              // logged) cross-fades rather than snapping instantly. A
+              // rebuild carrying the SAME value text never re-triggers
+              // the transition -- the key is unchanged, so
+              // `AnimatedSwitcher` recognizes it as the same child.
+              AnimatedSwitcher(
+                duration: QuorumMotion.resolve(context, QuorumMotion.transition),
+                child: Text(
+                  valueText,
+                  key: ValueKey(valueText),
+                  style: QuorumTextStyles.metric(context),
+                ),
+              ),
             ],
           ),
         ),
