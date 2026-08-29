@@ -1,6 +1,10 @@
-// Zero Flutter dependencies -- `dart test` is the real command (confirmed
-// against `calendar_logic.dart`'s own import list: only `drift`, a plain
-// Dart package).
+// RESOLVED, a real, disclosed correction (Meeting-Load Defense session):
+// this file was previously claimed to run under plain `dart test` --
+// never actually verified, and wrong: `calendar_logic.dart`'s own
+// import of `db/database.dart` transitively pulls in real Flutter
+// plugin packages (`sqlite3_flutter_libs`/`path_provider`), confirmed
+// live to fail loading under the standalone Dart SDK. `flutter test`
+// is the real, confirmed-working command for this file.
 //
 // THE REAL, HAND-VERIFIED PROOF for the weekday-label test below: rather
 // than trust Dart's own `DateTime.weekday` by inspection, the real

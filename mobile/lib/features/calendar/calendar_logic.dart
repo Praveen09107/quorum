@@ -5,12 +5,20 @@
 // wrapping it in a parallel display type: unlike `WaitingOnItem` (built
 // from a raw HTTP JSON payload with no existing Dart shape to reuse),
 // `CalendarMirrorData` already IS the real, natural shape here, generated
-// directly from the real table `calendar_sync.dart` writes into. Zero
-// Flutter dependencies -- only `drift` (a plain Dart package, no Flutter
-// import in its own dependency chain, confirmed directly, unlike
-// `device_calendar`) -- `dart test` genuinely works for this file's own
-// tests, unlike `calendar_sync_test.dart`'s own file (see that file's
-// header for why it specifically needed to move to `flutter test`).
+// directly from the real table `calendar_sync.dart` writes into.
+//
+// RESOLVED, a real, disclosed correction (Meeting-Load Defense session):
+// this docstring previously claimed "dart test genuinely works for this
+// file's own tests," reasoning only that `drift` itself has no Flutter
+// import -- a real, unverified claim, never actually run before being
+// stated confidently. Directly verified now, and it's wrong: `db/
+// database.dart` (imported here for `CalendarMirrorData`) itself imports
+// `package:sqlite3_flutter_libs`/`package:path_provider`, both real
+// Flutter plugin packages despite the former's name -- confirmed live,
+// `dart test` fails to even load this file with the same real Dart-SDK-
+// vs-Flutter-SDK errors `calendar_sync_test.dart`'s own header already
+// documents for the identical underlying reason. `flutter test` is the
+// real, confirmed-working command for this file too.
 //
 // No `intl` package dependency exists anywhere in this project
 // (confirmed by direct search before writing this file) -- every date/
@@ -40,8 +48,11 @@ const List<String> _monthNames = [
 /// A real, calendar-DAY comparison (year/month/day only) -- never a
 /// 24-hour-duration comparison, which would wrongly call a meeting at
 /// 11pm tonight and one at 1am tomorrow "the same day away" or vice
-/// versa depending on the current moment.
-bool _isSameCalendarDay(DateTime a, DateTime b) {
+/// versa depending on the current moment. Made public (Meeting-Load
+/// Defense) -- `meeting_load_logic.dart` reuses this exact real
+/// day-boundary rule to group real synced events by calendar day,
+/// never a second, parallel definition of "same day."
+bool isSameCalendarDay(DateTime a, DateTime b) {
   return a.year == b.year && a.month == b.month && a.day == b.day;
 }
 
@@ -55,8 +66,8 @@ bool _isSameCalendarDay(DateTime a, DateTime b) {
 String formatEventDayLabel(DateTime start, DateTime now) {
   final today = DateTime(now.year, now.month, now.day);
   final tomorrow = today.add(const Duration(days: 1));
-  if (_isSameCalendarDay(start, today)) return 'Today';
-  if (_isSameCalendarDay(start, tomorrow)) return 'Tomorrow';
+  if (isSameCalendarDay(start, today)) return 'Today';
+  if (isSameCalendarDay(start, tomorrow)) return 'Tomorrow';
   final weekday = _weekdayNames[start.weekday - 1];
   final month = _monthNames[start.month - 1];
   return '$weekday, $month ${start.day}';

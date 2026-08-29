@@ -3492,4 +3492,26 @@ Verified again after fixes: `ruff check backend` clean; the 41 deterministic tes
 
 ---
 
-*Next entry: DEC-154*
+## DEC-154: real Meeting-Load Defense -- the genuine multi-day projection, ported to Dart where it always belonged
+
+**Standard tier** -- entirely mobile, pure logic plus one existing screen's own UI addition, plus a docstring-only backend correction. Zero Gate/security/auth/secrets/external-action touch.
+
+**Authorized directly ("go ahead with next") after DEC-153 closed.** Chosen over extending Quick-capture to more domains -- that would have reopened the "single domain first vs. full multi-domain classifier" fork Preethish already explicitly decided in DEC-153's own session, which this session deliberately did not reopen without checking first.
+
+**A real, disclosed correction to this session's own initial framing, found by reading `meeting_load.py`'s existing docstring directly rather than assuming what "the fuller multi-day capacity projection" meant:** the file already explicitly says a genuine multi-day version needs real calendar ground truth, which this architecture puts ON-DEVICE ONLY, and that this exact function was "meant to be ported to Dart... so the real, live computation runs where the real committed-hours figure is actually available." A backend-side multi-day feature was never actually buildable honestly -- `predictive_risk.py`'s own real, different choice (task-deadline density, not meeting load) already worked around the identical gap for a related but distinct concept. This session's real value only became possible because `DEC-152` (this same broader work) built the real on-device `CalendarMirror` sync that never existed before.
+
+**What was built:** `mobile/lib/features/meeting_load/meeting_load_logic.dart` (new) -- a direct, hand-verified port of the real Python `compute_meeting_load()` (identical real parameters: `workingHoursPerDay=8.0`, `bufferFraction=0.25`, `overloadThreshold=0.7`; identical real defensive clamping; a real, hand-verified account of where Dart's own NaN-comparison semantics for `math.max`/`math.min`/`.clamp()` genuinely differ from Python's, confirmed live in a real Dart script before trusting it, matching the Python file's own precedent of hand-verifying exactly this). `computeWeeklyMeetingLoad()` (new) is the real, genuine multi-day projection this was always for -- sums real event durations per real calendar day from real, already-synced `CalendarMirror` data, over a real 7-day window, with zero backend involvement at all. A new, quiet `_MeetingLoadBanner` on `calendar_screen.dart` (an honest "Next 7 days look manageable" or a specific, real list of overloaded days), matching `_PredictiveRiskBanner`'s own established restraint on the Tasks screen -- but synchronous, since the real data is already in hand, not a second async fetch.
+
+**A real, disclosed correction found and fixed along the way, unrelated to this session's own new code:** `calendar_logic.dart`'s own docstring (written during `DEC-152`) claimed "`dart test` genuinely works for this file's own tests," reasoning only that `drift` itself has no Flutter import -- a real, confidently-stated claim that was never actually run before being written down, and is wrong: `db/database.dart` (imported for `CalendarMirrorData`) itself pulls in real Flutter plugin packages (`sqlite3_flutter_libs`/`path_provider`), confirmed live to fail loading under the standalone Dart SDK with the identical error class `calendar_sync_test.dart`'s own, already-correct header already documents. Both files' comments corrected; `meeting_load_logic.dart`/its own test file state the real, verified fact directly rather than repeating the same unverified claim.
+
+**Tests:** `meeting_load_logic_test.dart` (new) -- 16 single-day tests directly mirroring `test_meeting_load.py`'s own real, hand-verified cases one-for-one (a real parity proof between the Python reference and this Dart port, including the exact `4.199999999999999`-not-`4.2` floating-point boundary fact), plus 5 new multi-day tests (same-day summing, cross-day isolation, outside-the-window exclusion, a custom `lookAheadDays`). `main_shell_navigation_test.dart` +2 (a real, light week reassures; a real, 6-hour single-day commitment genuinely warns) -- both computed relative to the real `DateTime.now()` at test-run time, never a fixed date that could drift into the past.
+
+**Verified live:** `flutter analyze` clean, `flutter test` 449/449 passing. `ruff check backend` clean (docstring-only change).
+
+**Genuinely NOT witnessed this session, disclosed rather than skipped:** the real device was disconnected the entire session -- this feature has not yet been seen rendering against a real, synced calendar on a real physical device. The next real on-device pass should check it.
+
+**Affects:** `backend/src/quorum_backend/features/meeting_load.py`, `mobile/lib/features/meeting_load/meeting_load_logic.dart` (new), `mobile/lib/features/calendar/calendar_logic.dart`, `mobile/lib/features/calendar/calendar_screen.dart`, `mobile/test/meeting_load_logic_test.dart` (new), `mobile/test/calendar_logic_test.dart`, `mobile/test/main_shell_navigation_test.dart`, this log, `STATUS_INDEX.md`.
+
+---
+
+*Next entry: DEC-155*
