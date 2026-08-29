@@ -273,13 +273,91 @@ jobs:
             --min-instances 0 \
             --max-instances 2
 
+      - name: Route 100% of real traffic to the new revision
+        # A real, defensive reassertion, added after a real, live
+        # incident this exact job caused on its own first-ever real run
+        # (`DEC-161`), and a SEPARATE step from "Deploy" above (a further
+        # real review finding -- folding this into the Deploy step meant
+        # a real traffic-routing failure would surface in the Actions UI
+        # as "Deploy failed" even when the deploy itself genuinely
+        # succeeded, muddying exactly the signal this fix exists to keep
+        # legible): `gcloud run deploy` normally does shift 100% traffic
+        # to the revision it just created, BUT that default is genuinely,
+        # permanently overridden the moment ANYONE ever runs a
+        # `--no-traffic` deploy against this service -- gcloud's own
+        # documented behavior ("the LATEST revision will not receive
+        # traffic on future deployments"). This session's own earlier,
+        # real permission-testing deploys used `--no-traffic` deliberately
+        # (to avoid affecting live traffic while verifying IAM), which
+        # silently left the service permanently pinned to an old,
+        # explicit revision name -- so this job's own real first run
+        # built and deployed a genuinely new, healthy revision that never
+        # actually served a single real request, while still reporting
+        # success. Reasserting `--to-latest` here, on every real run,
+        # makes this job robust against that exact class of drift
+        # recurring for any reason in the future, rather than trusting an
+        # implicit default that a single manual command anywhere can
+        # silently and permanently change.
+        #
+        # A real, disclosed design trade-off, not an oversight (CRITICAL-
+        # tier review, `DEC-161`): this makes automated deploy and any
+        # future deliberate canary/traffic-split strategy mutually
+        # exclusive on this service -- an unconditional `--to-latest` on
+        # every merge would silently collapse a real, intentional
+        # `--no-traffic` canary or a manual percentage split the moment
+        # the next merge landed. Correct for this project's real, current
+        # single-operator, single-revision-at-a-time practice; revisit
+        # this step specifically (not the whole job) if a real canary
+        # strategy is ever deliberately adopted.
+        run: |
+          set -e
+          gcloud run services update-traffic quorum-backend --region asia-south1 --to-latest
+
       - name: Verify the real, live deployment
         # A real, live smoke test, not just a passing `gcloud` exit code
         # -- `gcloud run deploy` only reports success once Cloud Run's
-        # own health check confirms the new revision is Ready and
-        # serving traffic, but this step independently proves the public
-        # URL itself, not just the revision's internal readiness probe,
-        # actually answers correctly post-rollout.
+        # own health check confirms the new revision is Ready, but that
+        # alone does NOT prove the new revision is actually serving live
+        # traffic (see the real, live incident this exact gap caused,
+        # `DEC-161`, disclosed in the step above). This step checks THREE
+        # real facts, not one, all fail-closed (a CRITICAL-tier review
+        # finding on this same step's own first draft: an unresolvable
+        # `--format` path returns empty output with exit 0, which `set -e`
+        # does not catch, so an earlier version of this check could have
+        # silently passed forever if it ever started comparing two empty
+        # strings -- exactly the "a check that silently passes is worse
+        # than no check" lesson this whole incident already taught once):
+        # that a real revision name was actually read at all; that the
+        # image genuinely serving traffic right now is THIS run's own
+        # image (not `latestReadyRevisionName` happening to equal
+        # whatever's serving, which stays true by construction once
+        # `--to-latest` above runs -- a real manual deploy landing between
+        # this job's own deploy and verify steps would otherwise pass a
+        # check that never actually confirmed this commit shipped); and
+        # that traffic is genuinely undivided (100% on exactly one entry,
+        # not a partial split that a naive index-0 read could miss).
         run: |
           set -e
+          read -r SERVING_REVISION SERVING_PERCENT SERVING_IMAGE < <(
+            gcloud run services describe quorum-backend --region asia-south1 \
+              --format="value(status.traffic[0].revisionName,status.traffic[0].percent,spec.template.spec.containers[0].image)" \
+              | tr -d '\r'
+          )
+          echo "Revision serving traffic: $SERVING_REVISION ($SERVING_PERCENT%)"
+          echo "Image serving traffic: $SERVING_IMAGE"
+          echo "Image this run built: $IMAGE"
+
+          if [ -z "$SERVING_REVISION" ] || [ -z "$SERVING_IMAGE" ]; then
+            echo "Real failure: could not read the live traffic/image state at all" >&2
+            exit 1
+          fi
+          if [ "$SERVING_PERCENT" != "100" ]; then
+            echo "Real failure: traffic is split (${SERVING_PERCENT}%), not fully on one revision" >&2
+            exit 1
+          fi
+          if [ "$SERVING_IMAGE" != "$IMAGE" ]; then
+            echo "Real failure: the image actually serving traffic is not the one this run built" >&2
+            exit 1
+          fi
+
           curl --fail --silent --show-error https://quorum-backend-649581407643.asia-south1.run.app/health
