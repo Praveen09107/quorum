@@ -58,6 +58,53 @@ as a "reasoned construction," not a literal spec value) -- leaving out
 an entire real domain (career applications) from a feature whose own
 name is "Unified" Fast Search would have been a real, silent gap, not
 a faithful implementation of what "unified" means here.
+
+**A REAL, LIVE BUG FOUND AND FIXED HERE, live-caught on a real device
+during a Phase 8 visual-verification walkthrough, not a hypothetical:**
+`note_embeddings.source_id` (migration `0005`) is deliberately a plain
+`UUID`, never a real foreign key -- it's polymorphic across four
+genuinely different real tables depending on `source_type`, and
+Postgres has no single-column FK that can point at "whichever of these
+four tables `source_type` says." That deliberate choice has a real,
+disclosed consequence this module's own original version never
+accounted for: nothing in this backend ever deletes a `note_embeddings`
+row except a full account purge, so any real deletion of its own
+source row anywhere else leaves a permanent orphan behind.
+
+**A REAL, DISCLOSED CORRECTION to this docstring's own original root-
+cause account, found by this fix's own standard review:** the
+original text attributed the orphaning to `scripts/seed_demo_dataset.
+py` being "re-run... producing a new task_id/proposal_id in place of"
+an old one -- implying the script itself deletes and recreates. Direct
+inspection of that script found this false: every seed path is a plain
+`INSERT`, with no `DELETE` anywhere in the file, `--force` included.
+The real, confirmed mechanism (that script's own top-of-file docstring,
+`DEC-122`): an early version of `--force` genuinely DUPLICATED every
+already-seeded row (tasks 7→14, action_events 9→18, etc.) via plain
+re-insertion, and the resulting duplicates were then deleted BY HAND,
+outside the script, once found. This module's own lazy backfill had
+already written real embeddings for those since-deleted duplicate
+rows in the meantime, and nothing at the time knew to clean those up
+too -- exactly the kind of gap a polymorphic, FK-less `source_id`
+creates. A real, live query against this project's own real demo
+account found 16 such orphaned rows by this route alone (7 `task`, 9
+`decision`, the two source_types a first, narrower diagnostic query
+happened to check) -- every one of that account's current real
+tasks/decisions had a stale twin, so every real search result appeared
+exactly twice, live-reproduced on a real device. Running the real fix
+below found 28 total once all four source_types were actually checked,
+not just the two the initial diagnosis had covered.
+
+`prune_orphaned_embeddings()` below closes this the same way
+`backfill_missing_embeddings()` already closes the opposite gap (a real
+source row with no embedding yet): a real, lazy, self-healing pass at
+the start of every `search()` call, deleting exactly the
+`note_embeddings` rows whose own real source row no longer exists,
+scoped to this one user, before the missing-embedding backfill and the
+similarity query both run. Same real, deliberate non-choice as the
+rest of this module: no `pg_cron`-driven proactive sweep, no schema
+change -- a lazy pass that self-heals on the next real search, matching
+this module's own already-established philosophy exactly.
 """
 from __future__ import annotations
 
@@ -140,6 +187,40 @@ async def _backfill_source(
             source_type,
             uuid.UUID(source_id),
         )
+
+
+async def prune_orphaned_embeddings(pool: asyncpg.Pool, *, user_id: str) -> int:
+    """Real, live -- deletes this user's own `note_embeddings` rows
+    whose real source row (in `tasks`/`expenses`/`applications`/
+    `action_events`, per `source_type`) no longer exists. See this
+    module's own top-of-file docstring for the real, live-caught bug
+    this closes. Returns the real number of rows deleted, so a caller
+    can observe whether this ever actually does anything (it usually
+    won't -- a real source row is deleted far less often than a new one
+    is created)."""
+    result = await pool.execute(
+        """
+        DELETE FROM note_embeddings n
+        WHERE n.user_id = $1
+          AND (
+              (n.source_type = 'task' AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.task_id = n.source_id))
+              OR (n.source_type = 'expense' AND NOT EXISTS (SELECT 1 FROM expenses e WHERE e.expense_id = n.source_id))
+              OR (n.source_type = 'application' AND NOT EXISTS (SELECT 1 FROM applications a WHERE a.application_id = n.source_id))
+              OR (n.source_type = 'decision' AND NOT EXISTS (SELECT 1 FROM action_events ae WHERE ae.proposal_id = n.source_id))
+          )
+        """,
+        uuid.UUID(user_id),
+    )
+    # asyncpg's own execute() returns a real command tag like "DELETE 3"
+    # -- the same real row-count-verification discipline every other
+    # write path in this backend already uses (action_executor.py's own
+    # UPDATE_BUDGET check, DEC-148). `security/supabase_deletion_store.
+    # py::_parse_deleted_count` does the identical one-line parse -- a
+    # real, disclosed, deliberate non-dedup: that helper is private to a
+    # real, CRITICAL-tier-reviewed account-deletion module, and this
+    # session judged touching that file to extract a shared one-liner
+    # not worth reopening its review surface for a cosmetic gain.
+    return int(result.rsplit(" ", 1)[-1])
 
 
 async def backfill_missing_embeddings(pool: asyncpg.Pool, *, user_id: str, api_key: str) -> None:
@@ -250,11 +331,13 @@ async def backfill_missing_embeddings(pool: asyncpg.Pool, *, user_id: str, api_k
 
 
 async def search(pool: asyncpg.Pool, *, user_id: str, query: str, api_key: str, limit: int = SEARCH_RESULT_CAP) -> list[SearchableItem]:
-    """Real, live -- backfills any missing embeddings for this user
-    first (see module docstring), then embeds `query` and ranks the
-    user's full real corpus by real cosine distance. Already sorted
-    server-side, per §5.7's own explicit contract -- the opposite of
-    Today's zones, which sort client-side."""
+    """Real, live -- prunes any orphaned embeddings and backfills any
+    missing ones for this user first (see module docstring for both),
+    then embeds `query` and ranks the user's full real corpus by real
+    cosine distance. Already sorted server-side, per §5.7's own
+    explicit contract -- the opposite of Today's zones, which sort
+    client-side."""
+    await prune_orphaned_embeddings(pool, user_id=user_id)
     await backfill_missing_embeddings(pool, user_id=user_id, api_key=api_key)
 
     query_vector = await embed_text(query, api_key=api_key)
