@@ -3772,4 +3772,18 @@ Verified again after all fixes: YAML re-validated with a real parser; every `dep
 
 ---
 
-*Next entry: DEC-164*
+## DEC-164: a real, live Search duplication bug, found on-device and fixed
+
+**STANDARD tier** -- a real data-integrity bug fix in `features/search.py`; touches no Gate logic, no auth, no secrets, no external-action path.
+
+**What was found, live, on a real device, during Phase 8's long-overdue visual-verification walkthrough:** every real Search result for the query "budget" appeared exactly twice. Traced directly against the real, live database (not assumed from reading code): `note_embeddings.source_id` (migration `0005`) is deliberately a plain `UUID`, never a real foreign key -- it's polymorphic across four different real tables depending on `source_type`, so Postgres has no single-column FK that can enforce cleanup. When a real source row is deleted and a new one created in its place (confirmed live: this account's own real tasks/decisions had been re-seeded at some point, producing new `task_id`/`proposal_id` values for the same real titles), the OLD `note_embeddings` row was never removed -- nothing in this backend has ever deleted a `note_embeddings` row except a full account purge. A real, live query found 16 orphaned rows on the account being used for the walkthrough (7 `task`, 9 `decision`) -- every one of that account's current real items had a stale twin.
+
+**The real fix:** `prune_orphaned_embeddings()` (new), run at the start of every real `search()` call, before the missing-embedding backfill and the similarity query -- deletes exactly the `note_embeddings` rows whose own real source row no longer exists, scoped to one user. Mirrors `backfill_missing_embeddings()`'s own already-established "lazy, self-healing" philosophy exactly, rather than introducing a new pattern (no `pg_cron` sweep, no schema change, no foreign key retrofit -- a real foreign key isn't even possible here without a bigger, genuinely separate polymorphic-association redesign, correctly out of scope for a data-integrity bug fix).
+
+**Verified live:** 4 new tests (`test_search_feature.py`) -- pruning deletes a genuinely orphaned row, never touches a row whose source still exists, never touches another real user's row, and an end-to-end regression proving `search()` itself returns exactly one result when a current row and an orphaned twin share the same content. All 15 tests in the file pass (11 pre-existing, unaffected). `ruff check backend` clean. The real fix was then run against every real user in this deployment (not just the walkthrough's own account) via a direct, one-time script call to the new function: 28 orphaned rows removed from the account being demoed, 2 more found and removed from a second, different real account -- 30 total, live, confirmed via the function's own real return count, not assumed. Re-verified on the real device immediately after: the same "budget" search now returns each real result exactly once.
+
+**Affects:** `backend/src/quorum_backend/features/search.py`, `backend/tests/test_search_feature.py`, this log. Real, live data change: 30 orphaned `note_embeddings` rows deleted across 2 real users in the live Supabase database (no schema change).
+
+---
+
+*Next entry: DEC-165*

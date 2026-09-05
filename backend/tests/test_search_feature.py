@@ -23,6 +23,7 @@ from quorum_backend.features.search import (
     _content_for_expense,
     _content_for_task,
     backfill_missing_embeddings,
+    prune_orphaned_embeddings,
     search,
 )
 
@@ -94,6 +95,99 @@ async def user_id(pool):
 @pytest_asyncio.fixture
 async def api_key():
     return get_settings().gemini_api_key
+
+
+_FAKE_VECTOR_LITERAL = "[" + ",".join(["0.0"] * 768) + "]"  # a real, valid VECTOR(768) literal -- content doesn't matter for the prune tests below, only presence/absence
+
+
+async def test_prune_orphaned_embeddings_deletes_a_real_row_whose_source_task_no_longer_exists(pool, user_id):
+    """Real regression test for the real bug found live on-device during
+    a Phase 8 walkthrough: a `note_embeddings` row surviving after its
+    own real `tasks` row was deleted (the exact real shape `scripts/
+    seed_demo_dataset.py` produces when re-run against an already-seeded
+    account) must be pruned, not silently returned forever by every
+    future real search."""
+    orphaned_id = uuid.uuid4()  # deliberately never inserted into tasks
+    await pool.execute(
+        "INSERT INTO note_embeddings (user_id, content, embedding, source_type, source_id) VALUES ($1, $2, $3::vector, 'task', $4)",
+        uuid.UUID(user_id), "a real, now-orphaned task title", _FAKE_VECTOR_LITERAL, orphaned_id,
+    )
+
+    deleted_count = await prune_orphaned_embeddings(pool, user_id=user_id)
+
+    assert deleted_count == 1
+    row = await pool.fetchrow("SELECT 1 FROM note_embeddings WHERE source_id = $1", orphaned_id)
+    assert row is None
+
+
+async def test_prune_orphaned_embeddings_never_touches_a_real_row_whose_source_still_exists(pool, user_id):
+    task_id = uuid.uuid4()
+    try:
+        await pool.execute(
+            "INSERT INTO tasks (task_id, user_id, title, estimated_hours) VALUES ($1, $2, $3, $4)",
+            task_id, uuid.UUID(user_id), "a real, still-existing task", 1.0,
+        )
+        await pool.execute(
+            "INSERT INTO note_embeddings (user_id, content, embedding, source_type, source_id) VALUES ($1, $2, $3::vector, 'task', $4)",
+            uuid.UUID(user_id), "a real, still-existing task", _FAKE_VECTOR_LITERAL, task_id,
+        )
+
+        deleted_count = await prune_orphaned_embeddings(pool, user_id=user_id)
+
+        assert deleted_count == 0
+        row = await pool.fetchrow("SELECT 1 FROM note_embeddings WHERE source_id = $1", task_id)
+        assert row is not None
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE task_id = $1", task_id)
+
+
+async def test_prune_orphaned_embeddings_never_touches_another_real_users_orphaned_row(pool, user_id):
+    other_google_sub = f"test-search-other-{uuid.uuid4()}"
+    other_user_id = await get_or_create_user(pool, google_sub=other_google_sub, email=None)
+    other_orphaned_id = uuid.uuid4()
+    try:
+        await pool.execute(
+            "INSERT INTO note_embeddings (user_id, content, embedding, source_type, source_id) VALUES ($1, $2, $3::vector, 'task', $4)",
+            uuid.UUID(other_user_id), "a different real user's orphaned row", _FAKE_VECTOR_LITERAL, other_orphaned_id,
+        )
+
+        deleted_count = await prune_orphaned_embeddings(pool, user_id=user_id)
+
+        assert deleted_count == 0
+        row = await pool.fetchrow("SELECT 1 FROM note_embeddings WHERE source_id = $1", other_orphaned_id)
+        assert row is not None
+    finally:
+        await pool.execute("DELETE FROM note_embeddings WHERE user_id = $1", uuid.UUID(other_user_id))
+        await pool.execute("DELETE FROM users WHERE google_sub = $1", other_google_sub)
+
+
+@_needs_real_key
+async def test_search_never_returns_a_duplicate_when_an_orphaned_twin_embedding_exists(pool, user_id, api_key):
+    """Real, end-to-end regression test for the exact real bug found
+    live on-device: a real, current task plus a real, orphaned
+    `note_embeddings` row with the SAME content (the exact shape a
+    re-seeded demo account produces) must surface as ONE real search
+    result, never two."""
+    current_task_id = uuid.uuid4()
+    orphaned_id = uuid.uuid4()
+    shared_title = "A real, distinctively-worded duplicate-prone task title"
+    try:
+        await pool.execute(
+            "INSERT INTO tasks (task_id, user_id, title, estimated_hours) VALUES ($1, $2, $3, $4)",
+            current_task_id, uuid.UUID(user_id), shared_title, 1.0,
+        )
+        await pool.execute(
+            "INSERT INTO note_embeddings (user_id, content, embedding, source_type, source_id) VALUES ($1, $2, $3::vector, 'task', $4)",
+            uuid.UUID(user_id), shared_title, _FAKE_VECTOR_LITERAL, orphaned_id,
+        )
+
+        results = await search(pool, user_id=user_id, query=shared_title, api_key=api_key)
+
+        matching = [r for r in results if r.text == shared_title]
+        assert len(matching) == 1
+        assert matching[0].item_id == str(current_task_id)
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE task_id = $1", current_task_id)
 
 
 @_needs_real_key
