@@ -2424,3 +2424,119 @@ def test_career_digest_route_real_secret_and_matching_header_reaches_the_real_ro
         }
     finally:
         get_settings.cache_clear()
+
+
+# --- POST /internal/briefing (Phase 2, DEC-163) ---
+
+
+def test_briefing_route_is_401_when_no_internal_secret_is_configured_at_all(monkeypatch):
+    monkeypatch.delenv("INTERNAL_DRAIN_SECRET", raising=False)
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/briefing")
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_briefing_route_is_401_with_a_real_configured_secret_but_the_wrong_header_value(monkeypatch):
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/briefing", headers={"X-Internal-Secret": "not-the-real-secret"})
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_briefing_route_real_secret_and_matching_header_reaches_the_real_route_wiring(monkeypatch):
+    """Proves this route's own real auth dependency and real response
+    mapping, WITHOUT a real, unscoped call to `run_briefing()` -- the
+    same real safety precedent every other `/internal/*` route test in
+    this file already established. That function's own real, deep
+    composition logic is covered directly and safely in `test_briefing.
+    py`, scoped to real, test-owned user_ids only."""
+    from quorum_backend.features.briefing import BriefingResult
+
+    async def _fake_run_briefing(pool):
+        return BriefingResult(
+            users_scanned=3, users_failed=0, users_with_pending_actions=1, users_with_active_negotiations=1,
+        )
+
+    monkeypatch.setattr("quorum_backend.main.run_briefing", _fake_run_briefing)
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/briefing", headers={"X-Internal-Secret": "a-real-configured-secret"})
+        assert response.status_code == 200
+        assert response.json() == {
+            "users_scanned": 3,
+            "users_failed": 0,
+            "users_with_pending_actions": 1,
+            "users_with_active_negotiations": 1,
+        }
+    finally:
+        get_settings.cache_clear()
+
+
+# --- POST /internal/follow-up (Phase 2, DEC-163) ---
+
+
+def test_follow_up_route_is_401_when_no_internal_secret_is_configured_at_all(monkeypatch):
+    monkeypatch.delenv("INTERNAL_DRAIN_SECRET", raising=False)
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/follow-up")
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_follow_up_route_is_401_with_a_real_configured_secret_but_the_wrong_header_value(monkeypatch):
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/follow-up", headers={"X-Internal-Secret": "not-the-real-secret"})
+        assert response.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+def test_follow_up_route_real_secret_and_matching_header_reaches_the_real_route_wiring(monkeypatch):
+    """Proves this route's own real auth dependency and real response
+    mapping, WITHOUT a real, unscoped call to `run_follow_up()` -- the
+    same real safety precedent every other `/internal/*` route test in
+    this file already established. That function's own real, deep
+    detection logic is covered directly and safely in `test_follow_up.
+    py`, scoped to real, test-owned user_ids only. `action_taken` is
+    asserted `False` here too -- see `features/follow_up.py`'s own
+    top-of-file docstring for why this route deliberately takes no real
+    action on what it finds, this phase."""
+    from quorum_backend.features.follow_up import FollowUpResult
+
+    async def _fake_run_follow_up(pool):
+        return FollowUpResult(
+            users_scanned=3, users_failed=0, users_with_stale_messages=1, stale_messages_detected=2,
+        )
+
+    monkeypatch.setattr("quorum_backend.main.run_follow_up", _fake_run_follow_up)
+    monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/follow-up", headers={"X-Internal-Secret": "a-real-configured-secret"})
+        assert response.status_code == 200
+        assert response.json() == {
+            "users_scanned": 3,
+            "users_failed": 0,
+            "users_with_stale_messages": 1,
+            "stale_messages_detected": 2,
+            "action_taken": False,
+        }
+    finally:
+        get_settings.cache_clear()
