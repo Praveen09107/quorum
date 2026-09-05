@@ -11,11 +11,12 @@ exercising the real, live, whole-`users`-table default."""
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import pytest
 import pytest_asyncio
 
 from quorum_backend.auth.user_provisioning import get_or_create_user
 from quorum_backend.core import db
-from quorum_backend.features.briefing import compose_briefing_for_user, run_briefing
+from quorum_backend.features.briefing import BriefingUserNotFoundError, compose_briefing_for_user, run_briefing
 
 
 @pytest_asyncio.fixture
@@ -99,13 +100,24 @@ async def test_run_briefing_scans_exactly_the_real_users_it_is_given_and_tallies
         await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(other_user_id))
 
 
+async def test_compose_briefing_for_user_raises_a_real_specific_error_for_a_genuinely_nonexistent_user(pool):
+    """Real regression test for this PR's own CRITICAL-tier review
+    (MEDIUM M2): pins the SPECIFIC real exception type this module now
+    raises for its own explicit existence check, so a future change
+    that breaks this guarantee in some other way (a fabricated all-zero
+    briefing coming back cleanly instead) fails this test for the right
+    reason, not just "some exception happened."""
+    ghost_user_id = str(uuid.uuid4())  # syntactically real, genuinely no real users row
+
+    with pytest.raises(BriefingUserNotFoundError):
+        await compose_briefing_for_user(pool, user_id=ghost_user_id)
+
+
 async def test_run_briefing_a_real_nonexistent_user_id_is_a_real_tallied_failure_not_a_silent_all_zero_briefing(pool, user_id):
-    """Real proof this module relies correctly on `features/today.py::
-    fetch_today_budget()`'s own already-real `MonthlyBudgetLimitUserNotFoundError`
-    (`DEC-148`) -- a syntactically real but genuinely nonexistent
-    user_id must surface as a real, tallied failure, never as a
-    fabricated "0 pending actions, 0 negotiations" briefing that looks
-    identical to a real, quiet user."""
+    """Real proof a syntactically real but genuinely nonexistent
+    user_id surfaces as a real, tallied failure, never as a fabricated
+    "0 pending actions, 0 negotiations" briefing that looks identical to
+    a real, quiet user."""
     ghost_user_id = str(uuid.uuid4())  # syntactically real, genuinely no real users row
 
     result = await run_briefing(pool, user_ids=[ghost_user_id, user_id])

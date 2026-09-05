@@ -10,18 +10,29 @@ directly before writing a line of this module: `sent_messages`
 populated by `features/email_ingestion.py`'s own real polling job --
 the schema-level prerequisite the plan names is already satisfied.
 
-A SECOND, NEWLY-DISCLOSED REASON THIS STAYS A STUB, found while
-checking the first reason above: `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.
-md` -- the document `deadline_watch.py`/`spend_alert.py`'s own
-docstrings and this production plan itself cite for follow-up's real
-detection spec -- does not exist anywhere in this repository's real
-`specs/tier1_foundation/` directory (confirmed via a full listing).
-There is no real, detailed spec anywhere in this repo for what an
-autonomous follow-up nudge should actually DO once a stale outbound
-message is detected (compose a reminder? open a new negotiation?
-surface a `needs_you_now` card?) -- inventing that behavior now would
-violate Rule 3 ("never invent architecture beyond what the spec
-describes"), not honor the plan's own instruction to defer it.
+**A REAL, DISCLOSED CORRECTION TO THIS MODULE'S OWN ORIGINAL SECOND
+REASON, found by this PR's own CRITICAL-tier review, BLOCKING until
+fixed:** this docstring originally claimed `QUORUM_ARCHITECTURE_DESIGN_
+DOCUMENT.md` "does not exist anywhere in this repository" -- false. The
+document exists, at the repository root (a real, embarrassing scoping
+error: an earlier search only checked `specs/tier1_foundation/`, never
+the repo root, where every OTHER real module in this backend that cites
+this same document actually finds it). **The real, accurate second
+reason, confirmed by directly reading the real document, not assuming
+its absence:** §13.4 genuinely names `follow-up` as one of this
+project's four real scheduled jobs ("Scheduled jobs (briefing,
+deadline-watch, follow-up, spend-alert) are invoked as direct Cloud Run
+endpoint calls by `pg_cron`...") -- but that is the ENTIRE real mention;
+grepping the full document confirms no other real section specifies
+what an autonomous follow-up nudge should actually DO once a stale
+outbound message is detected (compose a reminder? open a new
+negotiation? surface a `needs_you_now` card?). The real, accurate
+framing is therefore: the production plan's own STATED blocker
+(`sent_messages` missing) has genuinely expired, but deferral remains
+correct because the real spec names this job's EXISTENCE without ever
+specifying its BEHAVIOR -- inventing that behavior now would violate
+Rule 3 ("never invent architecture beyond what the spec describes"),
+not honor the plan's own instruction to defer it.
 
 WHAT THIS MODULE ACTUALLY DOES, deliberately more than a bare stub
 while staying honest about what it does NOT do: it reuses `features/

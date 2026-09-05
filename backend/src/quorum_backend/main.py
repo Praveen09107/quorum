@@ -1413,11 +1413,12 @@ async def briefing_route(
     A real, disclosed, honest scope boundary: this route composes the
     real data only -- the real consumer (a push notification, a real
     home-screen-widget refresh) is NOT built this phase, and neither is
-    the weather enrichment `QUORUM_PRODUCTION_COMPLETION_PLAN.md`
-    itself names for this job; see `features/briefing.py`'s own
-    top-of-file docstring for exactly why (a real, disclosed spec-
-    corpus gap, and a real, missing free-tier API key this environment
-    cannot provision on its own).
+    the weather enrichment `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md`
+    §9.8 genuinely specifies for this job; see `features/briefing.py`'s
+    own top-of-file docstring for exactly why (a real, missing free-tier
+    weather API key this environment cannot provision on its own -- NOT
+    a missing spec, a real, disclosed correction to this route's own
+    earlier wording, found by this session's own CRITICAL-tier review).
 
     Not yet scheduled live via `pg_cron` as of this writing -- no real
     consumer exists yet to make a scheduled run meaningful; see this
@@ -1448,11 +1449,12 @@ async def follow_up_route(
     file: this route takes NO real action on what it finds -- no
     negotiation created, no notification sent. See `features/follow_
     up.py`'s own top-of-file docstring for exactly why (the production
-    plan's own explicit instruction to wire this route now and leave
-    its real logic for later, plus a real, disclosed spec-corpus gap
-    found while confirming that instruction still applies). Every
-    response from this route carries `action_taken: false` for the
-    same reason.
+    plan's own stated blocker for this job has genuinely expired, but
+    `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md` §13.4 names this job's
+    existence without ever specifying its real behavior, so building
+    real action-taking logic now would invent architecture beyond any
+    real spec). Every response from this route carries `action_taken:
+    false` for the same reason.
 
     Not yet scheduled live via `pg_cron` as of this writing -- no real
     action-taking logic exists yet to make a scheduled run meaningful."""
