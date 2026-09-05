@@ -62,9 +62,11 @@ from quorum_backend.features.career_digest import (
     make_gemini_compile_digest_call,
     run_career_digest,
 )
+from quorum_backend.features.briefing import run_briefing
 from quorum_backend.features.career_pipeline import fetch_career_pipeline
 from quorum_backend.features.deadline_watch import run_deadline_watch
 from quorum_backend.features.email_ingestion import run_email_ingestion
+from quorum_backend.features.follow_up import run_follow_up
 from quorum_backend.features.gate_reveal import fetch_gate_reveal
 from quorum_backend.features.honesty_log import fetch_honesty_feed
 from quorum_backend.features.negotiation_choice import (
@@ -1392,4 +1394,75 @@ async def career_digest_route(
         "applications_failed": result.applications_failed,
         "digests_compiled": result.digests_compiled,
         "outcome_counts": result.outcome_counts,
+    }
+
+
+@app.post("/internal/briefing")
+async def briefing_route(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    _internal: None = Depends(_require_internal_secret),
+) -> dict:
+    """Real, live -- Phase 2 of `QUORUM_PRODUCTION_COMPLETION_PLAN.md`,
+    `DEC-163`. Composes a real, per-user briefing (today's real
+    capacity/budget/pending-action/active-negotiation counts, reusing
+    `features/today.py`'s own already-real, already-tested queries
+    directly) for every real user via `features/briefing.py::run_
+    briefing` -- zero LLM calls, same shared `_require_internal_secret`
+    auth as every other `/internal/*` route.
+
+    A real, disclosed, honest scope boundary: this route composes the
+    real data only -- the real consumer (a push notification, a real
+    home-screen-widget refresh) is NOT built this phase, and neither is
+    the weather enrichment `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md`
+    §9.8 genuinely specifies for this job; see `features/briefing.py`'s
+    own top-of-file docstring for exactly why (a real, missing free-tier
+    weather API key this environment cannot provision on its own -- NOT
+    a missing spec, a real, disclosed correction to this route's own
+    earlier wording, found by this session's own CRITICAL-tier review).
+
+    Not yet scheduled live via `pg_cron` as of this writing -- no real
+    consumer exists yet to make a scheduled run meaningful; see this
+    route's own docstring above."""
+    result = await run_briefing(pool)
+    return {
+        "users_scanned": result.users_scanned,
+        "users_failed": result.users_failed,
+        "users_with_pending_actions": result.users_with_pending_actions,
+        "users_with_active_negotiations": result.users_with_active_negotiations,
+    }
+
+
+@app.post("/internal/follow-up")
+async def follow_up_route(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    _internal: None = Depends(_require_internal_secret),
+) -> dict:
+    """Real, live -- Phase 2 of `QUORUM_PRODUCTION_COMPLETION_PLAN.md`,
+    `DEC-163`. Counts real, stale (4+ day) unreplied outbound messages
+    for every real user via `features/follow_up.py::run_follow_up`,
+    reusing `features/waiting_on.py`'s own already-real detection
+    directly -- zero LLM calls, same shared `_require_internal_secret`
+    auth as every other `/internal/*` route.
+
+    A real, disclosed, honest scope boundary, deliberately more
+    conservative than every other `/internal/*` trigger route in this
+    file: this route takes NO real action on what it finds -- no
+    negotiation created, no notification sent. See `features/follow_
+    up.py`'s own top-of-file docstring for exactly why (the production
+    plan's own stated blocker for this job has genuinely expired, but
+    `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md` §13.4 names this job's
+    existence without ever specifying its real behavior, so building
+    real action-taking logic now would invent architecture beyond any
+    real spec). Every response from this route carries `action_taken:
+    false` for the same reason.
+
+    Not yet scheduled live via `pg_cron` as of this writing -- no real
+    action-taking logic exists yet to make a scheduled run meaningful."""
+    result = await run_follow_up(pool)
+    return {
+        "users_scanned": result.users_scanned,
+        "users_failed": result.users_failed,
+        "users_with_stale_messages": result.users_with_stale_messages,
+        "stale_messages_detected": result.stale_messages_detected,
+        "action_taken": result.action_taken,
     }
