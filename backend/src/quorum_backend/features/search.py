@@ -67,24 +67,42 @@ genuinely different real tables depending on `source_type`, and
 Postgres has no single-column FK that can point at "whichever of these
 four tables `source_type` says." That deliberate choice has a real,
 disclosed consequence this module's own original version never
-accounted for: when a real source row is deleted and a new one created
-in its place (confirmed live: `scripts/seed_demo_dataset.py` re-run
-against an already-seeded real account, producing a new `task_id`/
-`proposal_id` with the same real title/content as before), the OLD
-`note_embeddings` row is never cleaned up -- nothing in this backend
-ever deletes a `note_embeddings` row except a full account purge. A
-real, live query against this project's own real demo account found
-16 real, orphaned rows this way (7 `task`, 9 `decision`) -- every
-single one of that account's current real tasks/decisions had a stale
-twin, so every real search result appeared exactly twice, live-
-reproduced on a real device. `_prune_orphaned_embeddings()` below
-closes this the same way `backfill_missing_embeddings()` already closes
-the opposite gap (a real source row with no embedding yet): a real,
-lazy, self-healing pass at the start of every `search()` call, deleting
-exactly the `note_embeddings` rows whose own real source row no longer
-exists, scoped to this one user, before the missing-embedding backfill
-and the similarity query both run. Same real, deliberate non-choice as
-the rest of this module: no `pg_cron`-driven proactive sweep, no schema
+accounted for: nothing in this backend ever deletes a `note_embeddings`
+row except a full account purge, so any real deletion of its own
+source row anywhere else leaves a permanent orphan behind.
+
+**A REAL, DISCLOSED CORRECTION to this docstring's own original root-
+cause account, found by this fix's own standard review:** the
+original text attributed the orphaning to `scripts/seed_demo_dataset.
+py` being "re-run... producing a new task_id/proposal_id in place of"
+an old one -- implying the script itself deletes and recreates. Direct
+inspection of that script found this false: every seed path is a plain
+`INSERT`, with no `DELETE` anywhere in the file, `--force` included.
+The real, confirmed mechanism (that script's own top-of-file docstring,
+`DEC-122`): an early version of `--force` genuinely DUPLICATED every
+already-seeded row (tasks 7→14, action_events 9→18, etc.) via plain
+re-insertion, and the resulting duplicates were then deleted BY HAND,
+outside the script, once found. This module's own lazy backfill had
+already written real embeddings for those since-deleted duplicate
+rows in the meantime, and nothing at the time knew to clean those up
+too -- exactly the kind of gap a polymorphic, FK-less `source_id`
+creates. A real, live query against this project's own real demo
+account found 16 such orphaned rows by this route alone (7 `task`, 9
+`decision`, the two source_types a first, narrower diagnostic query
+happened to check) -- every one of that account's current real
+tasks/decisions had a stale twin, so every real search result appeared
+exactly twice, live-reproduced on a real device. Running the real fix
+below found 28 total once all four source_types were actually checked,
+not just the two the initial diagnosis had covered.
+
+`prune_orphaned_embeddings()` below closes this the same way
+`backfill_missing_embeddings()` already closes the opposite gap (a real
+source row with no embedding yet): a real, lazy, self-healing pass at
+the start of every `search()` call, deleting exactly the
+`note_embeddings` rows whose own real source row no longer exists,
+scoped to this one user, before the missing-embedding backfill and the
+similarity query both run. Same real, deliberate non-choice as the
+rest of this module: no `pg_cron`-driven proactive sweep, no schema
 change -- a lazy pass that self-heals on the next real search, matching
 this module's own already-established philosophy exactly.
 """
@@ -196,7 +214,12 @@ async def prune_orphaned_embeddings(pool: asyncpg.Pool, *, user_id: str) -> int:
     # asyncpg's own execute() returns a real command tag like "DELETE 3"
     # -- the same real row-count-verification discipline every other
     # write path in this backend already uses (action_executor.py's own
-    # UPDATE_BUDGET check, DEC-148).
+    # UPDATE_BUDGET check, DEC-148). `security/supabase_deletion_store.
+    # py::_parse_deleted_count` does the identical one-line parse -- a
+    # real, disclosed, deliberate non-dedup: that helper is private to a
+    # real, CRITICAL-tier-reviewed account-deletion module, and this
+    # session judged touching that file to extract a shared one-liner
+    # not worth reopening its review surface for a cosmetic gain.
     return int(result.rsplit(" ", 1)[-1])
 
 
