@@ -231,12 +231,33 @@ jobs:
         # `decNNN-YYYYMMDD` manual-tag convention in spirit (real and
         # specific, never a mutable `:latest`) without inventing a new
         # scheme this workflow would need to track state to generate.
+        #
+        # `--service-account`/`--gcs-log-dir` (`DEC-162`): this build now
+        # runs as `quorum-cloud-builder`, a real, dedicated identity
+        # holding only `roles/cloudbuild.builds.builder` -- not the
+        # project's default compute service account, which this session
+        # found (`STATUS_INDEX.md` item #31) also holds project-wide
+        # `roles/editor` for unrelated reasons. Before this fix, every
+        # Cloud Build job this pipeline ran -- meaning every real merge to
+        # `main` -- executed unattended with real, project-wide Editor
+        # rights; a compromised or misconfigured build step could reach
+        # far beyond what building and pushing one image ever needs.
+        # `--gcs-log-dir` is not optional here, not decoration: Cloud
+        # Build's own real API rejects any `--service-account` build that
+        # doesn't also pick an explicit real logging destination (a real,
+        # live-confirmed requirement, not assumed) -- the existing,
+        # already-provisioned `gs://quorum-505909_cloudbuild` bucket is
+        # reused for this rather than standing up a second real bucket
+        # with its own fresh permission surface to reason about.
         run: |
           set -e
           IMAGE="asia-south1-docker.pkg.dev/quorum-505909/cloud-run-source-deploy/quorum-backend:gha-${{ github.sha }}"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
-          BUILD_ID=$(gcloud builds submit --async --tag "$IMAGE" --format="value(id)")
+          BUILD_ID=$(gcloud builds submit --async \
+            --service-account="projects/quorum-505909/serviceAccounts/quorum-cloud-builder@quorum-505909.iam.gserviceaccount.com" \
+            --gcs-log-dir="gs://quorum-505909_cloudbuild/logs" \
+            --tag "$IMAGE" --format="value(id)")
           echo "Submitted build $BUILD_ID -- polling for a real terminal status"
 
           # 90 x 10s = 15 real minutes -- a real, deliberate margin past
