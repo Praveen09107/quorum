@@ -3730,4 +3730,24 @@ Verified again after all fixes: YAML re-validated with a real parser; every `dep
 
 ---
 
-*Next entry: DEC-162*
+## DEC-162: a dedicated Cloud Build service account -- closing the build half of open item #31
+
+**CRITICAL tier** -- real IAM/security work on the live CI/CD pipeline. An unattended session (Preethish disconnected for a real, disclosed ~10-hour stretch, explicitly authorized real, phone-independent backend work to continue -- see this session's own opening exchange), so scoped deliberately to a well-defined, already-identified, real, reversible fix rather than anything novel or judgment-heavy.
+
+**What was found, again, by direct verification, not assumed from the item's own prior text:** `STATUS_INDEX.md` item #31 (found `DEC-159`, widened `DEC-160`) named two real, distinct fixes -- a dedicated Cloud Build execution identity, and a dedicated Cloud Run runtime identity, both replacing the same over-broad `649581407643-compute@developer.gserviceaccount.com` (`roles/editor`, project-wide) for two different real reasons. Only the first is attempted here. **The second (Cloud Run's own runtime identity) is deliberately NOT touched this session** -- re-pointing the actual live, traffic-serving service at a new identity would mean re-granting every real Secret Manager access `DEC-159` already gave the current identity, then re-verifying the entire live application still works correctly end-to-end under it. That is real, valuable, but genuinely higher-risk, harder-to-reverse work than this unsupervised stretch should absorb -- logged here as the deliberate reason it's still not done, not silently skipped.
+
+**What was built, live:** a new, real, dedicated service account, `quorum-cloud-builder@quorum-505909.iam.gserviceaccount.com`, holding exactly `roles/cloudbuild.builds.builder` -- the same real, Google-managed, well-tested role the project's own DEFAULT Cloud Build service account already holds, just on a purpose-built identity instead of the broad-`roles/editor` compute default. `quorum-ci-deployer` was granted `roles/iam.serviceAccountUser` scoped to this one new SA (to `actAs` it when submitting a build), the same real pattern already established for the Cloud Run runtime SA in `DEC-160`. `ci.yml`'s build step now passes `--service-account=projects/quorum-505909/serviceAccounts/quorum-cloud-builder@...` to `gcloud builds submit`.
+
+**A real, live-discovered requirement, not assumed:** Cloud Build's own API genuinely rejects any build that specifies a custom `--service-account` without ALSO specifying an explicit logging destination (`build.logs_bucket`, `REGIONAL_USER_OWNED_BUCKET` behavior, or `CLOUD_LOGGING_ONLY`/`NONE`) -- confirmed live via a real, initial failed test (`INVALID_ARGUMENT`). `--default-buckets-behavior=REGIONAL_USER_OWNED_BUCKET` was tried first and rejected too -- it creates and requires access to a genuinely NEW, second regional bucket (`quorum-505909_asia-south1_cloudbuild`) with its own fresh permission surface, real, live-confirmed via an identical `storage.buckets.get`-class failure to the one `DEC-160` already solved once for the global staging bucket. Rather than repeat that entire permission-discovery chain for a second bucket, `--gcs-log-dir` now points explicitly at the already-provisioned, already-fully-configured `gs://quorum-505909_cloudbuild/logs` -- the dedicated build SA was granted `roles/storage.objectAdmin` on that one, real, existing bucket instead.
+
+**Verified live, via the same impersonation discipline `DEC-160`/`161` already established, before trusting any of this in the real pipeline:** `quorum-ci-deployer`'s own temporary local impersonation grant was re-added, used to submit one real, full, async build under the new dedicated SA + new log-dir configuration, polled to a genuine `SUCCESS`, and independently re-confirmed via `gcloud builds describe`'s own `serviceAccount` field that the build genuinely executed as `quorum-cloud-builder`, not a silent fallback to the default. The throwaway test image tag was deleted afterward; the temporary impersonation grant was revoked again.
+
+**Verified again after the workflow edit:** YAML re-validated with a real parser; all four `deploy`-job shell scripts re-checked with `bash -n`. No application code changed -- `ruff check backend` stays clean trivially.
+
+**Genuinely NOT yet verified: a real trigger from an actual GitHub Actions push event**, same standing caveat `DEC-160`/`161` both already carry for every change to this same job -- the real, final proof is watching the next real merge to `main` actually build under this new identity, which this session's own next step (merging this PR) triggers.
+
+**Affects:** `.github/workflows/ci.yml`, `specs/tier3_verification/STATUS_INDEX.md`, this log. Real, live GCP IAM state: 1 new service account (`quorum-cloud-builder`), 1 new project-level role binding on it, 1 new resource-scoped `serviceAccountUser` binding on it (for `quorum-ci-deployer`), 1 new resource-scoped `storage.objectAdmin` binding on the existing `gs://quorum-505909_cloudbuild` bucket.
+
+---
+
+*Next entry: DEC-163*
