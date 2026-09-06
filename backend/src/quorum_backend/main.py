@@ -572,7 +572,18 @@ async def negotiation_detail_endpoint(
     the two cases are deliberately indistinguishable in the response,
     the same "never confirm another user's data exists" discipline
     every other real per-user route in this backend already holds
-    itself to."""
+    itself to.
+
+    RESOLVED, a real, disclosed gap found on-device (Session 2,
+    `QUORUM_FINAL_COMPLETION_PLAN.md`, `DEC-168`): `resolved_at`/
+    `chosen_option_id` now ride along on every real response -- a real
+    user re-opening an already-decided negotiation previously saw the
+    exact same fully-interactive options screen as a genuinely open
+    one, discovering it was already decided only via a real, honest
+    `409` from `POST .../choose` AFTER tapping again. The `409` itself
+    was always correct; the client just never knew to avoid asking in
+    the first place. See `features/negotiation_detail.py::
+    NegotiationDetail`'s own docstring for the full account."""
     try:
         negotiation_uuid = uuid.UUID(negotiation_id)
     except ValueError as exc:
@@ -581,7 +592,12 @@ async def negotiation_detail_endpoint(
     detail = await fetch_negotiation_detail(pool, user_id=internal_user_id, negotiation_id=str(negotiation_uuid))
     if detail is None:
         raise HTTPException(status_code=404, detail=_NEGOTIATION_NOT_FOUND_DETAIL)
-    return {"positions": detail.positions, "options": detail.options}
+    return {
+        "positions": detail.positions,
+        "options": detail.options,
+        "resolved_at": detail.resolved_at,
+        "chosen_option_id": detail.chosen_option_id,
+    }
 
 
 @app.get("/gate_reveal/{proposal_id}")

@@ -28,6 +28,20 @@ Disabling the cache is the standard, correct fix -- verified live
 against the real deployment's real DSN (a real `SELECT version()`
 round-trip succeeded) before trusting it, not assumed from
 documentation alone.
+
+`server_settings={"timezone": "UTC"}` (added `DEC-168`, a real,
+disclosed hardening found by that entry's own standard-tier review):
+`features/trust_digest.py::aggregate_weekly_summary()` casts a real
+`date` query parameter to `::date` specifically so Postgres's own
+`date -> timestamptz` implicit cast resolves "midnight on this date"
+using this session's real `TimeZone` setting -- which this project has
+only ever confirmed is `UTC` via a live `SHOW TIMEZONE` check, never
+pinned in code. Left unpinned, that correctness silently depended on
+Supabase's own project-level default never changing -- a real, live,
+external configuration this backend has no control over and no way to
+detect drifting. Pinned here, once, for every real connection this
+pool ever opens, rather than trusting an ambient setting only ever
+spot-checked once.
 """
 from __future__ import annotations
 
@@ -57,4 +71,9 @@ async def create_pool() -> asyncpg.Pool:
         min_size=1,
         max_size=3,
         command_timeout=15,
+        # Real, explicit, `DEC-168` -- see this module's own top-of-file
+        # docstring for why an ambient, unpinned session timezone is a
+        # real, silent correctness risk for any query that implicitly
+        # casts a bare `date` against a `timestamptz` column.
+        server_settings={"timezone": "UTC"},
     )

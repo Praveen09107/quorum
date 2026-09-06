@@ -141,5 +141,10 @@ NegotiationOptionData _parseOption(Map<String, dynamic> json) {
 NegotiationBundle _parseNegotiationBundle(Map<String, dynamic> json) {
   final positions = (json['positions'] as List<dynamic>).map((raw) => _parsePosition(raw as Map<String, dynamic>)).toList();
   final options = (json['options'] as List<dynamic>).map((raw) => _parseOption(raw as Map<String, dynamic>)).toList();
-  return NegotiationBundle(positions: positions, options: options);
+  return NegotiationBundle(
+    positions: positions,
+    options: options,
+    resolvedAt: json['resolved_at'] as String?,
+    chosenOptionId: json['chosen_option_id'] as String?,
+  );
 }

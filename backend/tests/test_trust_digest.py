@@ -9,6 +9,7 @@ real usage of this project, and is deleted by its own generated
 `proposal_id`s -- these tests can never collide with real data and never
 leave anything behind, even if a test itself fails midway.
 """
+import time
 import uuid
 from datetime import date, datetime, timezone
 
@@ -148,6 +149,71 @@ async def test_aggregate_weekly_summary_counts_real_rows_and_excludes_uncertain(
         assert summary.success_rate == round(2 / 3, 3)
     finally:
         await pool.execute("DELETE FROM action_events WHERE proposal_id = ANY($1::uuid[])", ids)
+
+
+async def test_aggregate_weekly_summary_counts_a_real_row_resolved_late_in_the_final_utc_day(pool, monkeypatch):
+    """RESOLVED, a real, live, currently-active bug found on-device
+    (Session 2, `QUORUM_FINAL_COMPLETION_PLAN.md`, `DEC-168`): none of
+    this file's own pre-existing tests placed a real `resolved_at` near
+    the actual week boundary, so none of them caught a real bug where
+    asyncpg encoded the bare `week_start`/`week_end` `date` parameters
+    using the local machine's OS timezone rather than UTC (despite this
+    project's own real, confirmed-UTC Postgres session timezone),
+    silently excluding any real row resolved in roughly the last 5.5
+    UTC hours of every real day on a machine set to IST. This test pins
+    the fix down directly: a real row resolved at 23:59:59 UTC on the
+    LAST real day of the target week -- as late in that week as a real
+    timestamp can be -- must still be counted.
+
+    **RESOLVED, a real, disclosed standard-tier review finding
+    (`DEC-168`):** this test originally relied on the EXECUTING
+    machine's own ambient OS timezone happening to be non-UTC to
+    exercise the real bug at all -- true on this project's own real
+    development machine (IST), but this backend's real CI runs on a
+    genuinely UTC GitHub Actions runner, where the buggy and fixed code
+    encode an IDENTICAL instant for any input, making the test pass
+    unchanged regardless of which code is actually running -- zero real
+    regression protection where it matters most. Fixed: `TZ=Asia/
+    Kolkata` plus a real `time.tzset()` call deterministically forces a
+    genuinely non-UTC OS timezone for the DURATION of this one test --
+    so this test now fails on a REVERTED fix on any real Linux CI
+    runner, not just on this one real development machine. Uses the
+    real `monkeypatch` fixture for the actual env-var mutation (per
+    this project's own established convention elsewhere), but explicitly
+    calls `monkeypatch.undo()` in a real `finally` BEFORE re-calling
+    `time.tzset()`, rather than leaving reversion to `monkeypatch`'s own
+    deferred fixture teardown: `time.tzset()` is the real, load-bearing
+    step that makes libc's cached local-timezone state actually pick up
+    either value, and `monkeypatch`'s own teardown reverts `os.environ`
+    alone with no way to also re-call it afterward -- deferring
+    restoration that way would leave the process's REAL local timezone
+    state stuck on `Asia/Kolkata` for every test that runs after this
+    one. `time.tzset()` is POSIX-only (confirmed: absent on Windows) --
+    skipped there via `hasattr`, since this project's own real Windows
+    development machine already has a genuinely non-UTC ambient
+    timezone (IST) and exercises the real bug that way regardless."""
+    monkeypatch.setenv("TZ", "Asia/Kolkata")
+    if hasattr(time, "tzset"):
+        time.tzset()
+    try:
+        week_start = date(2020, 1, 6)  # a real, deliberately far-past Monday, per this file's own established convention
+        resolved_at = datetime(2020, 1, 12, 23, 59, 59, tzinfo=timezone.utc)  # the last real second of this real week
+        proposal_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+
+        try:
+            await _insert_test_event(pool, proposal_id, "approved_unchanged", resolved_at, user_id=user_id)
+
+            summary = await aggregate_weekly_summary(pool, week_start, user_id=str(user_id))
+
+            assert summary.total_actions == 1
+            assert summary.success_rate == 1.0
+        finally:
+            await pool.execute("DELETE FROM action_events WHERE proposal_id = $1", proposal_id)
+    finally:
+        monkeypatch.undo()  # real, immediate revert of TZ, not deferred to fixture teardown
+        if hasattr(time, "tzset"):
+            time.tzset()  # real, immediate restoration -- the actual reason `.undo()` is called explicitly above
 
 
 async def test_aggregate_weekly_summary_falls_back_to_created_at_when_resolved_at_is_null(pool):

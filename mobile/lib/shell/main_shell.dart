@@ -511,6 +511,28 @@ class _NegotiationLoaderState extends State<_NegotiationLoader> {
                     return Center(child: Text("Couldn't load the negotiation: ${snapshot.error}"));
                   }
                   final bundle = snapshot.data!;
+                  // RESOLVED, a real, disclosed gap found on-device
+                  // (Session 2, `QUORUM_FINAL_COMPLETION_PLAN.md`,
+                  // `DEC-168`): a negotiation already resolved (in a
+                  // prior session, or by re-opening this same one)
+                  // previously rendered this exact same fully-
+                  // interactive options screen, discoverable as already
+                  // decided only via a real, honest `409` AFTER tapping
+                  // "Choose this option" again. No fade here (unlike the
+                  // `_accepted` state below) -- nothing "just happened"
+                  // in THIS session; this is an honest, static account
+                  // of something already true when the screen loaded.
+                  if (bundle.resolvedAt != null) {
+                    final chosen = bundle.options.where((o) => o.optionId == bundle.chosenOptionId);
+                    final chosenDescription = chosen.isNotEmpty ? chosen.first.description : 'an option outside this list';
+                    return Center(
+                      key: const ValueKey('already-resolved'),
+                      child: Padding(
+                        padding: const EdgeInsets.all(QuorumSpacing.md),
+                        child: Text('This negotiation was already resolved -- chosen: $chosenDescription'),
+                      ),
+                    );
+                  }
                   final canChoose = widget.chooseNegotiation != null && !_submitting;
                   return Column(
                     children: [

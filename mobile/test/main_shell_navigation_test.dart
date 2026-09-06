@@ -58,12 +58,22 @@ Future<GateRevealBundle> _fakeFetchGateReveal(String proposalId) async {
   );
 }
 
+// RESOLVED, a real, disclosed gap found on-device (Session 2,
+// `QUORUM_FINAL_COMPLETION_PLAN.md`, `DEC-168`): a mutable test flag,
+// matching `chosenNegotiationCalls`'s own established pattern, so a
+// single fake fetcher can exercise both the genuinely-open and
+// already-resolved real response shapes without a second, parallel
+// negotiation fixture.
+bool negotiationAlreadyResolvedForTest = false;
+
 Future<NegotiationBundle> _fakeFetchNegotiation(String negotiationId) async {
-  return const NegotiationBundle(
-    positions: [PositionData(domain: 'finance', concern: 'Real budget concern', proposedResolution: 'Real resolution')],
-    options: [
+  return NegotiationBundle(
+    positions: const [PositionData(domain: 'finance', concern: 'Real budget concern', proposedResolution: 'Real resolution')],
+    options: const [
       NegotiationOptionData(optionId: 'opt1', description: 'A real option', sourceDomains: ['finance'], impact: []),
     ],
+    resolvedAt: negotiationAlreadyResolvedForTest ? '2026-09-06T18:29:54Z' : null,
+    chosenOptionId: negotiationAlreadyResolvedForTest ? 'opt1' : null,
   );
 }
 
@@ -244,6 +254,7 @@ void main() {
 
   testWidgets('choosing a real negotiation option calls the real chooseNegotiation callback and shows a real, honest confirmation', (tester) async {
     chosenNegotiationCalls.clear();
+    negotiationAlreadyResolvedForTest = false;
     await tester.pumpWidget(_harness());
     await tester.pumpAndSettle();
 
@@ -262,6 +273,30 @@ void main() {
     // The real positions/options view is genuinely replaced, not just
     // overlaid -- confirms this is a real terminal state, not a toast.
     expect(find.text('What each domain is saying'), findsNothing);
+  });
+
+  testWidgets('re-opening an already-resolved negotiation shows an honest already-resolved state, never a tappable options screen', (tester) async {
+    // RESOLVED, a real, disclosed gap found on-device (Session 2,
+    // `QUORUM_FINAL_COMPLETION_PLAN.md`, `DEC-168`): before this fix, a
+    // real user re-opening an already-decided negotiation saw the
+    // exact same fully-interactive options screen as a genuinely open
+    // one, discovering it was already resolved only via a real,
+    // honest `409` from `POST .../choose` AFTER tapping "Choose this
+    // option" again. This test proves the real fix: the client now
+    // knows from the fetch itself, before any tap.
+    negotiationAlreadyResolvedForTest = true;
+    addTearDown(() => negotiationAlreadyResolvedForTest = false);
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.byType(ListView).first, const Offset(0, -1000));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Calendar vs. Finance'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('already resolved'), findsOneWidget);
+    expect(find.textContaining('A real option'), findsOneWidget);  // names what was genuinely chosen
+    expect(find.text('Choose this option'), findsNothing);  // never presented as if a choice were still possible
   });
 
   testWidgets('the You tab genuinely reaches Career Pipeline, and tapping an application opens its real Company Digest', (tester) async {
