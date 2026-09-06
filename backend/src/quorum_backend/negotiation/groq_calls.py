@@ -60,17 +60,28 @@ NegotiationOption]`), so a small, local retry helper is used instead of
 forcing an artificial shared abstraction across two genuinely different
 call signatures -- the same real principle `gate/llm_calls.py::
 _call_groq_json` and `_call_gemini_json` already apply to each other.
-No artificial inter-attempt sleep: matching `gate/llm_calls.py::
-_call_groq_json`'s own real, already-live Groq retry loop, which has
-never needed one -- Groq's own real, observed failure modes at this
-call volume have not shown the same per-minute rate-limit backoff
-Gemini's real `429` responses explicitly asked for (the reason the
-superseded Gemini version of this module slept between retries). Same
-real principle both places: a transient provider failure retries; every
-attempt failing raises loud, never fabricates a plausible-looking result.
-"""
+
+**RESOLVED, a real, disclosed CRITICAL-tier review HIGH, found before
+merge:** a first version of this module (matching `gate/llm_calls.py::
+_call_groq_json`'s own real, already-live retry loop) retried with NO
+inter-attempt delay at all, reasoned as "Groq hasn't shown the same
+per-minute rate-limit backoff Gemini's `429`s asked for." That reasoning
+was live-checked against Groq's own published rate-limit documentation
+(`https://console.groq.com/docs/rate-limits`) and found wrong: Groq
+enforces real per-minute/per-day request AND token limits and returns a
+real `429` with a `retry-after` header when hit -- "not yet observed"
+is absence of evidence, not evidence of absence, the exact mistake
+`STATUS_INDEX.md` item #21 already records this project making once
+for Gemini and correcting. Retrying with zero delay into a real `429`
+doubles the real request rate into the same limit that just rejected
+it -- the identical real bug `DEC-135`'s own CRITICAL-tier review found
+and fixed for this exact module's original Gemini version, now fixed
+here for Groq: a real, linear backoff between attempts, honoring the
+provider's own `Retry-After` header when a `429` supplies one, falling
+back to `attempt` seconds otherwise."""
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Awaitable, Callable
 
@@ -104,7 +115,15 @@ async def _call_groq_json(prompt: str, *, response_schema: dict, api_key: str, m
 
     `response_schema` is the full real Groq `json_schema` wrapper
     (`{"name": ..., "schema": {...}}`), not a bare JSON Schema object --
-    matching exactly what `response_format.json_schema` needs."""
+    matching exactly what `response_format.json_schema` needs.
+
+    **Real backoff between attempts, `DEC-166`'s own CRITICAL-tier
+    review fix:** a real `429` honors Groq's own `Retry-After` response
+    header when present (Groq's documented behavior: the header is only
+    set on an actual rate-limit rejection); otherwise falls back to a
+    real, linear `attempt`-second delay, the same fixed backoff this
+    module's superseded Gemini version used for the identical real
+    reason (`DEC-135`)."""
     last_error: Exception | None = None
     body = {
         "model": GROQ_GENERATION_MODEL,
@@ -112,12 +131,15 @@ async def _call_groq_json(prompt: str, *, response_schema: dict, api_key: str, m
         "response_format": {"type": "json_schema", "json_schema": response_schema},
         "max_completion_tokens": _GROQ_MAX_COMPLETION_TOKENS,
     }
-    for _attempt in range(max_retries):
+    for attempt in range(max_retries):
+        if attempt > 0:
+            await asyncio.sleep(_retry_after_seconds(last_error, default=attempt))
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(_GROQ_CHAT_URL, headers={"Authorization": f"Bearer {api_key}"}, json=body)
             if response.status_code != 200:
                 last_error = GroqGenerationError(f"Groq chat/completions returned {response.status_code}: {response.text[:500]}")
+                last_error.retry_after_header = getattr(response, "headers", {}).get("retry-after")  # type: ignore[attr-defined]
                 continue
             data = response.json()
             text = data["choices"][0]["message"]["content"]
@@ -128,6 +150,22 @@ async def _call_groq_json(prompt: str, *, response_schema: dict, api_key: str, m
         except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
             last_error = exc
     raise GroqGenerationError(f"Groq generation call failed after {max_retries} attempts: {last_error}") from last_error
+
+
+def _retry_after_seconds(last_error: Exception | None, *, default: float) -> float:
+    """Real, small local helper -- honors a real `Retry-After` header
+    attached to the previous attempt's own error when Groq's real `429`
+    supplied one, otherwise `default` (a real, linear, attempt-indexed
+    backoff). A malformed/non-numeric header value falls back to
+    `default` rather than raising -- a real, but honest provider
+    quirk is never allowed to crash this module's own retry loop."""
+    raw = getattr(last_error, "retry_after_header", None)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
 
 
 _POSITION_SCHEMA = {

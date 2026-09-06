@@ -169,6 +169,25 @@ _DIGEST_SCHEMA = {
 }
 
 
+def _retry_after_seconds(last_error: Exception | None, *, default: float) -> float:
+    """Real, small local helper -- honors a real `Retry-After` header
+    attached to the previous attempt's own error when Groq's real `429`
+    supplied one, otherwise `default` (a real, linear, attempt-indexed
+    backoff). Matches `negotiation/groq_calls.py`'s own identical local
+    helper, duplicated rather than shared -- this module's own
+    established "reimplement the small, stable helper per real caller"
+    precedent, not a new abstraction forced across two genuinely
+    separate real modules. A malformed/non-numeric header value falls
+    back to `default` rather than raising."""
+    raw = getattr(last_error, "retry_after_header", None)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 def make_groq_compile_digest_call(*, api_key: str, max_retries: int = 2) -> CompileDigestCall:
     """Real factory matching `agents/career_agent.py`'s own, already-
     existing `CompileDigestCall` type signature exactly -- the real
@@ -211,7 +230,17 @@ def make_groq_compile_digest_call(*, api_key: str, max_retries: int = 2) -> Comp
             "response_format": {"type": "json_schema", "json_schema": _DIGEST_SCHEMA},
             "max_completion_tokens": _GROQ_MAX_COMPLETION_TOKENS,
         }
-        for _attempt in range(max_retries):
+        for attempt in range(max_retries):
+            if attempt > 0:
+                # Real backoff between attempts, `DEC-166`'s own
+                # CRITICAL-tier review fix: honors Groq's own real
+                # `Retry-After` header on a real 429 when present,
+                # otherwise a real, linear `attempt`-second fallback --
+                # the identical real bug (an immediate, undelayed retry
+                # doubling the real request rate into the same limit
+                # that just rejected it) `DEC-135` already found and
+                # fixed for this module's own Gemini predecessor.
+                await asyncio.sleep(_retry_after_seconds(last_error, default=attempt))
             try:
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.post(
@@ -219,6 +248,7 @@ def make_groq_compile_digest_call(*, api_key: str, max_retries: int = 2) -> Comp
                     )
                 if response.status_code != 200:
                     last_error = GroqSummarizationError(f"Groq chat/completions returned {response.status_code}")
+                    last_error.retry_after_header = getattr(response, "headers", {}).get("retry-after")  # type: ignore[attr-defined]
                     continue
                 data = response.json()
                 text = data["choices"][0]["message"]["content"]

@@ -2,10 +2,8 @@
 unit tests proving the real extract -> propose -> Gate -> persist
 pipeline against a real, live Postgres transaction (the same discipline
 `test_retry_queue_drainer.py` already established for its own, genuinely
-different real caller), plus a real, skippable-without-a-key live Groq
-extraction test (originally Gemini, `DEC-153`; migrated to Groq,
-`DEC-166` -- see `features/quick_capture.py`'s own top-of-file docstring
-for the full reasoning).
+different real caller), plus a real, skippable-without-a-key live Gemini
+extraction test.
 """
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -20,10 +18,10 @@ from quorum_backend.features.quick_capture import (
     QuickCaptureError,
     build_extraction_prompt,
     capture_task_from_text,
-    make_groq_task_extraction_call,
+    make_gemini_task_extraction_call,
 )
 
-_HAS_REAL_KEY = get_settings().groq_api_key is not None
+_HAS_REAL_KEY = get_settings().gemini_api_key is not None
 
 
 @pytest_asyncio.fixture
@@ -223,9 +221,9 @@ def test_build_extraction_prompt_places_every_real_instruction_before_the_users_
 # --- Real, live capstone (Rule 5) ---
 
 
-@pytest.mark.skipif(not _HAS_REAL_KEY, reason="no real GROQ_API_KEY configured in this environment")
-async def test_make_groq_task_extraction_call_a_real_live_extraction_from_real_free_text():
-    extraction_call = make_groq_task_extraction_call(api_key=get_settings().groq_api_key)
+@pytest.mark.skipif(not _HAS_REAL_KEY, reason="no real GEMINI_API_KEY configured in this environment")
+async def test_make_gemini_task_extraction_call_a_real_live_extraction_from_real_free_text():
+    extraction_call = make_gemini_task_extraction_call(api_key=get_settings().gemini_api_key)
     result = await extraction_call("finish the Q3 budget review for the team, should take about 2 hours, due next Friday")
 
     assert isinstance(result["title"], str) and len(result["title"]) > 0

@@ -432,24 +432,15 @@ def test_quick_capture_returns_503_when_the_extraction_provider_is_not_configure
     the_embedding_provider_is_not_configured` already uses -- a real
     `model_copy()` override, not a hand-rolled fake settings object
     that would break the app's own real startup lifespan. Checks the
-    real extraction provider (Groq, `DEC-166`) specifically -- see
-    `test_quick_capture_returns_503_when_the_judge_provider_is_not_
-    configured` below for the separate, still-Gemini Judge guard."""
-    from quorum_backend import main as main_module
-
-    fake_settings = get_settings().model_copy(update={"groq_api_key": None})
-    monkeypatch.setattr(main_module, "get_settings", lambda: fake_settings)
-    with TestClient(app) as client:
-        response = client.post("/quick_capture", json={"text": "finish the report"}, headers=_auth_header())
-    assert response.status_code == 503
-
-
-def test_quick_capture_returns_503_when_the_judge_provider_is_not_configured(monkeypatch):
-    """The Judge (`gate/llm_calls.py::make_gemini_judge_call`) is
-    deliberately kept on Gemini under `DEC-166` -- CLAUDE.md's own
-    Critic/Judge provider-diversity rule -- so this route's own real
-    `503` guard still checks `gemini_api_key` too, separately from the
-    real Groq extraction-provider guard above."""
+    real extraction provider -- Gemini, DELIBERATELY kept, not migrated
+    to Groq alongside 3 of the 4 other real call sites `DEC-166`
+    touched: a CRITICAL-tier review caught, before merge, that moving
+    this specific call to Groq would put the real Generator (this
+    extraction call) on the exact same model AND provider as the real
+    Critic reviewing its own output two lines below in `main.py`,
+    violating CLAUDE.md's own Generator/Judge-vs-Critic provider-
+    diversity rule -- reverted, see `main.py`'s own route docstring for
+    the full account."""
     from quorum_backend import main as main_module
 
     fake_settings = get_settings().model_copy(update={"gemini_api_key": None})
@@ -459,10 +450,7 @@ def test_quick_capture_returns_503_when_the_judge_provider_is_not_configured(mon
     assert response.status_code == 503
 
 
-@pytest.mark.skipif(
-    get_settings().groq_api_key is None or get_settings().gemini_api_key is None,
-    reason="no real GROQ_API_KEY/GEMINI_API_KEY configured in this environment",
-)
+@pytest.mark.skipif(get_settings().gemini_api_key is None, reason="no real GEMINI_API_KEY configured in this environment")
 async def test_quick_capture_endpoint_is_real_and_live_creates_a_real_task_end_to_end(pool, provisioned_users):
     """The real, live, end-to-end proof `QUORUM_PRODUCTION_COMPLETION_
     PLAN.md`'s own Phase 7 verification line asks for: a real proposal

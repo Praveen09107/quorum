@@ -95,11 +95,11 @@ from quorum_backend.features.today import (
 from quorum_backend.features.quick_capture import (
     QuickCaptureError,
     capture_task_from_extracted_args,
-    make_groq_task_extraction_call,
+    make_gemini_task_extraction_call,
 )
 from quorum_backend.features.trust_digest import fetch_trust_digest
 from quorum_backend.gate.llm_calls import make_gemini_judge_call, make_groq_critic_call
-from quorum_backend.negotiation.downstream_translation import make_groq_downstream_translation_call
+from quorum_backend.negotiation.downstream_translation import make_gemini_downstream_translation_call
 from quorum_backend.security.account_deletion import delete_account
 from quorum_backend.security.supabase_deletion_store import SupabaseDeletionStore
 
@@ -401,13 +401,26 @@ async def quick_capture_endpoint(
     scoped from this route's first line. See `features/quick_capture.py`
     for the full account of this session's own real scope decisions.
 
-    A real, honest `503` if the extraction provider (`GROQ_API_KEY`,
-    `DEC-166`) or the Judge provider (`GEMINI_API_KEY`) isn't configured
-    -- matching `GET /search`'s own established convention for the
-    identical real reason. A real, honest `502` if a live extraction call
-    itself fails after retries, or if its output genuinely can't be
-    turned into a real task -- never a fabricated task standing in for a
-    genuine failure.
+    A real, honest `503` if the extraction provider isn't configured
+    (matching `GET /search`'s own established convention for the
+    identical real reason -- no `GEMINI_API_KEY` in this environment).
+    A real, honest `502` if a live extraction call itself fails after
+    retries, or if its output genuinely can't be turned into a real
+    task -- never a fabricated task standing in for a genuine failure.
+
+    **REAL, DISCLOSED, `DEC-166`: this route's own extraction call stays
+    on Gemini, deliberately NOT migrated to Groq alongside 3 of the 4
+    other real call sites `QUORUM_FINAL_COMPLETION_PLAN.md` Session 1
+    moved.** A first pass of that migration DID move this call to Groq;
+    a CRITICAL-tier cross-model review caught, before merge, that doing
+    so put the real Generator (this extraction call, which drafts the
+    proposal below) on the exact same model AND provider as the real
+    Critic (`make_groq_critic_call`) reviewing it two lines down --
+    `CLAUDE.md`'s own "must never be violated" architecture fact groups
+    "Generator/Judge" together against the Critic's own genuinely
+    different provider, not just "Critic ≠ Judge" as this plan's own
+    text had (incorrectly) restated it. Reverted here rather than
+    silently building around the corrected understanding.
 
     RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-153`
     M2): the real Gemini extraction call happens BEFORE `pool.acquire()`
@@ -418,13 +431,11 @@ async def quick_capture_endpoint(
     quick_capture.py::capture_task_from_text()`'s own docstring for the
     full account."""
     settings = get_settings()
-    if settings.groq_api_key is None:
-        raise HTTPException(status_code=503, detail="Quick capture is not currently available -- the extraction provider isn't configured.")
     if settings.gemini_api_key is None:
-        raise HTTPException(status_code=503, detail="Quick capture is not currently available -- the Judge provider isn't configured.")
+        raise HTTPException(status_code=503, detail="Quick capture is not currently available -- the extraction provider isn't configured.")
     internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
 
-    extraction_call = make_groq_task_extraction_call(api_key=settings.groq_api_key)
+    extraction_call = make_gemini_task_extraction_call(api_key=settings.gemini_api_key)
     critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
     judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
 
@@ -1172,9 +1183,17 @@ async def drain_retry_queue_route(
     docstring's own earlier claim that nothing called it yet.
     `scripts/enable_retry_queue_drain_cron.sql` has the real, live SQL
     this deployment actually runs.
+
+    **REAL, DISCLOSED, `DEC-166`: this route's own translation call
+    stays on Gemini** -- the same real Generator-vs-Critic-provider
+    reasoning `POST /quick_capture`'s own docstring now documents in
+    full applies identically here: this call drafts the proposal the
+    real Critic (`make_groq_critic_call`) reviews two lines down, so it
+    must stay on a genuinely different provider from the Critic, not
+    the same one.
     """
     settings = get_settings()
-    translation_call = make_groq_downstream_translation_call(api_key=settings.groq_api_key)
+    translation_call = make_gemini_downstream_translation_call(api_key=settings.gemini_api_key)
     critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
     judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
 

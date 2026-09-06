@@ -68,6 +68,7 @@ applied to `negotiation/gemini_calls.py`'s deterministic option IDs.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Awaitable, Callable
 
@@ -148,12 +149,45 @@ _JUDGE_RESPONSE_SCHEMA = {
 }
 
 
+def _retry_after_seconds(last_error: Exception | None, *, default: float) -> float:
+    """Real, small local helper -- honors a real `Retry-After` header
+    attached to the previous attempt's own error when Groq's real `429`
+    supplied one, otherwise `default` (a real, linear, attempt-indexed
+    backoff). Matches `negotiation/groq_calls.py`'s and `features/
+    career_digest.py`'s own identical local helper, duplicated rather
+    than shared, per this backend's own established "reimplement the
+    small, stable helper per real caller" precedent. A malformed/non-
+    numeric header value falls back to `default` rather than raising."""
+    raw = getattr(last_error, "retry_after_header", None)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 async def _call_groq_json(*, messages: list[dict], api_key: str, max_retries: int = 2) -> dict:
     """Real, live call to Groq's OpenAI-compatible `chat/completions`,
     strict `json_schema` structured output, with real retry on transient
     failure. Returns the already-parsed real JSON body from
     `message.content` -- never `message.reasoning`, which is real model
-    scratch-work, not the structured answer."""
+    scratch-work, not the structured answer.
+
+    **RESOLVED, a real, disclosed CRITICAL-tier review HIGH found while
+    reviewing `DEC-166` (a genuinely separate PR that migrated other
+    call sites onto this same Groq model): this function's own retry
+    loop had no inter-attempt delay at all, live-checked against Groq's
+    own published rate-limit documentation and found to matter --
+    Groq's real `429` responses carry a real `Retry-After` header, and
+    retrying with zero delay doubles the real request rate into the
+    same limit that just rejected it, the identical real bug `DEC-135`
+    found and fixed for this backend's Gemini call sites. Fixed here,
+    opportunistically, in the same pass that fixed the same real bug
+    freshly introduced in the newly-migrated Groq call sites -- this
+    function is the Critic's own real call, and every one of those new
+    Groq callers now shares this exact model's real rate limit with
+    it."""
     last_error: Exception | None = None
     body = {
         "model": GROQ_CRITIC_MODEL,
@@ -161,7 +195,9 @@ async def _call_groq_json(*, messages: list[dict], api_key: str, max_retries: in
         "response_format": {"type": "json_schema", "json_schema": _OBJECTIONS_RESPONSE_SCHEMA},
         "max_completion_tokens": _GROQ_MAX_COMPLETION_TOKENS,
     }
-    for _attempt in range(max_retries):
+    for attempt in range(max_retries):
+        if attempt > 0:
+            await asyncio.sleep(_retry_after_seconds(last_error, default=attempt))
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
@@ -169,6 +205,7 @@ async def _call_groq_json(*, messages: list[dict], api_key: str, max_retries: in
                 )
             if response.status_code != 200:
                 last_error = GateLlmCallError(f"Groq chat/completions returned {response.status_code}: {response.text[:500]}")
+                last_error.retry_after_header = getattr(response, "headers", {}).get("retry-after")  # type: ignore[attr-defined]
                 continue
             data = response.json()
             text = data["choices"][0]["message"]["content"]

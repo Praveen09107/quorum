@@ -1,14 +1,9 @@
 """Real tests for negotiation/downstream_translation.py (DEC-127).
 
-REAL, DISCLOSED MIGRATION FROM GEMINI TO GROQ, `DEC-166`: this module's
-own real translation call moved off Gemini onto Groq -- see that
-module's own top-of-file docstring for the full reasoning. Error-path
-tests use a monkeypatched httpx client, matching every other real
-Groq-backed call site's own established pattern in this backend. The
-tests below `# --- Real, live tests` call the actual, live Groq API.
-Skipped, not failed, without a real GROQ_API_KEY configured. No
-`reserve_gemini_quota_slot` mocking is needed any more -- this module no
-longer calls Gemini or reserves any `core/gemini_quota.py` slot.
+Error-path tests use a monkeypatched httpx client, matching every other
+real Gemini-backed call site's own established pattern in this backend.
+The tests below `# --- Real, live tests` call the actual, live Gemini
+API. Skipped, not failed, without a real GEMINI_API_KEY configured.
 """
 import httpx
 import pytest
@@ -17,11 +12,11 @@ from quorum_backend.core.config import get_settings
 from quorum_backend.negotiation.downstream_translation import (
     DownstreamTranslationError,
     build_translation_prompt,
-    make_groq_downstream_translation_call,
+    make_gemini_downstream_translation_call,
 )
 
 _settings = get_settings()
-_HAS_GROQ_KEY = _settings.groq_api_key is not None
+_HAS_GEMINI_KEY = _settings.gemini_api_key is not None
 
 
 class _FakeResponse:
@@ -32,6 +27,19 @@ class _FakeResponse:
 
     def json(self):
         return self._json_body
+
+
+async def _no_op_quota_reservation(**_kwargs) -> None:
+    """Real, shared no-op for the deterministic tests below -- `DEC-165`'s
+    new `reserve_gemini_quota_slot()` reserves a real, live slot against
+    this project's own real, shared, scarce Upstash Redis-backed quota
+    counter. `monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)`
+    below patches the shared `httpx` module's own class, so without
+    this, every one of these mocked-Gemini tests would also make a
+    real, live Redis call and increment the real, production
+    `gemini-3.6-flash` counter on every run -- see `test_gate_llm_
+    calls.py`'s own identical fix for the full real reasoning. The
+    "Real, live tests" section below deliberately does NOT use this."""
 
 
 # --- Deterministic (monkeypatched httpx client, no real network) ---
@@ -56,7 +64,7 @@ def test_build_translation_prompt_raises_for_an_unsupported_domain():
 
 
 async def test_translation_call_raises_for_a_domain_with_no_real_schema(monkeypatch):
-    translation_call = make_groq_downstream_translation_call(api_key="fake-key")
+    translation_call = make_gemini_downstream_translation_call(api_key="fake-key")
     with pytest.raises(DownstreamTranslationError):
         await translation_call("career", "Any description -- career is never a real negotiation domain")
 
@@ -70,7 +78,8 @@ async def test_translation_call_raises_after_real_retries_exhausted(monkeypatch)
         return _FakeResponse(503, text="overloaded")
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
-    translation_call = make_groq_downstream_translation_call(api_key="fake-key")
+    monkeypatch.setattr("quorum_backend.negotiation.downstream_translation.reserve_gemini_quota_slot", _no_op_quota_reservation)
+    translation_call = make_gemini_downstream_translation_call(api_key="fake-key")
     with pytest.raises(DownstreamTranslationError):
         await translation_call("finance", "Cut discretionary spending by 2000 this month")
     assert call_count == 2
@@ -79,10 +88,11 @@ async def test_translation_call_raises_after_real_retries_exhausted(monkeypatch)
 async def test_translation_call_returns_the_real_parsed_json_for_finance(monkeypatch):
     async def fake_post(self, url, headers=None, json=None):
         body = '{"action": "update_budget", "amount": 2000, "category": "discretionary", "payee": null}'
-        return _FakeResponse(200, {"choices": [{"message": {"content": body}}]})
+        return _FakeResponse(200, {"candidates": [{"content": {"parts": [{"text": body}]}}]})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
-    translation_call = make_groq_downstream_translation_call(api_key="fake-key")
+    monkeypatch.setattr("quorum_backend.negotiation.downstream_translation.reserve_gemini_quota_slot", _no_op_quota_reservation)
+    translation_call = make_gemini_downstream_translation_call(api_key="fake-key")
     result = await translation_call("finance", "Cut discretionary spending by 2000 this month")
     assert result == {"action": "update_budget", "amount": 2000, "category": "discretionary", "payee": None}
 
@@ -90,10 +100,11 @@ async def test_translation_call_returns_the_real_parsed_json_for_finance(monkeyp
 async def test_translation_call_returns_the_real_parsed_json_for_tasks(monkeypatch):
     async def fake_post(self, url, headers=None, json=None):
         body = '{"title": "Follow up on report", "estimated_hours": 2.0, "deadline_iso": "2026-09-01T09:00:00+00:00"}'
-        return _FakeResponse(200, {"choices": [{"message": {"content": body}}]})
+        return _FakeResponse(200, {"candidates": [{"content": {"parts": [{"text": body}]}}]})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
-    translation_call = make_groq_downstream_translation_call(api_key="fake-key")
+    monkeypatch.setattr("quorum_backend.negotiation.downstream_translation.reserve_gemini_quota_slot", _no_op_quota_reservation)
+    translation_call = make_gemini_downstream_translation_call(api_key="fake-key")
     result = await translation_call("tasks", "Add a real follow-up task for the report")
     assert result["title"] == "Follow up on report"
     assert result["estimated_hours"] == 2.0
@@ -102,37 +113,21 @@ async def test_translation_call_returns_the_real_parsed_json_for_tasks(monkeypat
 async def test_translation_call_returns_the_real_parsed_json_for_calendar(monkeypatch):
     async def fake_post(self, url, headers=None, json=None):
         body = '{"title": "Reschedule check-in", "start_iso": "2026-09-01T09:00:00+00:00", "end_iso": "2026-09-01T09:30:00+00:00"}'
-        return _FakeResponse(200, {"choices": [{"message": {"content": body}}]})
+        return _FakeResponse(200, {"candidates": [{"content": {"parts": [{"text": body}]}}]})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
-    translation_call = make_groq_downstream_translation_call(api_key="fake-key")
+    monkeypatch.setattr("quorum_backend.negotiation.downstream_translation.reserve_gemini_quota_slot", _no_op_quota_reservation)
+    translation_call = make_gemini_downstream_translation_call(api_key="fake-key")
     result = await translation_call("calendar", "Move the recurring check-in to a shorter slot")
     assert result["title"] == "Reschedule check-in"
 
 
-async def test_translation_call_raises_on_empty_message_content(monkeypatch):
-    """Real, live-discovered behavior `gate/llm_calls.py`'s own top-of-
-    file docstring already disclosed for this same underlying model
-    (`openai/gpt-oss-120b` is a reasoning model that can exhaust its
-    token budget on internal reasoning before ever producing real
-    `content`) -- pinned down here too, since this module shares that
-    real model."""
-
-    async def fake_post(self, url, headers=None, json=None):
-        return _FakeResponse(200, {"choices": [{"message": {"content": ""}}]})
-
-    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
-    translation_call = make_groq_downstream_translation_call(api_key="fake-key")
-    with pytest.raises(DownstreamTranslationError, match="reasoning-token budget"):
-        await translation_call("finance", "Cut discretionary spending by 2000 this month")
+# --- Real, live tests (skipped without a real GEMINI_API_KEY configured) ---
 
 
-# --- Real, live tests (skipped without a real GROQ_API_KEY configured) ---
-
-
-@pytest.mark.skipif(not _HAS_GROQ_KEY, reason="no real GROQ_API_KEY configured in this environment")
+@pytest.mark.skipif(not _HAS_GEMINI_KEY, reason="no real GEMINI_API_KEY configured in this environment")
 async def test_real_live_translation_call_produces_a_real_finance_shape():
-    translation_call = make_groq_downstream_translation_call(api_key=_settings.groq_api_key)
+    translation_call = make_gemini_downstream_translation_call(api_key=_settings.gemini_api_key)
     result = await translation_call(
         "finance", "Reduce the dining-out budget by roughly 1500 for the rest of the month to free up room for a real task deadline."
     )
@@ -142,9 +137,9 @@ async def test_real_live_translation_call_produces_a_real_finance_shape():
     assert isinstance(result["category"], str) and result["category"]
 
 
-@pytest.mark.skipif(not _HAS_GROQ_KEY, reason="no real GROQ_API_KEY configured in this environment")
+@pytest.mark.skipif(not _HAS_GEMINI_KEY, reason="no real GEMINI_API_KEY configured in this environment")
 async def test_real_live_translation_call_produces_a_real_tasks_shape():
-    translation_call = make_groq_downstream_translation_call(api_key=_settings.groq_api_key)
+    translation_call = make_gemini_downstream_translation_call(api_key=_settings.gemini_api_key)
     result = await translation_call(
         "tasks", "Add a real task to follow up on the quarterly report by next Friday, roughly 3 hours of work."
     )
