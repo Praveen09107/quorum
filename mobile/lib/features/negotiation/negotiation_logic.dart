@@ -147,6 +147,21 @@ String capitalizeDomain(String domain) {
 class NegotiationBundle {
   final List<PositionData> positions;
   final List<NegotiationOptionData> options;
+  // RESOLVED, a real, disclosed gap found on-device (Session 2,
+  // `QUORUM_FINAL_COMPLETION_PLAN.md`, `DEC-168`): this bundle never
+  // carried whether a negotiation was already resolved, so a real user
+  // re-opening an already-decided negotiation saw the exact same
+  // fully-interactive options screen as a genuinely open one --
+  // discovering the truth only via a real, honest `409` AFTER tapping
+  // "Choose this option" again. Both `null` for a genuinely still-open
+  // negotiation; both real once `POST .../choose` has succeeded.
+  final String? resolvedAt;
+  final String? chosenOptionId;
 
-  const NegotiationBundle({required this.positions, required this.options});
+  const NegotiationBundle({
+    required this.positions,
+    required this.options,
+    this.resolvedAt,
+    this.chosenOptionId,
+  });
 }

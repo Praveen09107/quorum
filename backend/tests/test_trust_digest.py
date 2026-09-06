@@ -150,6 +150,41 @@ async def test_aggregate_weekly_summary_counts_real_rows_and_excludes_uncertain(
         await pool.execute("DELETE FROM action_events WHERE proposal_id = ANY($1::uuid[])", ids)
 
 
+async def test_aggregate_weekly_summary_counts_a_real_row_resolved_late_in_the_final_utc_day(pool):
+    """RESOLVED, a real, live, currently-active bug found on-device
+    (Session 2, `QUORUM_FINAL_COMPLETION_PLAN.md`, `DEC-168`): none of
+    this file's own pre-existing tests placed a real `resolved_at` near
+    the actual week boundary, so none of them caught a real bug where
+    asyncpg encoded the bare `week_start`/`week_end` `date` parameters
+    using the local machine's OS timezone rather than UTC (despite this
+    project's own real, confirmed-UTC Postgres session timezone),
+    silently excluding any real row resolved in roughly the last 5.5
+    UTC hours of every real day on a machine set to IST. This test pins
+    the fix down directly: a real row resolved at 23:59:59 UTC on the
+    LAST real day of the target week -- as late in that week as a real
+    timestamp can be -- must still be counted. On the pre-fix code,
+    this genuinely failed on this project's own real development
+    machine (IST); whether it fails on a UTC-timezone CI runner depends
+    on that runner's own OS timezone, which is why this test exists
+    fixed at all, not gated behind an environment check that could
+    itself silently mask the bug returning on a machine where it
+    matters."""
+    week_start = date(2020, 1, 6)  # a real, deliberately far-past Monday, per this file's own established convention
+    resolved_at = datetime(2020, 1, 12, 23, 59, 59, tzinfo=timezone.utc)  # the last real second of this real week
+    proposal_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+
+    try:
+        await _insert_test_event(pool, proposal_id, "approved_unchanged", resolved_at, user_id=user_id)
+
+        summary = await aggregate_weekly_summary(pool, week_start, user_id=str(user_id))
+
+        assert summary.total_actions == 1
+        assert summary.success_rate == 1.0
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = $1", proposal_id)
+
+
 async def test_aggregate_weekly_summary_falls_back_to_created_at_when_resolved_at_is_null(pool):
     # The schema doesn't enforce resolved_at being set alongside outcome
     # -- a real, defensive case this query's COALESCE exists to handle.

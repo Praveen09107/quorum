@@ -54,6 +54,32 @@ async def test_fetch_negotiation_detail_returns_real_empty_lists_for_an_in_progr
         assert result is not None
         assert result.positions == []
         assert result.options == []
+        assert result.resolved_at is None
+        assert result.chosen_option_id is None
+    finally:
+        await pool.execute("DELETE FROM negotiations WHERE negotiation_id = $1", uuid.UUID(negotiation_id))
+
+
+async def test_fetch_negotiation_detail_reports_a_real_already_chosen_negotiation_honestly(pool, user_id):
+    """RESOLVED, a real, disclosed gap found on-device (Session 2,
+    `QUORUM_FINAL_COMPLETION_PLAN.md`, `DEC-168`): a client re-fetching
+    an already-resolved negotiation previously received the identical
+    shape as a genuinely open one, discoverable as already-decided only
+    via a real `409` from `POST .../choose`. This test proves the real
+    fix: `resolved_at`/`chosen_option_id` are now genuinely present on
+    the fetched detail the moment the real row itself has them set."""
+    negotiation_id = await _insert_negotiation(pool, user_id=user_id)
+    try:
+        await pool.execute(
+            "UPDATE negotiations SET resolved_at = now(), chosen_option_id = $1 WHERE negotiation_id = $2",
+            "option_a",
+            uuid.UUID(negotiation_id),
+        )
+        result = await fetch_negotiation_detail(pool, user_id=user_id, negotiation_id=negotiation_id)
+        assert result is not None
+        assert result.resolved_at is not None  # a real ISO 8601 string, not the raw asyncpg datetime
+        assert isinstance(result.resolved_at, str)
+        assert result.chosen_option_id == "option_a"
     finally:
         await pool.execute("DELETE FROM negotiations WHERE negotiation_id = $1", uuid.UUID(negotiation_id))
 

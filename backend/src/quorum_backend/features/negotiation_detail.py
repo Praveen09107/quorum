@@ -37,6 +37,19 @@ from quorum_backend.gate.schemas import ImpactDelta, NegotiationOption, Position
 class NegotiationDetail:
     positions: list[dict]
     options: list[dict]
+    # RESOLVED, a real, disclosed gap found on-device (Session 2,
+    # `QUORUM_FINAL_COMPLETION_PLAN.md`, `DEC-168`): this route never
+    # returned whether a negotiation was already resolved at all --
+    # `negotiations.resolved_at`/`chosen_option_id` existed on the real
+    # schema since `DEC-123` but were never selected here, so a real
+    # user re-opening an already-decided negotiation saw the exact same
+    # fully-interactive, all-options-tappable screen as a genuinely open
+    # one, discovering the truth only via a real, honest `409` AFTER
+    # tapping "Choose this option" again -- confusing, not dishonest
+    # (the 409 itself was always correct), but a real gap in when the
+    # client learns the truth, not just how it's phrased once it does.
+    resolved_at: str | None
+    chosen_option_id: str | None
 
 
 async def persist_negotiation_detail(
@@ -78,7 +91,7 @@ async def fetch_negotiation_detail(pool: asyncpg.Pool, *, user_id: str, negotiat
     never `None` -- only a caller with no real, owned row at all gets
     `None`."""
     row = await pool.fetchrow(
-        "SELECT positions, options FROM negotiations WHERE negotiation_id = $1 AND user_id = $2",
+        "SELECT positions, options, resolved_at, chosen_option_id FROM negotiations WHERE negotiation_id = $1 AND user_id = $2",
         uuid.UUID(negotiation_id),
         uuid.UUID(user_id),
     )
@@ -91,4 +104,11 @@ async def fetch_negotiation_detail(pool: asyncpg.Pool, *, user_id: str, negotiat
     # the string "null".
     positions = json.loads(row["positions"]) if row["positions"] is not None else []
     options = json.loads(row["options"]) if row["options"] is not None else []
-    return NegotiationDetail(positions=positions, options=options)
+    # `resolved_at` comes back as a real `datetime` -- serialized to a
+    # real ISO 8601 string here, matching every other real timestamp
+    # this backend hands to the mobile client (never a raw asyncpg
+    # object leaking into a JSON response).
+    resolved_at = row["resolved_at"].isoformat() if row["resolved_at"] is not None else None
+    return NegotiationDetail(
+        positions=positions, options=options, resolved_at=resolved_at, chosen_option_id=row["chosen_option_id"]
+    )

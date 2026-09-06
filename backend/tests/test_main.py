@@ -703,9 +703,47 @@ async def test_negotiation_detail_endpoint_is_real_and_live_not_mocked_with_a_re
 
         assert response.status_code == 200
         body = response.json()
-        assert set(body.keys()) == {"positions", "options"}
+        assert set(body.keys()) == {"positions", "options", "resolved_at", "chosen_option_id"}
         assert body["positions"][0]["domain"] == "finance"
         assert body["options"][0]["option_id"] == "option_a"
+        assert body["resolved_at"] is None  # genuinely still open -- never rows this test didn't seed as resolved
+        assert body["chosen_option_id"] is None
+    finally:
+        await pool.execute("DELETE FROM negotiations WHERE negotiation_id = $1", negotiation_id)
+
+
+async def test_negotiation_detail_endpoint_reports_a_real_already_chosen_negotiation_honestly(pool, provisioned_users):
+    """RESOLVED, a real, disclosed gap found on-device (Session 2,
+    `QUORUM_FINAL_COMPLETION_PLAN.md`, `DEC-168`): a real user re-
+    opening an already-decided negotiation previously received the
+    identical response shape as a genuinely open one -- discoverable as
+    already-resolved only via a real `409` from `POST .../choose` AFTER
+    tapping "Choose this option" again. This test proves the real,
+    live route fix end to end, not just the underlying fetch function's
+    own unit test."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    negotiation_id = uuid.uuid4()
+
+    await pool.execute(
+        "INSERT INTO negotiations (negotiation_id, user_id, conflicted_domains, started_at, positions, options, resolved_at, chosen_option_id) "
+        "VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, now(), $7)",
+        negotiation_id,
+        uuid.UUID(internal_user_id),
+        ["finance", "tasks"],
+        datetime.now(timezone.utc),
+        json.dumps([{"domain": "finance", "concern": "c", "severity_claim": "s", "resource_claims": [], "proposed_resolution": "r", "evidence": []}]),
+        json.dumps([{"option_id": "option_a", "description": "d", "source_domains": ["finance"], "impact": []}]),
+        "option_a",
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/negotiations/{negotiation_id}", headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["resolved_at"] is not None
+        assert body["chosen_option_id"] == "option_a"
     finally:
         await pool.execute("DELETE FROM negotiations WHERE negotiation_id = $1", negotiation_id)
 

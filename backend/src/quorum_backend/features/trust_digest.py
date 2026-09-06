@@ -32,6 +32,35 @@ silently fixed at the time (out of that session's own scope) -- closed
 here as its own, real, standalone fix. Both functions now require a real,
 resolved `user_id`, matching every other per-user-scoped route in this
 backend.
+
+**RESOLVED, a real, live, currently-active bug found on-device (Session
+2, `QUORUM_FINAL_COMPLETION_PLAN.md`, `DEC-168`), affecting THIS
+project's own real Trust screen, its central thesis surface:**
+`aggregate_weekly_summary()`'s own SQL bound `week_start`/`week_end`
+(real Python `date` objects) as raw query parameters with no explicit
+cast. Because the comparison itself (`COALESCE(resolved_at,
+created_at) >= $2 AND ... < $3`) is against a `timestamptz` column,
+Postgres infers both parameters as `timestamptz`, not `date` -- and
+asyncpg's own binary encoder for a bare Python `date` value, bound as
+`timestamptz`, silently uses the local machine's OS timezone (not UTC,
+and not the real, confirmed-UTC `SHOW TIMEZONE` session setting) to
+compute the encoded instant. On a machine set to IST (UTC+5:30), this
+means `week_end` was actually encoded as `week_end - 5.5 hours` in real
+UTC terms -- so for roughly the last 5.5 real UTC hours of every single
+day, any genuine action resolved in that window was silently excluded
+from "this week"'s count, understating `total_actions`/`success_rate`
+on the live Trust screen for a very real, recurring fraction of every
+day, not a rare edge case. Live-reproduced directly, multiple times,
+before writing this fix: a real row with `outcome = 'approved_unchanged'`
+and a real, current `resolved_at` returned `total_actions = 0` when
+queried during that window, and `total_actions = 1` outside it, with
+the identical query and data. **Fixed** by casting both parameters
+explicitly to `::date` in the SQL -- this forces Postgres's own,
+already-confirmed-correct `date -> timestamptz` implicit cast (real,
+live-verified: `'<date>'::date::timestamptz` correctly resolves to UTC
+midnight, matching the real, confirmed-UTC session timezone) rather
+than trusting asyncpg's own client-side encoder to guess the right
+instant for an ambiguous, timezone-naive Python `date` value.
 """
 from __future__ import annotations
 
@@ -139,8 +168,8 @@ async def aggregate_weekly_summary(pool: asyncpg.Pool, week_start: date, *, user
             COUNT(*) FILTER (WHERE outcome = 'approved_unchanged') AS successes
         FROM action_events
         WHERE user_id = $1
-          AND COALESCE(resolved_at, created_at) >= $2
-          AND COALESCE(resolved_at, created_at) < $3
+          AND COALESCE(resolved_at, created_at) >= $2::date
+          AND COALESCE(resolved_at, created_at) < $3::date
         """,
         uuid.UUID(user_id),
         week_start,

@@ -324,13 +324,17 @@ Real per-user scoped, same discipline as every other per-user route since `DEC-1
         {"metric": "budget_remaining_fraction", "before": 0.08, "after": 0.18, "direction": "improves"}
       ]
     }
-  ]
+  ],
+  "resolved_at": null,
+  "chosen_option_id": null
 }
 ```
 
 A real, honest distinction, not glossed over: `positions`/`options` can each legitimately be `null` (rendered as an empty array to the client) for a negotiation whose row exists (flagged real by `scan_for_conflicts()`) but whose position/synthesis/impact-simulation stages haven't completed or been persisted yet — a genuinely different state from "this negotiation doesn't exist," which is the real `404` case above.
 
 Each `options[].impact` entry is `ImpactDelta` (§1.8) exactly — every field code-computed by `negotiation/impact_simulator.py`'s real arithmetic, never a model call, the same "the model narrates, the code computes" guarantee that governs every other real `ImpactDelta` in this system.
+
+**`resolved_at`/`chosen_option_id`, added `DEC-168`, a real, disclosed gap found on-device (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 2):** both `null` for a genuinely still-open negotiation (as shown above); a real ISO 8601 timestamp and the real, chosen `option_id` once §5.6 below has been used. Before this fix, a client re-fetching an already-resolved negotiation received the identical shape as an open one — genuinely indistinguishable without attempting §5.6 and reading its own `409`. The client is expected to treat a non-null `resolved_at` as "already decided" and render accordingly, not present the options as if a choice were still possible.
 
 ### 5.6 `POST /negotiations/{negotiation_id}/choose` (real and live as of `DEC-123`)
 
