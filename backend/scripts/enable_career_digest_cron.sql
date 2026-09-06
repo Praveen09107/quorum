@@ -1,21 +1,27 @@
 -- Real, ready-to-run SQL for scheduling `POST /internal/career-digest`
 -- (Phase 6, `DEC-147`) via pg_cron/pg_net.
 --
--- NOT YET SCHEDULED LIVE as of this file's own first commit -- this
--- job spends real Gemini calls (`make_gemini_compile_digest_call`)
--- against the SAME real, disclosed, fluctuating free-tier quota
--- `/internal/backfill-negotiation-detail` ALREADY, ACTIVELY draws on
--- (confirmed directly against the real, live `cron.job` table before
--- writing this comment, not assumed from that job's own script's
--- stale header -- see the real, disclosed correction now sitting atop
--- `enable_backfill_negotiation_detail_cron.sql` for the full account,
--- `DEC-147`). That job has been real, scheduled, and live since
--- `DEC-136` -- so scheduling THIS one too means two real, autonomous
--- consumers on one real, shared, fluctuating quota, not one competing
--- against an already-idle slot. Written correctly now so enabling it
--- later (once Preethish confirms real headroom exists) is a one-line
--- `psql`/pool command, not a new design decision made under time
--- pressure.
+-- NOT YET SCHEDULED LIVE as of this file's own first commit -- at that
+-- time, this job spent real Gemini calls (`make_gemini_compile_digest_
+-- call`) against the SAME real, disclosed, fluctuating free-tier quota
+-- `/internal/backfill-negotiation-detail` already, actively drew on
+-- (confirmed directly against the real, live `cron.job` table, not
+-- assumed -- see the real, disclosed correction that sat atop
+-- `enable_backfill_negotiation_detail_cron.sql`, `DEC-147`), so
+-- scheduling THIS one too meant two real, autonomous consumers on one
+-- real, shared, fluctuating quota, not one competing against an
+-- already-idle slot.
+--
+-- **REAL, DISCLOSED RESOLUTION, `DEC-166`:** `QUORUM_FINAL_COMPLETION_
+-- PLAN.md` Session 1's real AI-provider rebalancing moved BOTH this
+-- job's own real summarization call (`make_groq_compile_digest_call`)
+-- AND `/internal/backfill-negotiation-detail`'s own real position/
+-- synthesis calls off Gemini onto Groq -- the original real quota-
+-- conflict this comment describes no longer applies, since neither job
+-- draws on Gemini's real 20-request/day free-tier budget any more.
+-- Still not scheduled live as of `DEC-166` -- resolving the original
+-- blocker is not the same as a new, deliberate decision to enable it,
+-- which stays Preethish's own call to make.
 --
 -- Offset chosen to avoid every other real job's own schedule (`:00`/
 -- `:30` -- deadline-watch/spend-alert; `*/5` -- drain-retry-queue;
@@ -51,7 +57,7 @@ SELECT cron.schedule(
 --      ORDER BY id DESC LIMIT 5; and confirm status_code = 200 for real,
 --      not timed_out = true with a null status_code.
 --   4. A real 503 in that same response body means TAVILY_API_KEY or
---      GEMINI_API_KEY isn't configured on the live Cloud Run service --
+--      GROQ_API_KEY isn't configured on the live Cloud Run service --
 --      check that before assuming this route itself is broken.
 
 -- To remove the real, scheduled job later:

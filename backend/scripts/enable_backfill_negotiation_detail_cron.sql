@@ -63,8 +63,10 @@ SELECT cron.schedule(
 --      SELECT id, status_code, timed_out, error_msg FROM net._http_response
 --      ORDER BY id DESC LIMIT 5; and confirm status_code = 200 for real,
 --      not timed_out = true with a null status_code.
---   4. A real 503 in that same response body means GEMINI_API_KEY isn't
---      configured on the live Cloud Run service -- check that before
+--   4. A real 503 in that same response body means GROQ_API_KEY isn't
+--      configured on the live Cloud Run service (`DEC-166` -- this
+--      job's own real position/synthesis calls moved off Gemini onto
+--      Groq; this used to say GEMINI_API_KEY) -- check that before
 --      assuming this route itself is broken.
 
 -- To remove the real, scheduled job later:

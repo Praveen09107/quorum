@@ -1,18 +1,30 @@
 """Real, live, shared Gemini `generateContent` daily-quota guard --
 Roadmap `DEC-165`, closing the real, disclosed future-session item
-`DEC-153`'s own CRITICAL-tier review found (M3): every one of this
-backend's five files with a real `generateContent` call site
-(`gate/llm_calls.py`'s Judge, `negotiation/gemini_calls.py`'s
-position/synthesis calls -- two logical callers sharing one local
-helper, `negotiation/downstream_translation.py`, `features/quick_
-capture.py`, `features/career_digest.py` -- six real call sites in
-total) shares ONE real `GEMINI_API_KEY` against ONE real Google
-free-tier project, with zero coordination between them -- confirmed
-live, the hard way, this same project's history (`DEC-153`'s own
-review exhausted the real quota through its own adversarial probing
-and caused unrelated tests to fail as collateral; a later on-device
-session hit the identical wall trying to generate real negotiation
-detail).
+`DEC-153`'s own CRITICAL-tier review found (M3): at the time this
+module was written, every one of this backend's five files with a real
+`generateContent` call site (`gate/llm_calls.py`'s Judge, `negotiation/
+gemini_calls.py`'s position/synthesis calls -- two logical callers
+sharing one local helper, `negotiation/downstream_translation.py`,
+`features/quick_capture.py`, `features/career_digest.py` -- six real
+call sites in total) shared ONE real `GEMINI_API_KEY` against ONE real
+Google free-tier project, with zero coordination between them --
+confirmed live, the hard way, this same project's history (`DEC-153`'s
+own review exhausted the real quota through its own adversarial
+probing and caused unrelated tests to fail as collateral; a later
+on-device session hit the identical wall trying to generate real
+negotiation detail).
+
+**REAL, DISCLOSED SCOPE NARROWING, `DEC-166`:** `QUORUM_FINAL_
+COMPLETION_PLAN.md` Session 1's real AI-provider rebalancing moved
+every one of those five real call sites EXCEPT the Judge onto Groq
+(`negotiation/groq_calls.py`, renamed from `gemini_calls.py`;
+`downstream_translation.py`; `quick_capture.py`; `career_digest.py`) --
+this module's own real, shared, atomic slot reservation is now
+exercised by exactly ONE real call site, `gate/llm_calls.py`'s Judge
+(`make_gemini_judge_call`). This module is NOT deleted -- that one real
+call site still shares this same real 20-request/day free-tier budget
+with nothing else in this backend now, and still genuinely needs this
+guard for the identical real reason it was built.
 
 THE REAL, LIVE-CONFIRMED NUMBER THIS GUARDS AGAINST, not a guess:
 Google's own real `429` response body, hit live against this project's

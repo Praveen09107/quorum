@@ -59,7 +59,7 @@ from quorum_backend.core.config import get_settings
 from quorum_backend.core.embeddings import EmbeddingError
 from quorum_backend.features.career_digest import (
     fetch_company_digest,
-    make_gemini_compile_digest_call,
+    make_groq_compile_digest_call,
     run_career_digest,
 )
 from quorum_backend.features.briefing import run_briefing
@@ -407,6 +407,20 @@ async def quick_capture_endpoint(
     A real, honest `502` if a live extraction call itself fails after
     retries, or if its output genuinely can't be turned into a real
     task -- never a fabricated task standing in for a genuine failure.
+
+    **REAL, DISCLOSED, `DEC-166`: this route's own extraction call stays
+    on Gemini, deliberately NOT migrated to Groq alongside 3 of the 4
+    other real call sites `QUORUM_FINAL_COMPLETION_PLAN.md` Session 1
+    moved.** A first pass of that migration DID move this call to Groq;
+    a CRITICAL-tier cross-model review caught, before merge, that doing
+    so put the real Generator (this extraction call, which drafts the
+    proposal below) on the exact same model AND provider as the real
+    Critic (`make_groq_critic_call`) reviewing it two lines down --
+    `CLAUDE.md`'s own "must never be violated" architecture fact groups
+    "Generator/Judge" together against the Critic's own genuinely
+    different provider, not just "Critic ≠ Judge" as this plan's own
+    text had (incorrectly) restated it. Reverted here rather than
+    silently building around the corrected understanding.
 
     RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-153`
     M2): the real Gemini extraction call happens BEFORE `pool.acquire()`
@@ -1169,6 +1183,14 @@ async def drain_retry_queue_route(
     docstring's own earlier claim that nothing called it yet.
     `scripts/enable_retry_queue_drain_cron.sql` has the real, live SQL
     this deployment actually runs.
+
+    **REAL, DISCLOSED, `DEC-166`: this route's own translation call
+    stays on Gemini** -- the same real Generator-vs-Critic-provider
+    reasoning `POST /quick_capture`'s own docstring now documents in
+    full applies identically here: this call drafts the proposal the
+    real Critic (`make_groq_critic_call`) reviews two lines down, so it
+    must stay on a genuinely different provider from the Critic, not
+    the same one.
     """
     settings = get_settings()
     translation_call = make_gemini_downstream_translation_call(api_key=settings.gemini_api_key)
@@ -1272,26 +1294,30 @@ async def backfill_negotiation_detail_route(
     something generates real detail for them. Iterates a real, small
     batch of bare, autonomously-created negotiations via `features/
     negotiation_detail_backfill.py::run_negotiation_detail_backfill` --
-    real Gemini-backed positions and synthesized options, real code-
-    computed impact deltas, nothing fabricated anywhere in the chain. A
-    real, honest `503` if the Gemini provider isn't configured, matching
-    `GET /search`'s own established pattern for the same real dependency.
+    real Groq-backed positions and synthesized options (`DEC-166`; real
+    Gemini-backed originally, `DEC-134`), real code-computed impact
+    deltas, nothing fabricated anywhere in the chain. A real, honest
+    `503` if the Groq provider isn't configured, matching `GET /search`'s
+    own established pattern for the same real dependency.
 
     **REAL, LIVE, ON A REAL SCHEDULE as of `DEC-134`:** called unattended
     every 30 real minutes (`cron.job` jobname `'backfill-negotiation-
     detail'`), a small, deliberately-bounded batch per real invocation
-    (`negotiation_detail_backfill.py::DEFAULT_BATCH_SIZE`) to bound real,
-    fluctuating Gemini free-tier quota risk (`STATUS_INDEX.md` item #21)
-    -- the same real concern that kept detail generation out of `deadline
-    -watch.py`/`spend_alert.py` themselves in the first place.
+    (`negotiation_detail_backfill.py::DEFAULT_BATCH_SIZE`) -- originally
+    bounding real, fluctuating Gemini free-tier quota risk (`STATUS_
+    INDEX.md` item #21), the same real concern that kept detail
+    generation out of `deadline-watch.py`/`spend_alert.py` themselves in
+    the first place; retained as a conservative default after `DEC-166`'s
+    real migration to Groq, whose own real headroom is meaningfully
+    higher, per that module's own top-of-file docstring.
     """
     settings = get_settings()
-    if settings.gemini_api_key is None:
+    if settings.groq_api_key is None:
         raise HTTPException(
             status_code=503,
-            detail="Negotiation-detail backfill is not currently available -- the Gemini provider isn't configured.",
+            detail="Negotiation-detail backfill is not currently available -- the Groq provider isn't configured.",
         )
-    result = await run_negotiation_detail_backfill(pool, api_key=settings.gemini_api_key)
+    result = await run_negotiation_detail_backfill(pool, api_key=settings.groq_api_key)
     return {
         "negotiations_scanned": result.negotiations_scanned,
         "negotiations_failed": result.negotiations_failed,
@@ -1380,12 +1406,12 @@ async def career_digest_route(
     `backend/scripts/enable_career_digest_cron.sql`'s own top comment
     for the real, disclosed reason and what's needed before it is."""
     settings = get_settings()
-    if settings.tavily_api_key is None or settings.gemini_api_key is None:
+    if settings.tavily_api_key is None or settings.groq_api_key is None:
         raise HTTPException(
             status_code=503,
-            detail="Career digest compilation is not currently available -- the Tavily or Gemini provider isn't configured.",
+            detail="Career digest compilation is not currently available -- the Tavily or Groq provider isn't configured.",
         )
-    compile_digest_call = make_gemini_compile_digest_call(api_key=settings.gemini_api_key)
+    compile_digest_call = make_groq_compile_digest_call(api_key=settings.groq_api_key)
     result = await run_career_digest(
         pool, tavily_api_key=settings.tavily_api_key, compile_digest_call=compile_digest_call
     )

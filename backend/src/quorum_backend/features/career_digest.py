@@ -82,12 +82,18 @@ from typing import Awaitable, Callable
 import asyncpg
 import httpx
 
-from quorum_backend.core.gemini_quota import GeminiQuotaExhaustedError, reserve_gemini_quota_slot
-
 logger = logging.getLogger("quorum_backend")
 
-GEMINI_GENERATION_MODEL = "gemini-3.6-flash"
-_GEMINI_GENERATE_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_GENERATION_MODEL}:generateContent"
+# REAL, DISCLOSED MIGRATION FROM GEMINI TO GROQ, `DEC-166`: this module
+# originally summarized via `gemini-3.6-flash` -- moved to Groq's
+# `openai/gpt-oss-120b` (the same real, already-live-confirmed model
+# `gate/llm_calls.py::GROQ_CRITIC_MODEL` uses) as part of `QUORUM_FINAL_
+# COMPLETION_PLAN.md` Session 1's real AI-provider rebalancing. No
+# `core/gemini_quota.py` reservation is made here any more -- there is
+# no Gemini quota left for this call site to protect.
+GROQ_GENERATION_MODEL = "openai/gpt-oss-120b"
+_GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
+_GROQ_MAX_COMPLETION_TOKENS = 2048
 _TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 
 # See this module's own top-of-file docstring's "REAL, QUOTA-CONSCIOUS
@@ -117,8 +123,8 @@ class TavilySearchError(Exception):
     nothing" search."""
 
 
-class GeminiSummarizationError(Exception):
-    """Raised when a real Gemini summarization call -- and every real
+class GroqSummarizationError(Exception):
+    """Raised when a real Groq summarization call -- and every real
     retry of it -- fails. Never silently substituted with an invented
     summary, the same "model fabricates, code doesn't verify" failure
     this project's whole Gate architecture exists to prevent."""
@@ -151,25 +157,51 @@ async def search_company(company: str, *, api_key: str, max_retries: int = 2) ->
 
 
 _DIGEST_SCHEMA = {
-    "type": "OBJECT",
-    "properties": {
-        "summary_points": {"type": "ARRAY", "items": {"type": "STRING"}},
+    "name": "career_digest",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "summary_points": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["summary_points"],
+        "additionalProperties": False,
     },
-    "required": ["summary_points"],
 }
 
 
-def make_gemini_compile_digest_call(*, api_key: str, max_retries: int = 2) -> CompileDigestCall:
+def _retry_after_seconds(last_error: Exception | None, *, default: float) -> float:
+    """Real, small local helper -- honors a real `Retry-After` header
+    attached to the previous attempt's own error when Groq's real `429`
+    supplied one, otherwise `default` (a real, linear, attempt-indexed
+    backoff). Matches `negotiation/groq_calls.py`'s own identical local
+    helper, duplicated rather than shared -- this module's own
+    established "reimplement the small, stable helper per real caller"
+    precedent, not a new abstraction forced across two genuinely
+    separate real modules. A malformed/non-numeric header value falls
+    back to `default` rather than raising."""
+    raw = getattr(last_error, "retry_after_header", None)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def make_groq_compile_digest_call(*, api_key: str, max_retries: int = 2) -> CompileDigestCall:
     """Real factory matching `agents/career_agent.py`'s own, already-
     existing `CompileDigestCall` type signature exactly -- the real
     implementation that type has been waiting for since `IMPL_17`. Real,
-    structured JSON output (`generationConfig.responseMimeType`), the
-    same established pattern `negotiation/gemini_calls.py::
-    make_gemini_position_call` already uses, not free-text-then-regex.
+    strict `json_schema` structured output, the same established
+    pattern `negotiation/groq_calls.py::make_groq_position_call` already
+    uses, not free-text-then-regex. Groq since `DEC-166` -- originally
+    Gemini's `generationConfig.responseMimeType`, migrated as part of
+    `QUORUM_FINAL_COMPLETION_PLAN.md` Session 1's real AI-provider
+    rebalancing.
 
     A real, honest edge case: `search_findings` genuinely empty (Tavily
-    found nothing) still calls Gemini -- asked directly to say so, not
-    silently skipped -- so a real "nothing substantial found" result is
+    found nothing) still calls the model -- asked directly to say so,
+    not silently skipped -- so a real "nothing substantial found" result is
     a real, code-verified `summary_points: []`, matching `career_digest_
     logic.dart::hasNoRealContent()`'s own already-tested contract for
     that exact state, never confused with `DigestNotYetAvailableException`
@@ -193,42 +225,45 @@ def make_gemini_compile_digest_call(*, api_key: str, max_retries: int = 2) -> Co
             )
         last_error: Exception | None = None
         body = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"responseMimeType": "application/json", "responseSchema": _DIGEST_SCHEMA},
+            "model": GROQ_GENERATION_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "response_format": {"type": "json_schema", "json_schema": _DIGEST_SCHEMA},
+            "max_completion_tokens": _GROQ_MAX_COMPLETION_TOKENS,
         }
         for attempt in range(max_retries):
             if attempt > 0:
-                await asyncio.sleep(attempt)
-            # Real, shared quota reservation, `DEC-165`: a real slot
-            # against this backend's own shared daily `generateContent`
-            # budget for `GEMINI_GENERATION_MODEL` is reserved BEFORE
-            # EACH real network attempt, inside the retry loop itself,
-            # not once above it -- Google counts every real attempt,
-            # not just the final one; see `core/gemini_quota.py`'s own
-            # top-of-file docstring for the full real reasoning.
-            try:
-                await reserve_gemini_quota_slot(model=GEMINI_GENERATION_MODEL)
-            except GeminiQuotaExhaustedError as exc:
-                raise GeminiSummarizationError(str(exc)) from exc
+                # Real backoff between attempts, `DEC-166`'s own
+                # CRITICAL-tier review fix: honors Groq's own real
+                # `Retry-After` header on a real 429 when present,
+                # otherwise a real, linear `attempt`-second fallback --
+                # the identical real bug (an immediate, undelayed retry
+                # doubling the real request rate into the same limit
+                # that just rejected it) `DEC-135` already found and
+                # fixed for this module's own Gemini predecessor.
+                await asyncio.sleep(_retry_after_seconds(last_error, default=attempt))
             try:
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.post(
-                        _GEMINI_GENERATE_URL, headers={"x-goog-api-key": api_key}, json=body
+                        _GROQ_CHAT_URL, headers={"Authorization": f"Bearer {api_key}"}, json=body
                     )
                 if response.status_code != 200:
-                    last_error = GeminiSummarizationError(f"Gemini generateContent returned {response.status_code}")
+                    last_error = GroqSummarizationError(f"Groq chat/completions returned {response.status_code}")
+                    last_error.retry_after_header = getattr(response, "headers", {}).get("retry-after")  # type: ignore[attr-defined]
                     continue
                 data = response.json()
-                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                text = data["choices"][0]["message"]["content"]
+                if not text:
+                    last_error = GroqSummarizationError("Groq returned an empty message.content (reasoning-token budget likely exhausted)")
+                    continue
                 result = json.loads(text)
                 # source_count is code-computed, never asked of or
                 # trusted to the model -- see this module's own
                 # top-of-file docstring. The prompt asks for "at most 5"
                 # points, but a real, live response is not mechanically
                 # bound by prose instructions -- the same real, live-
-                # discovered gap `negotiation/gemini_calls.py::
-                # make_gemini_synthesis_call` already found for this
-                # identical model (asked for "exactly two" options, a
+                # discovered gap `negotiation/groq_calls.py::
+                # make_groq_synthesis_call` already found for this same
+                # underlying model (asked for "exactly two" options, a
                 # real response returned three). Sliced in code here for
                 # the same reason, a standard-tier review finding.
                 return {
@@ -238,8 +273,8 @@ def make_gemini_compile_digest_call(*, api_key: str, max_retries: int = 2) -> Co
                 }
             except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
                 last_error = exc
-        raise GeminiSummarizationError(
-            f"Gemini digest summarization failed after {max_retries} attempts: {last_error}"
+        raise GroqSummarizationError(
+            f"Groq digest summarization failed after {max_retries} attempts: {last_error}"
         ) from last_error
 
     return compile_digest_call
@@ -319,7 +354,7 @@ async def compile_digest_for_one_application(
     """Real, live, per-application digest compilation -- searches
     Tavily fresh every real call (never a cached/stale snapshot), then
     compiles via the real, injected `compile_digest_call` (production
-    always passes `make_gemini_compile_digest_call()`'s real
+    always passes `make_groq_compile_digest_call()`'s real
     implementation; tests inject a deterministic fake, the same
     established split `negotiation_detail_backfill.py`'s own tests
     already use for `PositionCall`/`SynthesisCall`)."""

@@ -431,7 +431,16 @@ def test_quick_capture_returns_503_when_the_extraction_provider_is_not_configure
     """Same real, established convention `test_search_returns_503_when_
     the_embedding_provider_is_not_configured` already uses -- a real
     `model_copy()` override, not a hand-rolled fake settings object
-    that would break the app's own real startup lifespan."""
+    that would break the app's own real startup lifespan. Checks the
+    real extraction provider -- Gemini, DELIBERATELY kept, not migrated
+    to Groq alongside 3 of the 4 other real call sites `DEC-166`
+    touched: a CRITICAL-tier review caught, before merge, that moving
+    this specific call to Groq would put the real Generator (this
+    extraction call) on the exact same model AND provider as the real
+    Critic reviewing its own output two lines below in `main.py`,
+    violating CLAUDE.md's own Generator/Judge-vs-Critic provider-
+    diversity rule -- reverted, see `main.py`'s own route docstring for
+    the full account."""
     from quorum_backend import main as main_module
 
     fake_settings = get_settings().model_copy(update={"gemini_api_key": None})
@@ -2103,18 +2112,19 @@ def test_backfill_negotiation_detail_is_401_with_a_real_configured_secret_but_th
         get_settings.cache_clear()
 
 
-def test_backfill_negotiation_detail_is_503_when_the_secret_is_real_but_gemini_is_not_configured(monkeypatch):
-    """Real, honest `503` when the Gemini provider isn't configured --
-    matching `GET /search`'s own already-established pattern for the
-    same real dependency, checked BEFORE this route's own auth-passing
-    logic ever reaches `run_negotiation_detail_backfill()`. Uses `GET
-    /search`'s own real, disclosed `model_copy()` fix directly (see that
-    test's own docstring): `monkeypatch.delenv("GEMINI_API_KEY")` alone
-    has no effect since pydantic-settings reads `backend/.env` as a
-    file, not this shell's own OS environment."""
+def test_backfill_negotiation_detail_is_503_when_the_secret_is_real_but_groq_is_not_configured(monkeypatch):
+    """Real, honest `503` when the Groq provider isn't configured
+    (`DEC-166` -- this route's real position/synthesis calls moved off
+    Gemini onto Groq) -- matching `GET /search`'s own already-established
+    pattern for the same real dependency, checked BEFORE this route's
+    own auth-passing logic ever reaches `run_negotiation_detail_
+    backfill()`. Uses `GET /search`'s own real, disclosed `model_copy()`
+    fix directly (see that test's own docstring): `monkeypatch.delenv
+    ("GROQ_API_KEY")` alone has no effect since pydantic-settings reads
+    `backend/.env` as a file, not this shell's own OS environment."""
     from quorum_backend import main as main_module
 
-    fake_settings = get_settings().model_copy(update={"gemini_api_key": None, "internal_drain_secret": "a-real-configured-secret"})
+    fake_settings = get_settings().model_copy(update={"groq_api_key": None, "internal_drain_secret": "a-real-configured-secret"})
     monkeypatch.setattr(main_module, "get_settings", lambda: fake_settings)
     with TestClient(app) as client:
         response = client.post("/internal/backfill-negotiation-detail", headers={"X-Internal-Secret": "a-real-configured-secret"})
@@ -2122,7 +2132,7 @@ def test_backfill_negotiation_detail_is_503_when_the_secret_is_real_but_gemini_i
 
 
 def test_backfill_negotiation_detail_real_secret_and_matching_header_reaches_the_real_route_wiring(monkeypatch):
-    """Proves this route's own real auth dependency, real Gemini-
+    """Proves this route's own real auth dependency, real Groq-
     configured precondition, and real response mapping, WITHOUT a real,
     unscoped call to `run_negotiation_detail_backfill()` -- the same
     real safety precedent every other `/internal/*` route test in this
@@ -2139,7 +2149,7 @@ def test_backfill_negotiation_detail_real_secret_and_matching_header_reaches_the
 
     monkeypatch.setattr("quorum_backend.main.run_negotiation_detail_backfill", _fake_run_negotiation_detail_backfill)
     monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
-    monkeypatch.setenv("GEMINI_API_KEY", "a-real-configured-gemini-key")
+    monkeypatch.setenv("GROQ_API_KEY", "a-real-configured-groq-key")
     get_settings.cache_clear()
     try:
         with TestClient(app) as client:
@@ -2379,11 +2389,13 @@ def test_career_digest_route_is_503_when_the_secret_is_real_but_tavily_is_not_co
     assert response.status_code == 503
 
 
-def test_career_digest_route_is_503_when_the_secret_is_real_but_gemini_is_not_configured(monkeypatch):
+def test_career_digest_route_is_503_when_the_secret_is_real_but_groq_is_not_configured(monkeypatch):
+    """Groq, not Gemini, since `DEC-166` -- this route's real
+    summarization call moved off Gemini onto Groq."""
     from quorum_backend import main as main_module
 
     fake_settings = get_settings().model_copy(
-        update={"gemini_api_key": None, "internal_drain_secret": "a-real-configured-secret"}
+        update={"groq_api_key": None, "internal_drain_secret": "a-real-configured-secret"}
     )
     monkeypatch.setattr(main_module, "get_settings", lambda: fake_settings)
     with TestClient(app) as client:
@@ -2410,7 +2422,7 @@ def test_career_digest_route_real_secret_and_matching_header_reaches_the_real_ro
     monkeypatch.setattr("quorum_backend.main.run_career_digest", _fake_run_career_digest)
     monkeypatch.setenv("INTERNAL_DRAIN_SECRET", "a-real-configured-secret")
     monkeypatch.setenv("TAVILY_API_KEY", "a-real-configured-tavily-key")
-    monkeypatch.setenv("GEMINI_API_KEY", "a-real-configured-gemini-key")
+    monkeypatch.setenv("GROQ_API_KEY", "a-real-configured-groq-key")
     get_settings.cache_clear()
     try:
         with TestClient(app) as client:

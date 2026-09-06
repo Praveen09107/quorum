@@ -1,7 +1,7 @@
 """Real tests for auth/google_token_refresh.py.
 
 Error-path test uses a monkeypatched httpx client (deterministic,
-network-independent, matching test_negotiation_gemini_calls.py's own
+network-independent, matching test_negotiation_groq_calls.py's own
 established pattern). The real, live test below makes a genuine network
 call to Google's real, live infrastructure (Rule 5) using a real,
 deliberately-invalid refresh_token -- the same established technique

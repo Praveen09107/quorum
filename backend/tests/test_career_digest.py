@@ -3,18 +3,24 @@ live-database integration tests, mirroring test_negotiation_detail_
 backfill.py's own established real pattern.
 
 Two real/fake boundaries, matching that module's own already-established
-split:
+split. REAL, DISCLOSED MIGRATION FROM GEMINI TO GROQ, `DEC-166`: the
+real summarization call this module makes moved off Gemini onto Groq
+(`features/career_digest.py`'s own top-of-file comment has the full
+reasoning) -- `_FakeCareerDigestHttpClient` below now dispatches on
+Tavily's URL vs. everything-else (Groq's own chat/completions URL is
+the same URL every other real Groq caller in this backend uses, unlike
+Gemini's per-model URL), rather than two distinct real provider URLs:
 - Most tests below inject a fake `compile_digest_call` and never reach a
-  real Gemini call; real Tavily calls are avoided the same way, via a
+  real Groq call; real Tavily calls are avoided the same way, via a
   monkeypatched `httpx.AsyncClient` that answers based on which real URL
-  is being called (Tavily vs. Gemini use different real URLs).
+  is being called.
 - `test_compile_digest_for_one_application_a_real_full_pipeline_with_
-  deterministic_fakes` exercises the REAL `make_gemini_compile_digest_
+  deterministic_fakes` exercises the REAL `make_groq_compile_digest_
   call()` factory (not a bypass fake) against a monkeypatched client, so
   the real prompt-building/schema/parsing code genuinely runs.
-- `test_run_career_digest_a_real_live_tavily_and_gemini_backed_digest_
+- `test_run_career_digest_a_real_live_tavily_and_groq_backed_digest_
   is_genuinely_compiled` is the one real, live, skippable-without-real-
-  keys test that actually proves the real Tavily+Gemini integration
+  keys test that actually proves the real Tavily+Groq integration
   works, per CLAUDE.md Rule 5.
 """
 import json
@@ -35,12 +41,12 @@ from quorum_backend.features.career_digest import (
     _persist_digest_if_still_undigested,
     compile_digest_for_one_application,
     fetch_company_digest,
-    make_gemini_compile_digest_call,
+    make_groq_compile_digest_call,
     run_career_digest,
     search_company,
 )
 
-_HAS_REAL_KEYS = get_settings().tavily_api_key is not None and get_settings().gemini_api_key is not None
+_HAS_REAL_KEYS = get_settings().tavily_api_key is not None and get_settings().groq_api_key is not None
 
 
 @pytest_asyncio.fixture
@@ -319,21 +325,6 @@ async def test_run_career_digest_a_real_failure_for_one_application_never_blocks
 # --- The real, structured-output factory itself -- real DB, monkeypatched HTTP ---
 
 
-async def _no_op_quota_reservation(**_kwargs) -> None:
-    """Real, shared no-op for the deterministic-fake tests below --
-    `DEC-165`'s new `reserve_gemini_quota_slot()` reserves a real,
-    live slot against this project's own real, shared, scarce Upstash
-    Redis-backed quota counter. `monkeypatch.setattr("quorum_backend.
-    features.career_digest.httpx.AsyncClient", ...)` below is patched
-    on the shared `httpx` module itself (the same object every module
-    that ever did `import httpx` sees), so without this, every one of
-    these mocked-Gemini tests would also make a real, live Redis call
-    and increment the real, production `gemini-3.6-flash` counter on
-    every run -- see `test_gate_llm_calls.py`'s own identical fix for
-    the full real reasoning. The "Real, live tests" section below
-    deliberately does NOT use this."""
-
-
 class _FakeHttpResponse:
     def __init__(self, status_code: int, payload: dict):
         self.status_code = status_code
@@ -345,16 +336,14 @@ class _FakeHttpResponse:
 
 class _FakeCareerDigestHttpClient:
     """Dispatches on the real, distinct URL each real provider uses --
-    Tavily and Gemini never share a URL, so this is a genuine,
-    deterministic stand-in for both real network calls this module
-    makes, the same technique test_negotiation_detail_backfill.py's own
-    `_FakeGeminiClient` already established (there dispatching on
-    request schema instead, since both its own real calls share one
-    Gemini URL)."""
+    Tavily's own real search URL vs. everything else (Groq's own real
+    `chat/completions` URL, the same one every other real Groq caller in
+    this backend uses, unlike Gemini's original per-model URL this fake
+    dispatched on before `DEC-166`)."""
 
-    def __init__(self, tavily_results: list[dict], gemini_summary_points: list[str]):
+    def __init__(self, tavily_results: list[dict], groq_summary_points: list[str]):
         self._tavily_results = tavily_results
-        self._gemini_summary_points = gemini_summary_points
+        self._groq_summary_points = groq_summary_points
 
     async def __aenter__(self):
         return self
@@ -363,28 +352,27 @@ class _FakeCareerDigestHttpClient:
         return False
 
     async def post(self, url, **kwargs):
-        from quorum_backend.features.career_digest import _GEMINI_GENERATE_URL, _TAVILY_SEARCH_URL
+        from quorum_backend.features.career_digest import _GROQ_CHAT_URL, _TAVILY_SEARCH_URL
 
         if url == _TAVILY_SEARCH_URL:
             return _FakeHttpResponse(200, {"results": self._tavily_results})
-        assert url == _GEMINI_GENERATE_URL
-        text = json.dumps({"summary_points": self._gemini_summary_points})
-        return _FakeHttpResponse(200, {"candidates": [{"content": {"parts": [{"text": text}]}}]})
+        assert url == _GROQ_CHAT_URL
+        text = json.dumps({"summary_points": self._groq_summary_points})
+        return _FakeHttpResponse(200, {"choices": [{"message": {"content": text}}]})
 
 
 async def test_compile_digest_for_one_application_a_real_full_pipeline_with_deterministic_fakes(pool, user_id, monkeypatch):
-    """Exercises the REAL `make_gemini_compile_digest_call()` factory and
+    """Exercises the REAL `make_groq_compile_digest_call()` factory and
     the REAL `search_company()` -- not bypass fakes -- against a
     monkeypatched `httpx.AsyncClient`, so the real prompt-building,
     real schema, and real response-parsing code all genuinely run."""
     fake_client = _FakeCareerDigestHttpClient(
         tavily_results=[{"content": "Notion raised a Series C round."}, {"content": "Notion is hiring fast."}],
-        gemini_summary_points=["Raised a Series C round.", "Hiring fast."],
+        groq_summary_points=["Raised a Series C round.", "Hiring fast."],
     )
     monkeypatch.setattr("quorum_backend.features.career_digest.httpx.AsyncClient", lambda **kwargs: fake_client)
-    monkeypatch.setattr("quorum_backend.features.career_digest.reserve_gemini_quota_slot", _no_op_quota_reservation)
     application_id = await _seed_application(pool, user_id=user_id, company="Notion")
-    compile_digest_call = make_gemini_compile_digest_call(api_key="fake-key-never-sent")
+    compile_digest_call = make_groq_compile_digest_call(api_key="fake-key-never-sent")
 
     outcome = await compile_digest_for_one_application(
         pool, application_id=application_id, company="Notion", tavily_api_key="fake-key-never-sent",
@@ -399,18 +387,17 @@ async def test_compile_digest_for_one_application_a_real_full_pipeline_with_dete
 
 async def test_compile_digest_call_caps_summary_points_at_5_even_if_the_real_model_returns_more(monkeypatch):
     """A real, live-discovered gap this codebase already found once for
-    this identical model (`negotiation/gemini_calls.py::make_gemini_
+    this identical model (`negotiation/groq_calls.py::make_groq_
     synthesis_call` asked for "exactly two" options, a real response
     returned three) -- the prompt here asks for "at most 5" summary
     points, but that's prose, not a mechanical guarantee. Code, not the
     model, enforces the real cap (standard-tier review finding)."""
     fake_client = _FakeCareerDigestHttpClient(
         tavily_results=[{"content": "finding"}],
-        gemini_summary_points=[f"point {i}" for i in range(8)],
+        groq_summary_points=[f"point {i}" for i in range(8)],
     )
     monkeypatch.setattr("quorum_backend.features.career_digest.httpx.AsyncClient", lambda **kwargs: fake_client)
-    monkeypatch.setattr("quorum_backend.features.career_digest.reserve_gemini_quota_slot", _no_op_quota_reservation)
-    compile_digest_call = make_gemini_compile_digest_call(api_key="fake-key-never-sent")
+    compile_digest_call = make_groq_compile_digest_call(api_key="fake-key-never-sent")
 
     result = await compile_digest_call("Notion", ["finding"])
 
@@ -423,10 +410,9 @@ async def test_compile_digest_call_a_real_empty_search_still_produces_a_real_hon
     valid digest with zero summary points -- never an error, and never
     conflated with `DigestNotYetAvailableException`'s own real, distinct
     meaning (career_digest_logic.dart's own already-tested contract)."""
-    fake_client = _FakeCareerDigestHttpClient(tavily_results=[], gemini_summary_points=[])
+    fake_client = _FakeCareerDigestHttpClient(tavily_results=[], groq_summary_points=[])
     monkeypatch.setattr("quorum_backend.features.career_digest.httpx.AsyncClient", lambda **kwargs: fake_client)
-    monkeypatch.setattr("quorum_backend.features.career_digest.reserve_gemini_quota_slot", _no_op_quota_reservation)
-    compile_digest_call = make_gemini_compile_digest_call(api_key="fake-key-never-sent")
+    compile_digest_call = make_groq_compile_digest_call(api_key="fake-key-never-sent")
 
     result = await compile_digest_call("Notion", [])
 
@@ -434,10 +420,10 @@ async def test_compile_digest_call_a_real_empty_search_still_produces_a_real_hon
     assert result["source_count"] == 0
 
 
-# --- Real, live tests (skipped without real TAVILY_API_KEY/GEMINI_API_KEY) ---
+# --- Real, live tests (skipped without real TAVILY_API_KEY/GROQ_API_KEY) ---
 
 
-@pytest.mark.skipif(not _HAS_REAL_KEYS, reason="no real TAVILY_API_KEY/GEMINI_API_KEY configured in this environment")
+@pytest.mark.skipif(not _HAS_REAL_KEYS, reason="no real TAVILY_API_KEY/GROQ_API_KEY configured in this environment")
 async def test_search_company_a_real_live_tavily_call_returns_real_results():
     settings = get_settings()
     results = await search_company("Notion", api_key=settings.tavily_api_key)
@@ -446,15 +432,15 @@ async def test_search_company_a_real_live_tavily_call_returns_real_results():
     assert all(isinstance(r, str) for r in results)
 
 
-@pytest.mark.skipif(not _HAS_REAL_KEYS, reason="no real TAVILY_API_KEY/GEMINI_API_KEY configured in this environment")
-async def test_run_career_digest_a_real_live_tavily_and_gemini_backed_digest_is_genuinely_compiled(pool, user_id):
+@pytest.mark.skipif(not _HAS_REAL_KEYS, reason="no real TAVILY_API_KEY/GROQ_API_KEY configured in this environment")
+async def test_run_career_digest_a_real_live_tavily_and_groq_backed_digest_is_genuinely_compiled(pool, user_id):
     """The real capstone: a real, live Tavily search, a real, live
-    Gemini summarization call, real code-computed `source_count`, a
+    Groq summarization call, real code-computed `source_count`, a
     real atomic persist -- the first time this exact real pipeline has
     ever run end to end."""
     settings = get_settings()
     application_id = await _seed_application(pool, user_id=user_id, company="Notion")
-    compile_digest_call = make_gemini_compile_digest_call(api_key=settings.gemini_api_key)
+    compile_digest_call = make_groq_compile_digest_call(api_key=settings.groq_api_key)
 
     result = await run_career_digest(
         pool, tavily_api_key=settings.tavily_api_key, compile_digest_call=compile_digest_call,

@@ -3,7 +3,7 @@ implementation of orchestration.py's own CriticCall/JudgeCall types.
 
 Error-path and validation tests (`# --- Deterministic`) use a
 monkeypatched httpx client -- network-independent, matching
-`test_negotiation_gemini_calls.py`'s and `test_embeddings.py`'s own
+`test_negotiation_groq_calls.py`'s and `test_embeddings.py`'s own
 established pattern for exactly this class of test.
 
 The tests below `# --- Real, live tests` call the actual, live Groq and
