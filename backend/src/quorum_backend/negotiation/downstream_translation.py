@@ -66,6 +66,8 @@ from typing import Awaitable, Callable
 
 import httpx
 
+from quorum_backend.core.gemini_quota import GeminiQuotaExhaustedError, reserve_gemini_quota_slot
+
 DownstreamTranslationCall = Callable[[str, str], Awaitable[dict]]
 
 GEMINI_TRANSLATION_MODEL = "gemini-3.6-flash"
@@ -167,7 +169,18 @@ async def _call_gemini_json(prompt: str, *, response_schema: dict, api_key: str,
     repeated local-helper pattern `negotiation/gemini_calls.py` and
     `gate/llm_calls.py` each already use for their own genuinely separate
     call sites, not forced into one shared abstraction across modules
-    with different real callers and different real schemas."""
+    with different real callers and different real schemas.
+
+    **Real, shared quota reservation, `DEC-165`:** a real slot against
+    this backend's own shared daily `generateContent` budget for
+    `GEMINI_TRANSLATION_MODEL` is reserved BEFORE the real network call
+    below is ever attempted -- see `core/gemini_quota.py`'s own
+    top-of-file docstring for the full real reasoning."""
+    try:
+        await reserve_gemini_quota_slot(model=GEMINI_TRANSLATION_MODEL)
+    except GeminiQuotaExhaustedError as exc:
+        raise DownstreamTranslationError(str(exc)) from exc
+
     last_error: Exception | None = None
     body = {
         "contents": [{"parts": [{"text": prompt}]}],

@@ -110,9 +110,12 @@
 
 ## 8. Cloud LLM Free-Tier Quotas (verified live, current as of this project's most recent research pass — re-verify before relying on these long-term, per this project's own repeated experience of free-tier volatility)
 
+**A real, disclosed correction, `DEC-165`:** the "Gemini Flash | ... 1,500 requests/day" row below is stale for the model this backend actually uses. It was a real number for an earlier model generation — `gemini-2.5-flash`, confirmed elsewhere in this project's history to now return a real 404 ("no longer available to new users"). `gemini-3.6-flash`, the real model every one of this backend's six `generateContent` call sites (`core/gemini_quota.py`) actually uses, has a genuinely different, far stricter real free-tier limit, confirmed live directly against this project's own real Google 429 response body: **`generate_content_free_tier_requests`, `GenerateRequestsPerDayPerProjectPerModel-FreeTier`, limit 20/day** — not 1,500. The row below is left as historical record of the now-superseded model's own real quota, not corrected in place, so a future check against a still-different model doesn't silently inherit either number without re-verifying live.
+
 | Provider / model | Quota |
 |---|---|
-| Gemini Flash | 10 RPM, 250,000 TPM, 1,500 requests/day |
+| Gemini Flash (`gemini-2.5-flash`, superseded — see correction above) | 10 RPM, 250,000 TPM, 1,500 requests/day |
+| **Gemini Flash (`gemini-3.6-flash`, the real model actually in use)** | **20 requests/day** (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`), confirmed live |
 | Gemini Flash-Lite | up to 15–30 RPM, ~1,000–1,500 requests/day |
 | Groq (Llama 3.3 70B) | ~30 RPM, ~1,000 requests/day, ~6,000 TPM |
 | Tavily | 1,000 free API credits/month; 1 credit per basic search (the endpoint Quorum actually uses) |

@@ -29,6 +29,19 @@ class _FakeResponse:
         return self._json_body
 
 
+async def _no_op_quota_reservation(**_kwargs) -> None:
+    """Real, shared no-op for the deterministic tests below -- `DEC-165`'s
+    new `reserve_gemini_quota_slot()` reserves a real, live slot against
+    this project's own real, shared, scarce Upstash Redis-backed quota
+    counter. `monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)`
+    below patches the shared `httpx` module's own class, so without
+    this, every one of these mocked-Gemini tests would also make a
+    real, live Redis call and increment the real, production
+    `gemini-3.6-flash` counter on every run -- see `test_gate_llm_
+    calls.py`'s own identical fix for the full real reasoning. The
+    "Real, live tests" section below deliberately does NOT use this."""
+
+
 # --- Deterministic (monkeypatched httpx client, no real network) ---
 
 
@@ -65,6 +78,7 @@ async def test_translation_call_raises_after_real_retries_exhausted(monkeypatch)
         return _FakeResponse(503, text="overloaded")
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    monkeypatch.setattr("quorum_backend.negotiation.downstream_translation.reserve_gemini_quota_slot", _no_op_quota_reservation)
     translation_call = make_gemini_downstream_translation_call(api_key="fake-key")
     with pytest.raises(DownstreamTranslationError):
         await translation_call("finance", "Cut discretionary spending by 2000 this month")
@@ -77,6 +91,7 @@ async def test_translation_call_returns_the_real_parsed_json_for_finance(monkeyp
         return _FakeResponse(200, {"candidates": [{"content": {"parts": [{"text": body}]}}]})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    monkeypatch.setattr("quorum_backend.negotiation.downstream_translation.reserve_gemini_quota_slot", _no_op_quota_reservation)
     translation_call = make_gemini_downstream_translation_call(api_key="fake-key")
     result = await translation_call("finance", "Cut discretionary spending by 2000 this month")
     assert result == {"action": "update_budget", "amount": 2000, "category": "discretionary", "payee": None}
@@ -88,6 +103,7 @@ async def test_translation_call_returns_the_real_parsed_json_for_tasks(monkeypat
         return _FakeResponse(200, {"candidates": [{"content": {"parts": [{"text": body}]}}]})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    monkeypatch.setattr("quorum_backend.negotiation.downstream_translation.reserve_gemini_quota_slot", _no_op_quota_reservation)
     translation_call = make_gemini_downstream_translation_call(api_key="fake-key")
     result = await translation_call("tasks", "Add a real follow-up task for the report")
     assert result["title"] == "Follow up on report"
@@ -100,6 +116,7 @@ async def test_translation_call_returns_the_real_parsed_json_for_calendar(monkey
         return _FakeResponse(200, {"candidates": [{"content": {"parts": [{"text": body}]}}]})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    monkeypatch.setattr("quorum_backend.negotiation.downstream_translation.reserve_gemini_quota_slot", _no_op_quota_reservation)
     translation_call = make_gemini_downstream_translation_call(api_key="fake-key")
     result = await translation_call("calendar", "Move the recurring check-in to a shorter slot")
     assert result["title"] == "Reschedule check-in"

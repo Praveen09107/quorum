@@ -39,11 +39,30 @@ from quorum_backend.gate.llm_calls import (
     make_gemini_judge_call,
     make_groq_critic_call,
 )
+
 from quorum_backend.gate.schemas import ActionProposal, ActionType, Finding, GateVerdict, Objection
 
 _settings = get_settings()
 _HAS_GROQ_KEY = _settings.groq_api_key is not None
 _HAS_GEMINI_KEY = _settings.gemini_api_key is not None
+
+
+async def _no_op_quota_reservation(**_kwargs) -> None:
+    """Real, shared no-op for the "Deterministic" section below --
+    `DEC-165`'s new `reserve_gemini_quota_slot()` reserves a real,
+    live slot against this project's own real, shared, scarce Upstash
+    Redis-backed quota counter, which these tests have nothing to do
+    with (they mock the Gemini HTTP call itself entirely and never
+    intend to consume real quota). Without this, `monkeypatch.setattr(
+    httpx.AsyncClient, "post", fake_post)` below -- patched at the
+    CLASS level, so it intercepts every real `httpx.AsyncClient`
+    instance in the whole process, including `core/gemini_quota.py`'s
+    own real Redis call -- would make every one of these tests also
+    increment the real, live, production `gemini-3.6-flash` counter on
+    every run, silently spending real, scarce daily quota a mocked test
+    was never meant to touch. The "Real, live tests" section below
+    deliberately does NOT use this -- those tests should, and do,
+    exercise the real quota guard exactly as production does."""
 
 
 def _proposal() -> ActionProposal:
@@ -126,6 +145,7 @@ async def test_judge_call_raises_gate_llm_call_error_on_a_malformed_decision_val
         return _FakeResponse(200, {"candidates": [{"content": {"parts": [{"text": body}]}}]})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    monkeypatch.setattr("quorum_backend.gate.llm_calls.reserve_gemini_quota_slot", _no_op_quota_reservation)
     judge_call = make_gemini_judge_call(api_key="fake-key")
     with pytest.raises(GateLlmCallError):
         await judge_call(_proposal(), _findings(), [])
@@ -139,6 +159,7 @@ async def test_judge_call_raises_when_decision_is_revise_but_no_real_revised_pay
         )
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    monkeypatch.setattr("quorum_backend.gate.llm_calls.reserve_gemini_quota_slot", _no_op_quota_reservation)
     judge_call = make_gemini_judge_call(api_key="fake-key")
     with pytest.raises(GateLlmCallError):
         await judge_call(_proposal(), _findings(), [])
@@ -150,6 +171,7 @@ async def test_judge_call_parses_a_real_json_encoded_revised_payload_correctly(m
         return _FakeResponse(200, {"candidates": [{"content": {"parts": [{"text": body}]}}]})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    monkeypatch.setattr("quorum_backend.gate.llm_calls.reserve_gemini_quota_slot", _no_op_quota_reservation)
     judge_call = make_gemini_judge_call(api_key="fake-key")
     verdict = await judge_call(_proposal(), _findings(), [])
     assert isinstance(verdict, GateVerdict)
@@ -167,6 +189,7 @@ async def test_judge_call_anonymizes_objection_order_before_returning_them_on_th
         return _FakeResponse(200, {"candidates": [{"content": {"parts": [{"text": '{"decision": "approve", "revised_payload_json": null}'}]}}]})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    monkeypatch.setattr("quorum_backend.gate.llm_calls.reserve_gemini_quota_slot", _no_op_quota_reservation)
     judge_call = make_gemini_judge_call(api_key="fake-key")
     original_objections = [
         Objection(category="tone", severity="low", description=f"objection {i}", signed_off=False) for i in range(5)

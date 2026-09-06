@@ -46,6 +46,7 @@ from typing import Awaitable, Callable
 
 import httpx
 
+from quorum_backend.core.gemini_quota import GeminiQuotaExhaustedError, reserve_gemini_quota_slot
 from quorum_backend.gate.schemas import NegotiationOption, Position
 
 GEMINI_GENERATION_MODEL = "gemini-3.6-flash"
@@ -77,7 +78,20 @@ async def _call_gemini_json(prompt: str, *, response_schema: dict, api_key: str,
     into the same limit that just rejected it. A short, real, linear
     backoff (`attempt` seconds before the `attempt`-th retry) is enough
     for this one real call site -- not elaborate exponential/jitter
-    machinery this small a `max_retries` doesn't need."""
+    machinery this small a `max_retries` doesn't need.
+
+    **Real, shared quota reservation, `DEC-165`:** a real slot against
+    this backend's own shared daily `generateContent` budget for
+    `GEMINI_GENERATION_MODEL` is reserved BEFORE the real network call
+    below is ever attempted -- see `core/gemini_quota.py`'s own
+    top-of-file docstring for the full real reasoning. Re-raised as
+    this module's own `GeminiGenerationError`, never a new exception
+    type callers must additionally learn."""
+    try:
+        await reserve_gemini_quota_slot(model=GEMINI_GENERATION_MODEL)
+    except GeminiQuotaExhaustedError as exc:
+        raise GeminiGenerationError(str(exc)) from exc
+
     last_error: Exception | None = None
     body = {
         "contents": [{"parts": [{"text": prompt}]}],

@@ -319,6 +319,21 @@ async def test_run_career_digest_a_real_failure_for_one_application_never_blocks
 # --- The real, structured-output factory itself -- real DB, monkeypatched HTTP ---
 
 
+async def _no_op_quota_reservation(**_kwargs) -> None:
+    """Real, shared no-op for the deterministic-fake tests below --
+    `DEC-165`'s new `reserve_gemini_quota_slot()` reserves a real,
+    live slot against this project's own real, shared, scarce Upstash
+    Redis-backed quota counter. `monkeypatch.setattr("quorum_backend.
+    features.career_digest.httpx.AsyncClient", ...)` below is patched
+    on the shared `httpx` module itself (the same object every module
+    that ever did `import httpx` sees), so without this, every one of
+    these mocked-Gemini tests would also make a real, live Redis call
+    and increment the real, production `gemini-3.6-flash` counter on
+    every run -- see `test_gate_llm_calls.py`'s own identical fix for
+    the full real reasoning. The "Real, live tests" section below
+    deliberately does NOT use this."""
+
+
 class _FakeHttpResponse:
     def __init__(self, status_code: int, payload: dict):
         self.status_code = status_code
@@ -367,6 +382,7 @@ async def test_compile_digest_for_one_application_a_real_full_pipeline_with_dete
         gemini_summary_points=["Raised a Series C round.", "Hiring fast."],
     )
     monkeypatch.setattr("quorum_backend.features.career_digest.httpx.AsyncClient", lambda **kwargs: fake_client)
+    monkeypatch.setattr("quorum_backend.features.career_digest.reserve_gemini_quota_slot", _no_op_quota_reservation)
     application_id = await _seed_application(pool, user_id=user_id, company="Notion")
     compile_digest_call = make_gemini_compile_digest_call(api_key="fake-key-never-sent")
 
@@ -393,6 +409,7 @@ async def test_compile_digest_call_caps_summary_points_at_5_even_if_the_real_mod
         gemini_summary_points=[f"point {i}" for i in range(8)],
     )
     monkeypatch.setattr("quorum_backend.features.career_digest.httpx.AsyncClient", lambda **kwargs: fake_client)
+    monkeypatch.setattr("quorum_backend.features.career_digest.reserve_gemini_quota_slot", _no_op_quota_reservation)
     compile_digest_call = make_gemini_compile_digest_call(api_key="fake-key-never-sent")
 
     result = await compile_digest_call("Notion", ["finding"])
@@ -408,6 +425,7 @@ async def test_compile_digest_call_a_real_empty_search_still_produces_a_real_hon
     meaning (career_digest_logic.dart's own already-tested contract)."""
     fake_client = _FakeCareerDigestHttpClient(tavily_results=[], gemini_summary_points=[])
     monkeypatch.setattr("quorum_backend.features.career_digest.httpx.AsyncClient", lambda **kwargs: fake_client)
+    monkeypatch.setattr("quorum_backend.features.career_digest.reserve_gemini_quota_slot", _no_op_quota_reservation)
     compile_digest_call = make_gemini_compile_digest_call(api_key="fake-key-never-sent")
 
     result = await compile_digest_call("Notion", [])
