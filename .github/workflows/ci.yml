@@ -235,9 +235,12 @@ jobs:
         # `--service-account`/`--gcs-log-dir` (`DEC-162`): this build now
         # runs as `quorum-cloud-builder`, a real, dedicated identity
         # holding only `roles/cloudbuild.builds.builder` -- not the
-        # project's default compute service account, which this session
-        # found (`STATUS_INDEX.md` item #31) also holds project-wide
-        # `roles/editor` for unrelated reasons. Before this fix, every
+        # project's default compute service account, which at the time
+        # this fix was written also held project-wide `roles/editor` for
+        # unrelated reasons (`STATUS_INDEX.md` item #31 -- that gap is now
+        # fully closed, `DEC-167`: the default compute SA holds zero
+        # project-level roles today, and is no longer Cloud Run's own
+        # runtime identity either). Before `DEC-162`'s own fix, every
         # Cloud Build job this pipeline ran -- meaning every real merge to
         # `main` -- executed unattended with real, project-wide Editor
         # rights; a compromised or misconfigured build step could reach

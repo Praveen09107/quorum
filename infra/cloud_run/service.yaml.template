@@ -21,10 +21,13 @@
 # that needs one) is the real security boundary now, not Cloud Run's own
 # network layer.
 #
-# SECRET HANDLING (`DEC-159`): six of the real credentials this service
-# needs are Secret Manager references (`secretKeyRef`, real IAM-scoped
-# access for the service's own runtime service account,
-# `649581407643-compute@developer.gserviceaccount.com`) -- the six
+# SECRET HANDLING (`DEC-159`, runtime identity updated `DEC-167`): six of
+# the real credentials this service needs are Secret Manager references
+# (`secretKeyRef`, real IAM-scoped access for the service's own runtime
+# service account -- `quorum-backend-runtime@quorum-505909.iam.
+# gserviceaccount.com` as of `DEC-167`, replacing the GCP-assigned default
+# compute SA this file originally named, which held real, project-wide
+# `roles/editor` and has since had that grant fully revoked) -- the six
 # ranked highest by real blast-radius if leaked, chosen under a real,
 # hard constraint: Secret Manager's own free tier allows exactly 6 active
 # secret versions per month project-wide (confirmed directly, not
@@ -70,6 +73,21 @@ spec:
         # live.
         run.googleapis.com/startup-cpu-boost: "true"
     spec:
+      # A real, disclosed CRITICAL-tier review LOW found while writing
+      # `DEC-167`: this field was previously absent from this template
+      # entirely, which is genuinely dangerous now, not just stale --
+      # `gcloud run services replace` against this file would silently
+      # revert the live service to the GCP-assigned default compute SA
+      # (`649581407643-compute@developer.gserviceaccount.com`), which
+      # `DEC-167` stripped of `roles/editor` but (deliberately, for a
+      # real, working rollback path) left with its own `secretAccessor`
+      # grants intact -- so a `replace` wouldn't even fail loudly, it
+      # would just quietly run the live service under the old, no-longer-
+      # intended identity. Stated explicitly here so this template can
+      # never silently regress that fix, even though this service has
+      # never actually been deployed via `replace` (see the note below
+      # this spec block).
+      serviceAccountName: quorum-backend-runtime@quorum-505909.iam.gserviceaccount.com
       containerConcurrency: 1
       containers:
         # A real, specific tag, not `:latest` -- CRITICAL-tier review
@@ -156,11 +174,20 @@ spec:
 #     --concurrency 1 \
 #     --min-instances 0 \
 #     --max-instances 2 \
-#     --allow-unauthenticated
-#   (real env vars/secrets persist across a plain `gcloud run deploy`
-#   with no --set-env-vars/--update-secrets flags, since they're already
-#   attached to the service -- only pass those flags when a credential
-#   value itself is actually changing.)
+#     --allow-unauthenticated \
+#     --service-account=quorum-backend-runtime@quorum-505909.iam.gserviceaccount.com
+#   (real env vars/secrets/service-account persist across a plain `gcloud
+#   run deploy` with none of --set-env-vars/--update-secrets/--service-
+#   account passed, since they're already attached to the service -- the
+#   real, live CI/CD pipeline (`.github/workflows/ci.yml`, `DEC-160`)
+#   deliberately omits all three for exactly this reason. `--service-
+#   account` is shown here anyway because this block is the real command
+#   for a human running a FRESH, from-scratch deploy (e.g. disaster
+#   recovery), where there is no existing service configuration to
+#   preserve -- omitting it in that specific case would silently create
+#   the service under the GCP-assigned default compute SA, `DEC-167`'s
+#   own real, disclosed footgun. Only pass a flag when the value it
+#   controls is actually changing OR there is no prior value to inherit.)
 #
 # A config-only change (no image rebuild), e.g. rotating a Secret
 # Manager-backed credential's value:
