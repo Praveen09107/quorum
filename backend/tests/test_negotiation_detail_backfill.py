@@ -2,22 +2,24 @@
 DEC-134) -- real, live-database integration tests, mirroring test_
 deadline_watch.py/test_spend_alert.py's own established real pattern.
 
-Two real/fake boundaries, matching test_negotiation_gemini_calls.py's
-own already-established split:
-- Most tests below never reach a real Gemini call at all -- every path
+Two real/fake boundaries, matching test_negotiation_groq_calls.py's own
+already-established split (that module -- `negotiation/groq_calls.py`
+-- was originally Gemini-backed, `gemini_calls.py`, `DEC-121`; migrated
+to Groq under `DEC-166`'s real AI-provider rebalancing):
+- Most tests below never reach a real Groq call at all -- every path
   that returns UNKNOWN_TRIGGER_SOURCE or SITUATION_RESOLVED short-
   circuits inside `negotiation/subgraph.py`'s own `scan` node, before
   `generate_positions_node` is ever reached, so these are real, live-
   database tests with zero real network dependency.
 - `test_generate_detail_..._a_real_genuine_conflict_produces_real_
   detailed_output` uses a monkeypatched httpx client (deterministic,
-  network-independent, same technique test_negotiation_gemini_calls.py
+  network-independent, same technique test_negotiation_groq_calls.py
   already established) to exercise the full real pipeline -- state
-  rebuild, subgraph, atomic persist -- without spending real Gemini
-  quota on every CI run.
-- `test_generate_detail_for_one_negotiation_a_real_live_gemini_backed_
+  rebuild, subgraph, atomic persist -- without spending a real Groq
+  call on every CI run.
+- `test_generate_detail_for_one_negotiation_a_real_live_groq_backed_
   conflict_is_genuinely_detailed` is the one real, live, skippable-
-  without-a-key test that actually proves the real Gemini integration
+  without-a-key test that actually proves the real Groq integration
   works, per CLAUDE.md Rule 5.
 """
 import json
@@ -43,7 +45,7 @@ from quorum_backend.features.negotiation_detail_backfill import (
 )
 from quorum_backend.gate.schemas import ImpactDelta, NegotiationOption
 
-_HAS_REAL_KEY = get_settings().gemini_api_key is not None
+_HAS_REAL_KEY = get_settings().groq_api_key is not None
 
 
 @pytest_asyncio.fixture
@@ -95,7 +97,7 @@ async def _seed_real_recurring_subscription(pool, *, user_id: str, payee: str, a
         await _seed_expense(pool, user_id=user_id, payee=payee, amount=amount, occurred_days_ago=offset)
 
 
-# --- Dispatch/skip paths -- zero real Gemini calls, real database only ---
+# --- Dispatch/skip paths -- zero real Groq calls, real database only ---
 
 
 async def test_generate_detail_for_one_negotiation_returns_unknown_trigger_source_for_an_unrecognized_source(pool, user_id):
@@ -136,7 +138,7 @@ async def test_generate_detail_for_one_negotiation_a_real_deadline_watch_situati
     """Real regression proof of this module's own re-derive-don't-
     snapshot design: real, current data no longer conflicts (light task,
     light spend), so a fresh re-scan inside the real subgraph's own
-    `scan` node short-circuits before any real Gemini call -- proven
+    `scan` node short-circuits before any real Groq call -- proven
     here by passing an `api_key` that would raise if it were ever
     actually used for a real network call."""
     negotiation_id = await _seed_bare_negotiation(pool, user_id=user_id, trigger_source="deadline_watch")
@@ -368,7 +370,7 @@ async def test_fetch_bare_autonomous_negotiation_ids_excludes_a_negotiation_at_t
     """Real regression test for finding #2: a negotiation that has
     durably failed `MAX_DETAIL_BACKFILL_ATTEMPTS` real times is excluded
     from candidate selection entirely -- a real, bounded give-up, not an
-    unbounded retry burning real Gemini quota forever."""
+    unbounded retry burning real LLM calls forever."""
     exhausted = await _seed_bare_negotiation(pool, user_id=user_id, trigger_source="deadline_watch")
     await pool.execute(
         "UPDATE negotiations SET detail_backfill_attempts = $1 WHERE negotiation_id = $2",
@@ -390,7 +392,7 @@ async def test_generate_detail_for_one_negotiation_skips_when_the_user_already_h
     """Real regression test: a real, unresolved, options-bearing
     negotiation from a DIFFERENT source (`spend_alert`) with an
     overlapping conflicted domain must stop this negotiation
-    (`deadline_watch`) from spending a single real Gemini call --
+    (`deadline_watch`) from spending a single real Groq call --
     passing an `api_key` that would raise if actually used proves zero
     real network calls happen on this path."""
     await pool.execute(
@@ -444,16 +446,21 @@ async def test_generate_detail_for_one_negotiation_does_not_skip_when_the_other_
 # --- Full pipeline, deterministic (monkeypatched httpx, no real network) ---
 
 
-class _FakeGeminiResponse:
+class _FakeGroqResponse:
     def __init__(self, payload: dict):
         self.status_code = 200
         self._payload = payload
 
     def json(self):
-        return {"candidates": [{"content": {"parts": [{"text": json.dumps(self._payload)}]}}]}
+        return {"choices": [{"message": {"content": json.dumps(self._payload)}}]}
 
 
-class _FakeGeminiClient:
+class _FakeGroqClient:
+    """Real, live Groq `chat/completions` request/response shape --
+    `response_format.json_schema.schema.required`, not Gemini's
+    `generationConfig.responseSchema.required` this fake originally
+    inspected before `DEC-166`'s migration."""
+
     async def __aenter__(self):
         return self
 
@@ -461,12 +468,12 @@ class _FakeGeminiClient:
         return False
 
     async def post(self, *args, **kwargs):
-        schema = kwargs["json"]["generationConfig"]["responseSchema"]
+        schema = kwargs["json"]["response_format"]["json_schema"]["schema"]
         if "concern" in schema["required"]:
-            return _FakeGeminiResponse(
+            return _FakeGroqResponse(
                 {"concern": "real test concern", "severity_claim": "real test severity", "proposed_resolution": "real test resolution"}
             )
-        return _FakeGeminiResponse(
+        return _FakeGroqResponse(
             {
                 "options": [
                     {"description": "real option one", "source_domains": ["finance"]},
@@ -476,36 +483,10 @@ class _FakeGeminiClient:
         )
 
 
-async def _no_op_quota_reservation(**_kwargs) -> None:
-    """Real, shared no-op for the deterministic test below -- `DEC-165`'s
-    new `reserve_gemini_quota_slot()` reserves a real, live slot against
-    this project's own real, shared, scarce Upstash Redis-backed quota
-    counter. `monkeypatch.setattr("quorum_backend.negotiation.gemini_
-    calls.httpx.AsyncClient", ...)` below patches the shared `httpx`
-    module's own class, so without this, this mocked-Gemini test would
-    also make a real, live Redis call and increment the real,
-    production `gemini-3.6-flash` counter on every run -- see
-    `test_gate_llm_calls.py`'s own identical fix for the full real
-    reasoning. **A real, live-caught gap this exact fix closes,
-    found by `DEC-165`'s own CRITICAL-tier review:** before this fix,
-    the guard's own real Redis call inside this test's mocked
-    `_FakeGeminiClient.post()` raised a real `KeyError('json')` (the
-    fake client's own `post()` doesn't accept a `json=` kwarg shaped
-    for a Redis command), which an earlier, overly broad `except
-    Exception` in the guard silently swallowed as if it were a real
-    Upstash outage -- this test passed throughout, but the guard was
-    never actually exercised even once. The guard's own `except` is
-    now narrowed to real, anticipated failure classes only; this
-    explicit no-op is what correctly keeps this test from touching the
-    real guard at all, rather than relying on an accidental exception
-    match to skip it."""
-
-
 async def test_generate_detail_for_one_negotiation_a_real_genuine_conflict_produces_real_detailed_output(pool, user_id, monkeypatch):
     monkeypatch.setattr(
-        "quorum_backend.negotiation.gemini_calls.httpx.AsyncClient", lambda **kwargs: _FakeGeminiClient()
+        "quorum_backend.negotiation.groq_calls.httpx.AsyncClient", lambda **kwargs: _FakeGroqClient()
     )
-    monkeypatch.setattr("quorum_backend.negotiation.gemini_calls.reserve_gemini_quota_slot", _no_op_quota_reservation)
     negotiation_id = await _seed_bare_negotiation(pool, user_id=user_id, trigger_source="deadline_watch")
     await _seed_task(pool, user_id=user_id, hours=12.0, deadline_offset_days=1)
     await _seed_expense(pool, user_id=user_id, payee="real test payee", amount=30000.0, occurred_days_ago=0)
@@ -539,13 +520,13 @@ async def test_generate_detail_for_one_negotiation_a_real_genuine_conflict_produ
     assert unchanged_row["positions"] == row["positions"]  # never clobbered
 
 
-# --- Real, live tests (skipped without a real GEMINI_API_KEY) ---
+# --- Real, live tests (skipped without a real GROQ_API_KEY) ---
 
 
-@pytest.mark.skipif(not _HAS_REAL_KEY, reason="no real GEMINI_API_KEY configured in this environment")
-async def test_generate_detail_for_one_negotiation_a_real_live_gemini_backed_conflict_is_genuinely_detailed(pool, user_id):
+@pytest.mark.skipif(not _HAS_REAL_KEY, reason="no real GROQ_API_KEY configured in this environment")
+async def test_generate_detail_for_one_negotiation_a_real_live_groq_backed_conflict_is_genuinely_detailed(pool, user_id):
     """The real capstone: a genuine tasks/finance conflict, real current
-    data, a real live Gemini call for positions and synthesis, real
+    data, a real live Groq call for positions and synthesis, real
     code-computed impact -- the first time this exact real pipeline has
     ever run against data an autonomous job (not a hand-written seed
     script) could have produced."""
@@ -556,7 +537,7 @@ async def test_generate_detail_for_one_negotiation_a_real_live_gemini_backed_con
     await _seed_task(pool, user_id=user_id, hours=12.0, deadline_offset_days=1)
 
     outcome = await generate_detail_for_one_negotiation(
-        pool, negotiation_id=negotiation_id, user_id=user_id, trigger_source="spend_alert", api_key=settings.gemini_api_key
+        pool, negotiation_id=negotiation_id, user_id=user_id, trigger_source="spend_alert", api_key=settings.groq_api_key
     )
 
     assert outcome is BackfillOutcome.DETAILED

@@ -30,12 +30,19 @@ any real tasks (a real, cheap idempotency guard against accidentally
 double-seeding) unless `--force` is passed.
 
 THE ONE STEP THIS SCRIPT DOES NOT RUN AUTOMATICALLY: generating the
-real negotiation's positions/options via `negotiation/gemini_calls.py`
-(`DEC-121`) needs live Gemini calls against `gemini-3.6-flash`, whose
+real negotiation's positions/options via `negotiation/groq_calls.py`
+(`DEC-121`, renamed from `gemini_calls.py` and migrated from Gemini to
+Groq, `DEC-166`) needs a live LLM call. At the time this docstring was
+first written, that call went to Gemini's `gemini-3.6-flash`, whose
 real, live-confirmed free-tier quota (20 requests) was exhausted by
 this project's own testing the same session this script was written --
-and confirmed, by trying again after real elapsed time, to be a
-daily-scale cap, not a short window.
+confirmed, by trying again after real elapsed time, to be a daily-scale
+cap, not a short window. Since `DEC-166`, this call goes to Groq
+instead, whose own real headroom is meaningfully higher -- this step
+stays gated behind `--with-negotiation-detail` regardless, since it's
+still one real, live, network-dependent LLM call this script's own
+idempotency guard has to account for either way, not because Groq's own
+quota is expected to be a problem.
 
 A REAL MISTAKE MADE AND CORRECTED WHILE USING THIS SCRIPT (`DEC-122`):
 the first version required `--force` (a FULL re-seed) just to retry
@@ -67,9 +74,9 @@ sys.path.insert(0, r"D:\Program Files\QUORUM\backend\src")
 
 from quorum_backend.core import db  # noqa: E402
 from quorum_backend.core.config import get_settings  # noqa: E402
-from quorum_backend.negotiation.gemini_calls import (  # noqa: E402
-    make_gemini_position_call,
-    make_gemini_synthesis_call,
+from quorum_backend.negotiation.groq_calls import (  # noqa: E402
+    make_groq_position_call,
+    make_groq_synthesis_call,
 )
 from quorum_backend.negotiation.impact_simulator import DomainSnapshot, OptionEffect  # noqa: E402
 from quorum_backend.negotiation.subgraph import NegotiationState, build_negotiation_graph  # noqa: E402
@@ -218,17 +225,18 @@ async def seed_negotiation_row(pool, *, user_id: str) -> str:
 async def seed_negotiation_detail(pool, *, negotiation_id: str, api_key: str) -> None:
     """The one step gated behind `--with-negotiation-detail` -- see this
     module's own top docstring for why. Runs the REAL negotiation
-    subgraph end to end: real trigger scan, real Gemini-generated
-    positions and options, real code-computed impact deltas -- nothing
-    fabricated anywhere in the chain."""
-    position_call = make_gemini_position_call(
+    subgraph end to end: real trigger scan, real Groq-generated (Gemini
+    originally, `DEC-166` migrated) positions and options, real
+    code-computed impact deltas -- nothing fabricated anywhere in the
+    chain."""
+    position_call = make_groq_position_call(
         {
             "finance": "92% of this month's budget is already spent, with 8 days remaining in the month.",
             "tasks": "3 real tasks are due this week totaling 5 hours of work, but only 8 working hours remain today.",
         },
         api_key=api_key,
     )
-    synthesis_call = make_gemini_synthesis_call(api_key=api_key)
+    synthesis_call = make_groq_synthesis_call(api_key=api_key)
 
     def effect_extractor(option) -> OptionEffect:
         if "finance" in option.source_domains:
@@ -272,7 +280,7 @@ async def seed_negotiation_detail(pool, *, negotiation_id: str, api_key: str) ->
 async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--force", action="store_true", help="fully re-seed even if the real account already has real tasks -- see the real, disclosed duplication incident in this script's own docstring history (DEC-122) before using this")
-    parser.add_argument("--with-negotiation-detail", action="store_true", help="run the real Gemini-backed negotiation content generation (needs live GEMINI_API_KEY quota). Safe to run alone, any number of times, without --force -- see 'negotiation-detail-only mode' below")
+    parser.add_argument("--with-negotiation-detail", action="store_true", help="run the real Groq-backed negotiation content generation (needs a real GROQ_API_KEY configured; Gemini-backed originally, DEC-166 migrated). Safe to run alone, any number of times, without --force -- see 'negotiation-detail-only mode' below")
     args = parser.parse_args()
 
     pool = await db.create_pool()
@@ -306,10 +314,10 @@ async def main() -> None:
                 print("REFUSING: already seeded, but no real negotiation row is waiting for detail (either none exists, or all already have it).")
                 return
             settings = get_settings()
-            if settings.gemini_api_key is None:
-                print("--with-negotiation-detail passed but no real GEMINI_API_KEY configured.")
+            if settings.groq_api_key is None:
+                print("--with-negotiation-detail passed but no real GROQ_API_KEY configured.")
                 return
-            await seed_negotiation_detail(pool, negotiation_id=str(negotiation_id), api_key=settings.gemini_api_key)
+            await seed_negotiation_detail(pool, negotiation_id=str(negotiation_id), api_key=settings.groq_api_key)
             print("done.")
             return
 
@@ -323,8 +331,8 @@ async def main() -> None:
         # `--force` would duplicate on top of, reproducing the exact
         # incident this file's own docstring already discloses.
         # Deliberately does NOT include `seed_negotiation_detail` below
-        # -- that step makes a real, slow, live Gemini network call,
-        # and holding a database transaction open across a slow
+        # -- that step makes a real, slow, live LLM network call, and
+        # holding a database transaction open across a slow
         # external call is its own real anti-pattern, worth avoiding
         # even though `seed_negotiation_detail`'s own write is a single
         # statement either way.
@@ -348,12 +356,12 @@ async def main() -> None:
 
         if args.with_negotiation_detail:
             settings = get_settings()
-            if settings.gemini_api_key is None:
-                print("  --with-negotiation-detail passed but no real GEMINI_API_KEY configured -- skipping.")
+            if settings.groq_api_key is None:
+                print("  --with-negotiation-detail passed but no real GROQ_API_KEY configured -- skipping.")
             else:
-                await seed_negotiation_detail(pool, negotiation_id=negotiation_id, api_key=settings.gemini_api_key)
+                await seed_negotiation_detail(pool, negotiation_id=negotiation_id, api_key=settings.groq_api_key)
         else:
-            print(f"  negotiation detail NOT seeded (run again with --with-negotiation-detail alone once Gemini quota resets, negotiation_id={negotiation_id})")
+            print(f"  negotiation detail NOT seeded (run again with --with-negotiation-detail alone, negotiation_id={negotiation_id})")
 
         print("done.")
     finally:

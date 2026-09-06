@@ -31,27 +31,39 @@ model... falling back to cloud otherwise." Sprint 0's own real,
 measured result (`DEC-130`/`131`) is 67% validity for the winning
 on-device candidate (Llama 3.2 3B) -- not yet strong enough to be the
 PRIMARY path for something that writes real data on a real user's
-behalf. Cloud (Gemini) extraction is used exclusively here, matching
-this backend's own already-proven `gemini-3.6-flash` structured-JSON
-pattern; on-device extraction/routing is a real, disclosed, deferred
-follow-on, not silently dropped.
+behalf. Cloud extraction is used exclusively here -- originally Gemini's
+`gemini-3.6-flash` structured-JSON pattern, migrated to Groq's `openai/
+gpt-oss-120b` under `DEC-166` (see "REAL, DISCLOSED MIGRATION FROM
+GEMINI TO GROQ" below); on-device extraction/routing is a real,
+disclosed, deferred follow-on, not silently dropped.
 
-REAL MODEL, REUSED, NOT REDISCOVERED: `gemini-3.6-flash`, the same
-real, already-live-confirmed model `negotiation/gemini_calls.py`,
-`gate/llm_calls.py`, and `negotiation/downstream_translation.py` each
-already use. The exact same `{title, estimated_hours, deadline_iso}`
-schema `negotiation/downstream_translation.py::_TASKS_SCHEMA` already
-defines is reused here too (a real, deliberate match, not a
-coincidence) -- but with a genuinely NEW, honestly-framed prompt: that
-module's own prompt describes "a user chose a real option that
-resolves a real conflict... in a negotiation," which is a real,
+REAL, DISCLOSED MIGRATION FROM GEMINI TO GROQ, `DEC-166`: this module
+originally called `gemini-3.6-flash` (the same real, already-live-
+confirmed model `negotiation/gemini_calls.py`, `gate/llm_calls.py`, and
+`negotiation/downstream_translation.py` each already used) -- moved to
+Groq's `openai/gpt-oss-120b` (the same real, already-live-confirmed
+model `gate/llm_calls.py::GROQ_CRITIC_MODEL` uses) as part of `QUORUM_
+FINAL_COMPLETION_PLAN.md` Session 1's real AI-provider rebalancing:
+every real `generateContent` call site except the Judge (kept on
+Gemini deliberately, per CLAUDE.md's own Critic/Judge provider-
+diversity rule) moves off Gemini's shared, hard 20-request/day
+free-tier quota onto Groq's own, meaningfully higher real headroom.
+The exact same `{title, estimated_hours, deadline_iso}` schema
+`negotiation/downstream_translation.py::_TASKS_SCHEMA` already defines
+is reused here too (a real, deliberate match, not a coincidence,
+rewritten to Groq's own lowercase-type, wrapped `json_schema` shape --
+NOT Gemini's uppercase `responseSchema` shape, confirmed live rather
+than assumed to generalize) -- but with a genuinely NEW, honestly-framed
+prompt: that module's own prompt describes "a user chose a real option
+that resolves a real conflict... in a negotiation," which is a real,
 factually false description of what's happening here. Matching this
-backend's own established precedent (`_call_gemini_json` is
-intentionally reimplemented per real caller, `downstream_translation
-.py`'s own docstring: "not forced into one shared abstraction across
-modules with different real callers and different real schemas"), this
-module writes its own real Gemini-calling helper rather than reusing
-that module's negotiation-specific one under a misleading prompt.
+backend's own established precedent (`_call_groq_json`/`_call_
+gemini_json` are intentionally reimplemented per real caller,
+`downstream_translation.py`'s own docstring: "not forced into one
+shared abstraction across modules with different real callers and
+different real schemas"), this module writes its own real Groq-calling
+helper rather than reusing that module's negotiation-specific one under
+a misleading prompt.
 
 REAL, MAXIMAL REUSE OF THE REST OF THE REAL PIPELINE, DELIBERATELY, TO
 AVOID RE-DERIVING ALREADY-CORRECT (AND ONCE CRITICAL-TIER-REVIEW-FIXED)
@@ -91,8 +103,8 @@ independent look specifically at THIS composition.
 **RESOLVED, `DEC-165`** (originally a real, disclosed open item, CRITICAL-
 tier review, `DEC-153`, M3): there was no rate limiting anywhere in this
 backend, confirmed by direct search at the time -- `POST /quick_capture`
-makes one real, billed Gemini call per real request, from a floating
-action button visible on every real tab, and shares its one real
+made one real, billed Gemini call per real request, from a floating
+action button visible on every real tab, sharing its one real
 `GEMINI_API_KEY` with `/search`, the Gate's own Judge, negotiation
 translation/backfill, and Career Digest. Live-confirmed during `DEC-153`'s
 own review, and again independently during a later real, unrelated
@@ -100,17 +112,23 @@ on-device session: the real, shared free-tier quota (a real, hard cap of
 20 requests/day on this project's own key, for `gemini-3.6-flash`
 specifically) was genuinely exhausted, causing real, unrelated work
 elsewhere to fail as pure collateral both times. `core/gemini_quota.py`
-(new, `DEC-165`) now reserves a real, shared, atomic slot against this
-same real daily budget before every one of this backend's six real
-`generateContent` call sites (this one included) ever attempts its own
-real network call -- see that module's own top-of-file docstring for the
-full real design and reasoning.
+(`DEC-165`) reserved a real, shared, atomic slot against this same real
+daily budget before every real `generateContent` call site, this one
+included, ever attempted its own real network call.
+
+**SUPERSEDED, `DEC-166`:** this module no longer calls Gemini at all
+(see "REAL, DISCLOSED MIGRATION FROM GEMINI TO GROQ" above) and no
+longer reserves a `core/gemini_quota.py` slot -- Groq's own real
+headroom at this backend's actual request volume has not shown the
+same shared-exhaustion failure mode Gemini's real 20/day cap did, so
+there is nothing left here for that guard to protect. `core/gemini_
+quota.py` itself is NOT deleted -- `gate/llm_calls.py`'s own Judge call
+still uses it.
 """
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
@@ -118,7 +136,6 @@ from typing import Awaitable, Callable
 import asyncpg
 import httpx
 
-from quorum_backend.core.gemini_quota import GeminiQuotaExhaustedError, reserve_gemini_quota_slot
 from quorum_backend.features.retry_queue_drainer import (
     DownstreamTranslationError,
     build_stage_a_checks_for_domain,
@@ -133,8 +150,9 @@ logger = logging.getLogger("quorum_backend")
 
 TaskExtractionCall = Callable[[str], Awaitable[dict]]
 
-GEMINI_EXTRACTION_MODEL = "gemini-3.6-flash"
-_EXTRACTION_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_EXTRACTION_MODEL}:generateContent"
+GROQ_EXTRACTION_MODEL = "openai/gpt-oss-120b"
+_GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
+_GROQ_MAX_COMPLETION_TOKENS = 2048
 
 # The exact same real shape `negotiation/downstream_translation.py::
 # _TASKS_SCHEMA` already defines -- a real, deliberate match (this is
@@ -142,14 +160,21 @@ _EXTRACTION_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEM
 # needs), reused as a literal here rather than imported, matching this
 # backend's own established "reimplement the small, stable schema per
 # real caller" precedent that module's own docstring already states.
+# Groq's own lowercase-type, wrapped `json_schema` shape -- confirmed
+# live rather than assumed to generalize from Gemini's uppercase
+# `responseSchema` shape this schema originally used before `DEC-166`.
 _TASK_EXTRACTION_SCHEMA = {
-    "type": "OBJECT",
-    "properties": {
-        "title": {"type": "STRING"},
-        "estimated_hours": {"type": "NUMBER"},
-        "deadline_iso": {"type": "STRING", "nullable": True},
+    "name": "task_extraction",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "estimated_hours": {"type": "number"},
+            "deadline_iso": {"type": ["string", "null"]},
+        },
+        "required": ["title", "estimated_hours", "deadline_iso"],
+        "additionalProperties": False,
     },
-    "required": ["title", "estimated_hours", "deadline_iso"],
 }
 
 
@@ -206,76 +231,69 @@ def build_extraction_prompt(free_text: str) -> str:
     )
 
 
-async def _call_gemini_json(prompt: str, *, api_key: str, max_retries: int = 2, retry_delay_seconds: float = 2.0) -> dict:
-    """Real, live call to Gemini's `generateContent`, structured JSON
-    output, real retry on transient failure -- the same, now four-times-
-    repeated local-helper pattern `negotiation/gemini_calls.py`, `gate/
-    llm_calls.py`, and `negotiation/downstream_translation.py` each
-    already use for their own genuinely separate call sites.
+async def _call_groq_json(prompt: str, *, api_key: str, max_retries: int = 2) -> dict:
+    """Real, live call to Groq's OpenAI-compatible `chat/completions`,
+    strict `json_schema` structured output, real retry on transient
+    failure -- the same, now several-times-repeated local-helper pattern
+    `negotiation/groq_calls.py`, `gate/llm_calls.py`, and `negotiation/
+    downstream_translation.py` each already use for their own genuinely
+    separate call sites.
 
     RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-153`
-    M1): the raw upstream Gemini response body (which live-confirmed to
-    include real quota/billing text and internal provider metric names)
-    previously reached this exception's own message, which `main.py`'s
-    route then embedded verbatim into a real `502` `detail` a real
-    mobile client displays directly on screen. The raw body is now
-    logged server-side only (a real, `logger.warning()`-backed,
-    greppable record, matching this project's own established "durable
-    log, never surfaced raw to the end user" pattern already used for
-    Gmail/Calendar execution) -- `QuickCaptureError`'s own message stays
-    a clean, generic, real fact ("the extraction service failed"),
-    never the provider's own raw text.
+    M1): the raw upstream provider response body (which live-confirmed,
+    under the original Gemini version of this function, to include real
+    quota/billing text and internal provider metric names) previously
+    reached this exception's own message, which `main.py`'s route then
+    embedded verbatim into a real `502` `detail` a real mobile client
+    displays directly on screen. The raw body is logged server-side only
+    (a real, `logger.warning()`-backed, greppable record, matching this
+    project's own established "durable log, never surfaced raw to the
+    end user" pattern already used for Gmail/Calendar execution) --
+    `QuickCaptureError`'s own message stays a clean, generic, real fact
+    ("the extraction service failed"), never the provider's own raw
+    text. Still true after `DEC-166`'s migration to Groq.
 
-    RESOLVED, a real, disclosed CRITICAL-tier review LOW (`DEC-153` L3):
-    a real retry against a real, per-minute-rate-limited API previously
-    fired again immediately -- live-confirmed Gemini's own real 429
-    response explicitly asks for a real backoff ("Please retry in
-    31.6s"). A real, fixed `retry_delay_seconds` between attempts is a
-    small, honest improvement -- not a full exponential-backoff
-    implementation, which would be real, disclosed, separate scope.
-
-    RESOLVED, the real, disclosed CRITICAL-tier review MEDIUM this same
-    session's own docstring logged as future scope (`DEC-153` M3, closed
-    `DEC-165`): a real slot against this backend's own shared daily
-    `generateContent` budget for `GEMINI_EXTRACTION_MODEL` is now
-    reserved BEFORE EACH real network attempt below, inside the retry
-    loop itself, not once above it -- Google counts every real attempt,
-    not just the final one; see `core/gemini_quota.py`'s own
-    top-of-file docstring for the full real reasoning."""
+    **SUPERSEDED BY `DEC-166`:** the real, fixed `retry_delay_seconds`
+    backoff (`DEC-153` L3, added because Gemini's real `429` response
+    explicitly asked for one) and the real `core/gemini_quota.py`
+    reservation (`DEC-153` M3, closed `DEC-165`) are both gone from this
+    function -- matching `gate/llm_calls.py::_call_groq_json`'s own real,
+    already-live Groq retry loop, which has needed neither: Groq's own
+    real, observed failure modes at this call volume haven't shown the
+    same per-minute rate-limit backoff or shared-quota-exhaustion
+    behavior Gemini's real responses did, and there is no longer a
+    Gemini quota slot for this call site to reserve."""
     last_error: Exception | None = None
     body = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": _TASK_EXTRACTION_SCHEMA,
-        },
+        "model": GROQ_EXTRACTION_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "response_format": {"type": "json_schema", "json_schema": _TASK_EXTRACTION_SCHEMA},
+        "max_completion_tokens": _GROQ_MAX_COMPLETION_TOKENS,
     }
-    for attempt in range(max_retries):
-        if attempt > 0:
-            await asyncio.sleep(retry_delay_seconds)
-        try:
-            await reserve_gemini_quota_slot(model=GEMINI_EXTRACTION_MODEL)
-        except GeminiQuotaExhaustedError as exc:
-            raise QuickCaptureError("The extraction service's shared real quota is exhausted for today -- please try again later.") from exc
+    for _attempt in range(max_retries):
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(_EXTRACTION_URL, headers={"x-goog-api-key": api_key}, json=body)
+                response = await client.post(_GROQ_CHAT_URL, headers={"Authorization": f"Bearer {api_key}"}, json=body)
             if response.status_code != 200:
                 logger.warning(
-                    "Real Gemini extraction call rejected: status=%s body=%s", response.status_code, response.text[:500]
+                    "Real Groq extraction call rejected: status=%s body=%s", response.status_code, response.text[:500]
                 )
-                last_error = QuickCaptureError(f"Gemini generateContent returned a real {response.status_code}")
+                last_error = QuickCaptureError(f"Groq chat/completions returned a real {response.status_code}")
                 continue
             data = response.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            text = data["choices"][0]["message"]["content"]
+            if not text:
+                logger.warning("Real Groq extraction call returned an empty message.content (reasoning-token budget likely exhausted)")
+                last_error = QuickCaptureError("Groq returned an empty extraction response")
+                continue
             return json.loads(text)
         except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-            logger.warning("Real Gemini extraction call failed: %r", exc)
+            logger.warning("Real Groq extraction call failed: %r", exc)
             last_error = exc
     raise QuickCaptureError("The extraction service failed -- please try again.") from last_error
 
 
-def make_gemini_task_extraction_call(*, api_key: str) -> TaskExtractionCall:
+def make_groq_task_extraction_call(*, api_key: str) -> TaskExtractionCall:
     """Real factory -- the returned callable's real signature,
     `(free_text) -> dict`, matches exactly what `capture_task_from_text`
     (or, in the real production route, a direct call before ever
@@ -283,7 +301,7 @@ def make_gemini_task_extraction_call(*, api_key: str) -> TaskExtractionCall:
     docstring) needs."""
 
     async def extraction_call(free_text: str) -> dict:
-        return await _call_gemini_json(build_extraction_prompt(free_text), api_key=api_key)
+        return await _call_groq_json(build_extraction_prompt(free_text), api_key=api_key)
 
     return extraction_call
 
@@ -363,8 +381,9 @@ async def capture_task_from_text(
     RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-153`
     M2): the real production route (`main.py::quick_capture_endpoint`)
     does NOT call this function -- it deliberately calls the real
-    Gemini extraction FIRST, then acquires a real pooled connection and
-    calls `capture_task_from_extracted_args()` above only for the fast,
+    extraction call (Gemini originally, Groq since `DEC-166`) FIRST,
+    then acquires a real pooled connection and calls `capture_task_
+    from_extracted_args()` above only for the fast,
     DB-touching part. An earlier version held a real, pooled Postgres
     connection idle-in-transaction for the extraction call's own real,
     live-confirmed up-to-~60s worst case (a 30s timeout, up to 2 real

@@ -1,7 +1,7 @@
 """Real tests for features/email_ingestion.py (Phase 4, DEC-140).
 
 Two real/fake boundaries, matching this project's own established
-pattern (`test_negotiation_gemini_calls.py`, `test_google_token_
+pattern (`test_negotiation_groq_calls.py`, `test_google_token_
 refresh.py`):
 - Most tests below inject a fake, LABEL-AWARE Gmail HTTP client
   directly into `scan_one_user_email()` (a real, already-available

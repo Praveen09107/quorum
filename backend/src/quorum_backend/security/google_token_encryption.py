@@ -30,8 +30,8 @@ def encrypt_token(raw_token: str, *, encryption_key: str) -> str:
     KEY` value -- callers resolve it from `core/config.py::Settings`
     once, at the call site, and pass it explicitly here, the same
     resolve-in-the-route-then-pass-down convention every other real
-    credential in this backend already follows (`settings.gemini_api_key`
-    passed into `make_gemini_position_call`, not read from inside that
+    credential in this backend already follows (`settings.groq_api_key`
+    passed into `make_groq_position_call`, not read from inside that
     factory)."""
     fernet = Fernet(encryption_key.encode())
     return fernet.encrypt(raw_token.encode()).decode()

@@ -52,11 +52,25 @@ proposal is always `CREATE_TASK` (`existing_task_id=None`), never
 `UPDATE_TASK`, for the identical real reason: a negotiation option's text
 never names a real, existing task's UUID for this module to reference.
 
-REAL MODEL, REUSED, NOT REDISCOVERED: `gemini-3.6-flash`, the same real,
-already-live-confirmed model `negotiation/gemini_calls.py` (`DEC-121`)
-and `gate/llm_calls.py` (`DEC-125`) already use for Gemini calls in this
-backend -- no separate live discovery needed for a third use of a model
-this backend has already twice confirmed live.
+REAL, DISCLOSED MIGRATION FROM GEMINI TO GROQ, `DEC-166`: this module
+originally called `gemini-3.6-flash` (the same real, already-live-
+confirmed model `negotiation/gemini_calls.py`, `DEC-121`, and `gate/
+llm_calls.py`, `DEC-125`, already used) -- moved to Groq's `openai/
+gpt-oss-120b` (the same real, already-live-confirmed model `gate/
+llm_calls.py::GROQ_CRITIC_MODEL` uses) as part of `QUORUM_FINAL_
+COMPLETION_PLAN.md` Session 1's real AI-provider rebalancing: every real
+`generateContent` call site except the Judge (`gate/llm_calls.py::
+make_gemini_judge_call`, deliberately kept on Gemini -- CLAUDE.md's own
+"must never be violated" Critic/Judge provider-diversity rule) moves off
+Gemini's shared, hard 20-request/day free-tier quota onto Groq's own,
+meaningfully higher real headroom. A REAL, LIVE-VERIFIED SCHEMA-SHAPE
+DIFFERENCE, confirmed directly rather than assumed to generalize:
+Gemini's `responseSchema` uses uppercase JSON-schema type strings
+(`"OBJECT"`, `"STRING"`); Groq's `json_schema` requires standard
+lowercase types plus a `{"name", "schema"}` wrapper with
+`"additionalProperties": false` -- all three real per-domain schemas
+below were rewritten to that shape, never copy-pasted from the Gemini
+version.
 """
 from __future__ import annotations
 
@@ -66,12 +80,11 @@ from typing import Awaitable, Callable
 
 import httpx
 
-from quorum_backend.core.gemini_quota import GeminiQuotaExhaustedError, reserve_gemini_quota_slot
-
 DownstreamTranslationCall = Callable[[str, str], Awaitable[dict]]
 
-GEMINI_TRANSLATION_MODEL = "gemini-3.6-flash"
-_TRANSLATION_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_TRANSLATION_MODEL}:generateContent"
+GROQ_TRANSLATION_MODEL = "openai/gpt-oss-120b"
+_GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
+_GROQ_MAX_COMPLETION_TOKENS = 2048
 
 
 class DownstreamTranslationError(Exception):
@@ -83,34 +96,46 @@ class DownstreamTranslationError(Exception):
 
 
 _FINANCE_SCHEMA = {
-    "type": "OBJECT",
-    "properties": {
-        "action": {"type": "STRING", "enum": ["log_expense", "update_budget"]},
-        "amount": {"type": "NUMBER"},
-        "category": {"type": "STRING"},
-        "payee": {"type": "STRING", "nullable": True},
+    "name": "finance_translation",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["log_expense", "update_budget"]},
+            "amount": {"type": "number"},
+            "category": {"type": "string"},
+            "payee": {"type": ["string", "null"]},
+        },
+        "required": ["action", "amount", "category", "payee"],
+        "additionalProperties": False,
     },
-    "required": ["action", "amount", "category", "payee"],
 }
 
 _TASKS_SCHEMA = {
-    "type": "OBJECT",
-    "properties": {
-        "title": {"type": "STRING"},
-        "estimated_hours": {"type": "NUMBER"},
-        "deadline_iso": {"type": "STRING", "nullable": True},
+    "name": "tasks_translation",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "estimated_hours": {"type": "number"},
+            "deadline_iso": {"type": ["string", "null"]},
+        },
+        "required": ["title", "estimated_hours", "deadline_iso"],
+        "additionalProperties": False,
     },
-    "required": ["title", "estimated_hours", "deadline_iso"],
 }
 
 _CALENDAR_SCHEMA = {
-    "type": "OBJECT",
-    "properties": {
-        "title": {"type": "STRING"},
-        "start_iso": {"type": "STRING"},
-        "end_iso": {"type": "STRING"},
+    "name": "calendar_translation",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "start_iso": {"type": "string"},
+            "end_iso": {"type": "string"},
+        },
+        "required": ["title", "start_iso", "end_iso"],
+        "additionalProperties": False,
     },
-    "required": ["title", "start_iso", "end_iso"],
 }
 
 _SCHEMAS_BY_DOMAIN = {"finance": _FINANCE_SCHEMA, "tasks": _TASKS_SCHEMA, "calendar": _CALENDAR_SCHEMA}
@@ -163,53 +188,46 @@ def build_translation_prompt(domain: str, description: str) -> str:
     raise DownstreamTranslationError(f"No real translation prompt for domain {domain!r}")
 
 
-async def _call_gemini_json(prompt: str, *, response_schema: dict, api_key: str, max_retries: int = 2) -> dict:
-    """Real, live call to Gemini's `generateContent`, structured JSON
-    output, real retry on transient failure -- the same, now three-times-
-    repeated local-helper pattern `negotiation/gemini_calls.py` and
-    `gate/llm_calls.py` each already use for their own genuinely separate
-    call sites, not forced into one shared abstraction across modules
-    with different real callers and different real schemas.
-
-    **Real, shared quota reservation, `DEC-165`:** a real slot against
-    this backend's own shared daily `generateContent` budget for
-    `GEMINI_TRANSLATION_MODEL` is reserved BEFORE EACH real network
-    attempt below, inside the retry loop itself, not once above it --
-    Google counts every real attempt, not just the final one; see
-    `core/gemini_quota.py`'s own top-of-file docstring for the full
-    real reasoning."""
+async def _call_groq_json(prompt: str, *, response_schema: dict, api_key: str, max_retries: int = 2) -> dict:
+    """Real, live call to Groq's OpenAI-compatible `chat/completions`,
+    strict `json_schema` structured output, real retry on transient
+    failure -- the same, now several-times-repeated local-helper pattern
+    `negotiation/groq_calls.py` and `gate/llm_calls.py` each already use
+    for their own genuinely separate call sites, not forced into one
+    shared abstraction across modules with different real callers and
+    different real schemas. `response_schema` is the full real Groq
+    `json_schema` wrapper (`{"name": ..., "schema": {...}}`), matching
+    exactly what `response_format.json_schema` needs."""
     last_error: Exception | None = None
     body = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": response_schema,
-        },
+        "model": GROQ_TRANSLATION_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "response_format": {"type": "json_schema", "json_schema": response_schema},
+        "max_completion_tokens": _GROQ_MAX_COMPLETION_TOKENS,
     }
     for _attempt in range(max_retries):
         try:
-            await reserve_gemini_quota_slot(model=GEMINI_TRANSLATION_MODEL)
-        except GeminiQuotaExhaustedError as exc:
-            raise DownstreamTranslationError(str(exc)) from exc
-        try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(_TRANSLATION_URL, headers={"x-goog-api-key": api_key}, json=body)
+                response = await client.post(_GROQ_CHAT_URL, headers={"Authorization": f"Bearer {api_key}"}, json=body)
             if response.status_code != 200:
                 last_error = DownstreamTranslationError(
-                    f"Gemini generateContent returned {response.status_code}: {response.text[:500]}"
+                    f"Groq chat/completions returned {response.status_code}: {response.text[:500]}"
                 )
                 continue
             data = response.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            text = data["choices"][0]["message"]["content"]
+            if not text:
+                last_error = DownstreamTranslationError("Groq returned an empty message.content (reasoning-token budget likely exhausted)")
+                continue
             return json.loads(text)
         except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
             last_error = exc
     raise DownstreamTranslationError(
-        f"Gemini downstream-translation call failed after {max_retries} attempts: {last_error}"
+        f"Groq downstream-translation call failed after {max_retries} attempts: {last_error}"
     ) from last_error
 
 
-def make_gemini_downstream_translation_call(*, api_key: str) -> DownstreamTranslationCall:
+def make_groq_downstream_translation_call(*, api_key: str) -> DownstreamTranslationCall:
     """Real factory. The returned callable's real signature,
     `(domain, description) -> dict`, matches exactly what `features/
     retry_queue_drainer.py` needs to call per domain in a chosen option's
@@ -224,6 +242,6 @@ def make_gemini_downstream_translation_call(*, api_key: str) -> DownstreamTransl
                 "Position.domain's own schema constraint."
             )
         prompt = build_translation_prompt(domain, description)
-        return await _call_gemini_json(prompt, response_schema=schema, api_key=api_key)
+        return await _call_groq_json(prompt, response_schema=schema, api_key=api_key)
 
     return translation_call

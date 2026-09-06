@@ -59,7 +59,7 @@ from quorum_backend.core.config import get_settings
 from quorum_backend.core.embeddings import EmbeddingError
 from quorum_backend.features.career_digest import (
     fetch_company_digest,
-    make_gemini_compile_digest_call,
+    make_groq_compile_digest_call,
     run_career_digest,
 )
 from quorum_backend.features.briefing import run_briefing
@@ -95,11 +95,11 @@ from quorum_backend.features.today import (
 from quorum_backend.features.quick_capture import (
     QuickCaptureError,
     capture_task_from_extracted_args,
-    make_gemini_task_extraction_call,
+    make_groq_task_extraction_call,
 )
 from quorum_backend.features.trust_digest import fetch_trust_digest
 from quorum_backend.gate.llm_calls import make_gemini_judge_call, make_groq_critic_call
-from quorum_backend.negotiation.downstream_translation import make_gemini_downstream_translation_call
+from quorum_backend.negotiation.downstream_translation import make_groq_downstream_translation_call
 from quorum_backend.security.account_deletion import delete_account
 from quorum_backend.security.supabase_deletion_store import SupabaseDeletionStore
 
@@ -401,12 +401,13 @@ async def quick_capture_endpoint(
     scoped from this route's first line. See `features/quick_capture.py`
     for the full account of this session's own real scope decisions.
 
-    A real, honest `503` if the extraction provider isn't configured
-    (matching `GET /search`'s own established convention for the
-    identical real reason -- no `GEMINI_API_KEY` in this environment).
-    A real, honest `502` if a live extraction call itself fails after
-    retries, or if its output genuinely can't be turned into a real
-    task -- never a fabricated task standing in for a genuine failure.
+    A real, honest `503` if the extraction provider (`GROQ_API_KEY`,
+    `DEC-166`) or the Judge provider (`GEMINI_API_KEY`) isn't configured
+    -- matching `GET /search`'s own established convention for the
+    identical real reason. A real, honest `502` if a live extraction call
+    itself fails after retries, or if its output genuinely can't be
+    turned into a real task -- never a fabricated task standing in for a
+    genuine failure.
 
     RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-153`
     M2): the real Gemini extraction call happens BEFORE `pool.acquire()`
@@ -417,11 +418,13 @@ async def quick_capture_endpoint(
     quick_capture.py::capture_task_from_text()`'s own docstring for the
     full account."""
     settings = get_settings()
-    if settings.gemini_api_key is None:
+    if settings.groq_api_key is None:
         raise HTTPException(status_code=503, detail="Quick capture is not currently available -- the extraction provider isn't configured.")
+    if settings.gemini_api_key is None:
+        raise HTTPException(status_code=503, detail="Quick capture is not currently available -- the Judge provider isn't configured.")
     internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
 
-    extraction_call = make_gemini_task_extraction_call(api_key=settings.gemini_api_key)
+    extraction_call = make_groq_task_extraction_call(api_key=settings.groq_api_key)
     critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
     judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
 
@@ -1171,7 +1174,7 @@ async def drain_retry_queue_route(
     this deployment actually runs.
     """
     settings = get_settings()
-    translation_call = make_gemini_downstream_translation_call(api_key=settings.gemini_api_key)
+    translation_call = make_groq_downstream_translation_call(api_key=settings.groq_api_key)
     critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
     judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
 
@@ -1272,26 +1275,30 @@ async def backfill_negotiation_detail_route(
     something generates real detail for them. Iterates a real, small
     batch of bare, autonomously-created negotiations via `features/
     negotiation_detail_backfill.py::run_negotiation_detail_backfill` --
-    real Gemini-backed positions and synthesized options, real code-
-    computed impact deltas, nothing fabricated anywhere in the chain. A
-    real, honest `503` if the Gemini provider isn't configured, matching
-    `GET /search`'s own established pattern for the same real dependency.
+    real Groq-backed positions and synthesized options (`DEC-166`; real
+    Gemini-backed originally, `DEC-134`), real code-computed impact
+    deltas, nothing fabricated anywhere in the chain. A real, honest
+    `503` if the Groq provider isn't configured, matching `GET /search`'s
+    own established pattern for the same real dependency.
 
     **REAL, LIVE, ON A REAL SCHEDULE as of `DEC-134`:** called unattended
     every 30 real minutes (`cron.job` jobname `'backfill-negotiation-
     detail'`), a small, deliberately-bounded batch per real invocation
-    (`negotiation_detail_backfill.py::DEFAULT_BATCH_SIZE`) to bound real,
-    fluctuating Gemini free-tier quota risk (`STATUS_INDEX.md` item #21)
-    -- the same real concern that kept detail generation out of `deadline
-    -watch.py`/`spend_alert.py` themselves in the first place.
+    (`negotiation_detail_backfill.py::DEFAULT_BATCH_SIZE`) -- originally
+    bounding real, fluctuating Gemini free-tier quota risk (`STATUS_
+    INDEX.md` item #21), the same real concern that kept detail
+    generation out of `deadline-watch.py`/`spend_alert.py` themselves in
+    the first place; retained as a conservative default after `DEC-166`'s
+    real migration to Groq, whose own real headroom is meaningfully
+    higher, per that module's own top-of-file docstring.
     """
     settings = get_settings()
-    if settings.gemini_api_key is None:
+    if settings.groq_api_key is None:
         raise HTTPException(
             status_code=503,
-            detail="Negotiation-detail backfill is not currently available -- the Gemini provider isn't configured.",
+            detail="Negotiation-detail backfill is not currently available -- the Groq provider isn't configured.",
         )
-    result = await run_negotiation_detail_backfill(pool, api_key=settings.gemini_api_key)
+    result = await run_negotiation_detail_backfill(pool, api_key=settings.groq_api_key)
     return {
         "negotiations_scanned": result.negotiations_scanned,
         "negotiations_failed": result.negotiations_failed,
@@ -1380,12 +1387,12 @@ async def career_digest_route(
     `backend/scripts/enable_career_digest_cron.sql`'s own top comment
     for the real, disclosed reason and what's needed before it is."""
     settings = get_settings()
-    if settings.tavily_api_key is None or settings.gemini_api_key is None:
+    if settings.tavily_api_key is None or settings.groq_api_key is None:
         raise HTTPException(
             status_code=503,
-            detail="Career digest compilation is not currently available -- the Tavily or Gemini provider isn't configured.",
+            detail="Career digest compilation is not currently available -- the Tavily or Groq provider isn't configured.",
         )
-    compile_digest_call = make_gemini_compile_digest_call(api_key=settings.gemini_api_key)
+    compile_digest_call = make_groq_compile_digest_call(api_key=settings.groq_api_key)
     result = await run_career_digest(
         pool, tavily_api_key=settings.tavily_api_key, compile_digest_call=compile_digest_call
     )

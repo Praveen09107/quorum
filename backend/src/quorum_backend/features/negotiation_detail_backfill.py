@@ -1,4 +1,4 @@
-"""Real, live, Gemini-backed detail generation for the BARE negotiations
+"""Real, live, Groq-backed detail generation for the BARE negotiations
 `deadline_watch.py` (`DEC-132`) and `spend_alert.py` (`DEC-133`) create --
 closes the real, disclosed gap both those modules' own top-of-file
 docstrings name as a genuine, separate, still-open item: a bare
@@ -72,12 +72,32 @@ holds impact deltas to (`ImpactDelta` values are always code-computed,
 `gate/schemas.py`'s own real contract), just generalized to any real
 domain-driven option instead of one hand-written demo scenario.
 
-REAL, QUOTA-CONSCIOUS BATCHING: up to 3 real Gemini calls per negotiation
+REAL, DISCLOSED MIGRATION FROM GEMINI TO GROQ, `DEC-166`: this module's
+own position/synthesis calls (`negotiation/groq_calls.py`, renamed from
+`gemini_calls.py`) moved off Gemini's shared, hard 20-request/day
+free-tier quota onto Groq, per `QUORUM_FINAL_COMPLETION_PLAN.md` Session
+1's real AI-provider rebalancing -- see that module's own top-of-file
+docstring for the full reasoning. Every "real Gemini call"/"Gemini round
+trip" reference in the historical review narrative below (the four-plus-
+two real, live-proven fixes this module's own `DEC-135` CRITICAL-tier
+review found) describes what was genuinely true AT THAT TIME, under
+Gemini -- left as accurate history, not rewritten to say Groq. The
+`DEFAULT_BATCH_SIZE = 1` and the offset-cron-schedule fix that same
+review produced are DELIBERATELY KEPT UNCHANGED under Groq: the real
+~28-second round trip that justified them was measured under Gemini and
+has not been separately re-measured against Groq, so this module treats
+that conservative bound as a safe carry-over, not a Groq-specific
+re-derivation -- re-measuring Groq's own real latency here is real,
+disclosed, deferred follow-on work, not silently assumed unnecessary.
+
+REAL, QUOTA-CONSCIOUS BATCHING: up to 3 real LLM calls per negotiation
 (one per conflicted domain for positions, one more for synthesis) --
 `DEFAULT_BATCH_SIZE` bounds how many real negotiations one real
-invocation will detail, the same disclosed, fluctuating free-tier quota
-concern (`STATUS_INDEX.md` item #21) `deadline_watch.py`/`spend_alert.py`
-both already cite as the reason THEY never generate detail inline.
+invocation will detail, originally the same disclosed, fluctuating
+Gemini free-tier quota concern (`STATUS_INDEX.md` item #21) `deadline_
+watch.py`/`spend_alert.py` both already cite as the reason THEY never
+generate detail inline -- retained under Groq as a real, conservative
+default even though Groq's own real headroom is meaningfully higher.
 
 REAL, ATOMIC IDEMPOTENCY UNDER CONCURRENCY: deliberately does NOT reuse
 `features/negotiation_detail.py::persist_negotiation_detail` for the
@@ -178,7 +198,8 @@ inside a real transaction, matching `deadline_watch.py`/`spend_alert.py`'s
 own established per-item transactional discipline (previously ran on a
 bare connection with no transaction -- low real impact, but a genuine
 inconsistency the review found). `negotiation/gemini_calls.py`'s own
-pre-existing retry loop (`DEC-121`) had no real backoff at all between
+(renamed `groq_calls.py`, `DEC-166`) pre-existing retry loop (`DEC-121`)
+had no real backoff at all between
 attempts -- harmless for a single, human-triggered call, but this PR is
 the first thing to call it on a real, autonomous, repeating schedule, so
 a rate-limit response with zero backoff doubles the real request rate
@@ -202,7 +223,7 @@ from quorum_backend.features.negotiation_trigger_support import (
     fetch_detected_subscriptions_via_conn,
 )
 from quorum_backend.gate.schemas import ImpactDelta, NegotiationOption, ResourceClaim
-from quorum_backend.negotiation.gemini_calls import make_gemini_position_call, make_gemini_synthesis_call
+from quorum_backend.negotiation.groq_calls import make_groq_position_call, make_groq_synthesis_call
 from quorum_backend.negotiation.impact_simulator import DomainSnapshot, OptionEffect
 from quorum_backend.negotiation.subgraph import NegotiationState, build_negotiation_graph
 from quorum_backend.negotiation.trigger import DomainState, scan_for_conflicts
@@ -524,7 +545,7 @@ async def generate_detail_for_one_negotiation(
     resource_claims, domain_states, context, monthly_budget_limit = state
     baseline = _build_baseline(resource_claims, domain_states, monthly_budget_limit=monthly_budget_limit)
 
-    # A real, cheap, zero-LLM-cost re-confirmation BEFORE any real Gemini
+    # A real, cheap, zero-LLM-cost re-confirmation BEFORE any real Groq
     # call -- lets this function bail out on a moot or duplicate real
     # negotiation without spending a single real network call, even
     # though `build_negotiation_graph`'s own scan node will redundantly
@@ -538,8 +559,8 @@ async def generate_detail_for_one_negotiation(
     ):
         return BackfillOutcome.SKIPPED_DUPLICATE_ACTIONABLE
 
-    position_call = make_gemini_position_call(context, api_key=api_key)
-    synthesis_call = make_gemini_synthesis_call(api_key=api_key)
+    position_call = make_groq_position_call(context, api_key=api_key)
+    synthesis_call = make_groq_synthesis_call(api_key=api_key)
     graph = build_negotiation_graph(position_call, synthesis_call, _generic_effect_extractor)
 
     initial_state: NegotiationState = {
