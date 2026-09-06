@@ -176,16 +176,6 @@ def make_gemini_compile_digest_call(*, api_key: str, max_retries: int = 2) -> Co
     which this module's caller reserves for "not compiled yet."""
 
     async def compile_digest_call(company: str, search_findings: list[str]) -> dict:
-        # Real, shared quota reservation, `DEC-165`: a real slot against
-        # this backend's own shared daily `generateContent` budget for
-        # `GEMINI_GENERATION_MODEL` is reserved BEFORE the real network
-        # call below is ever attempted -- see `core/gemini_quota.py`'s
-        # own top-of-file docstring for the full real reasoning.
-        try:
-            await reserve_gemini_quota_slot(model=GEMINI_GENERATION_MODEL)
-        except GeminiQuotaExhaustedError as exc:
-            raise GeminiSummarizationError(str(exc)) from exc
-
         if search_findings:
             findings_text = "\n".join(f"- {finding}" for finding in search_findings)
             prompt = (
@@ -209,6 +199,17 @@ def make_gemini_compile_digest_call(*, api_key: str, max_retries: int = 2) -> Co
         for attempt in range(max_retries):
             if attempt > 0:
                 await asyncio.sleep(attempt)
+            # Real, shared quota reservation, `DEC-165`: a real slot
+            # against this backend's own shared daily `generateContent`
+            # budget for `GEMINI_GENERATION_MODEL` is reserved BEFORE
+            # EACH real network attempt, inside the retry loop itself,
+            # not once above it -- Google counts every real attempt,
+            # not just the final one; see `core/gemini_quota.py`'s own
+            # top-of-file docstring for the full real reasoning.
+            try:
+                await reserve_gemini_quota_slot(model=GEMINI_GENERATION_MODEL)
+            except GeminiQuotaExhaustedError as exc:
+                raise GeminiSummarizationError(str(exc)) from exc
             try:
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.post(

@@ -238,14 +238,10 @@ async def _call_gemini_json(prompt: str, *, api_key: str, max_retries: int = 2, 
     session's own docstring logged as future scope (`DEC-153` M3, closed
     `DEC-165`): a real slot against this backend's own shared daily
     `generateContent` budget for `GEMINI_EXTRACTION_MODEL` is now
-    reserved BEFORE the real network call below is ever attempted -- see
-    `core/gemini_quota.py`'s own top-of-file docstring for the full real
-    reasoning."""
-    try:
-        await reserve_gemini_quota_slot(model=GEMINI_EXTRACTION_MODEL)
-    except GeminiQuotaExhaustedError as exc:
-        raise QuickCaptureError("The extraction service's shared real quota is exhausted for today -- please try again later.") from exc
-
+    reserved BEFORE EACH real network attempt below, inside the retry
+    loop itself, not once above it -- Google counts every real attempt,
+    not just the final one; see `core/gemini_quota.py`'s own
+    top-of-file docstring for the full real reasoning."""
     last_error: Exception | None = None
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -257,6 +253,10 @@ async def _call_gemini_json(prompt: str, *, api_key: str, max_retries: int = 2, 
     for attempt in range(max_retries):
         if attempt > 0:
             await asyncio.sleep(retry_delay_seconds)
+        try:
+            await reserve_gemini_quota_slot(model=GEMINI_EXTRACTION_MODEL)
+        except GeminiQuotaExhaustedError as exc:
+            raise QuickCaptureError("The extraction service's shared real quota is exhausted for today -- please try again later.") from exc
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(_EXTRACTION_URL, headers={"x-goog-api-key": api_key}, json=body)
