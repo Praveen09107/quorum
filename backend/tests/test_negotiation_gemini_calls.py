@@ -28,6 +28,20 @@ from quorum_backend.negotiation.trigger import DomainState
 _HAS_REAL_KEY = get_settings().gemini_api_key is not None
 
 
+async def _no_op_quota_reservation(**_kwargs) -> None:
+    """Real, shared no-op for the deterministic tests below -- `DEC-165`'s
+    new `reserve_gemini_quota_slot()` reserves a real, live slot against
+    this project's own real, shared, scarce Upstash Redis-backed quota
+    counter. `monkeypatch.setattr("quorum_backend.negotiation.gemini_
+    calls.httpx.AsyncClient", ...)` below patches the shared `httpx`
+    module's own class, so without this, every one of these mocked-
+    Gemini tests would also make a real, live Redis call and increment
+    the real, production `gemini-3.6-flash` counter on every run -- see
+    `test_gate_llm_calls.py`'s own identical fix for the full real
+    reasoning. The "Real, live tests" section below deliberately does
+    NOT use this."""
+
+
 # --- Error paths (deterministic, monkeypatched httpx client, no real network) ---
 
 
@@ -51,6 +65,7 @@ async def test_position_call_raises_gemini_generation_error_after_real_retries_e
             return _FakeResponse()
 
     monkeypatch.setattr("quorum_backend.negotiation.gemini_calls.httpx.AsyncClient", lambda **kwargs: _FakeClient())
+    monkeypatch.setattr("quorum_backend.negotiation.gemini_calls.reserve_gemini_quota_slot", _no_op_quota_reservation)
 
     position_call = make_gemini_position_call({"finance": "test context"}, api_key="fake-key-never-sent")
     with pytest.raises(GeminiGenerationError, match="after 2 attempts"):
@@ -77,6 +92,7 @@ async def test_position_call_raises_on_malformed_json_response(monkeypatch):
             return _FakeResponse()
 
     monkeypatch.setattr("quorum_backend.negotiation.gemini_calls.httpx.AsyncClient", lambda **kwargs: _FakeClient())
+    monkeypatch.setattr("quorum_backend.negotiation.gemini_calls.reserve_gemini_quota_slot", _no_op_quota_reservation)
 
     position_call = make_gemini_position_call({}, api_key="fake-key-never-sent")
     with pytest.raises(GeminiGenerationError):
@@ -131,6 +147,7 @@ async def test_synthesis_call_recovers_after_one_real_transient_failure(monkeypa
             return _FailResponse() if call_count == 1 else _OkResponse()
 
     monkeypatch.setattr("quorum_backend.negotiation.gemini_calls.httpx.AsyncClient", lambda **kwargs: _FakeClient())
+    monkeypatch.setattr("quorum_backend.negotiation.gemini_calls.reserve_gemini_quota_slot", _no_op_quota_reservation)
 
     synthesis_call = make_gemini_synthesis_call(api_key="fake-key-never-sent")
     options = await synthesis_call("a real prompt")
@@ -185,6 +202,7 @@ async def test_synthesis_call_slices_to_exactly_two_real_options_when_gemini_ret
             return _FakeResponse()
 
     monkeypatch.setattr("quorum_backend.negotiation.gemini_calls.httpx.AsyncClient", lambda **kwargs: _FakeClient())
+    monkeypatch.setattr("quorum_backend.negotiation.gemini_calls.reserve_gemini_quota_slot", _no_op_quota_reservation)
 
     synthesis_call = make_gemini_synthesis_call(api_key="fake-key-never-sent")
     options = await synthesis_call("a real prompt")
@@ -214,6 +232,7 @@ async def test_synthesis_call_raises_when_gemini_returns_fewer_than_two_real_opt
             return _FakeResponse()
 
     monkeypatch.setattr("quorum_backend.negotiation.gemini_calls.httpx.AsyncClient", lambda **kwargs: _FakeClient())
+    monkeypatch.setattr("quorum_backend.negotiation.gemini_calls.reserve_gemini_quota_slot", _no_op_quota_reservation)
 
     synthesis_call = make_gemini_synthesis_call(api_key="fake-key-never-sent")
     with pytest.raises(GeminiGenerationError, match="need at least 2"):

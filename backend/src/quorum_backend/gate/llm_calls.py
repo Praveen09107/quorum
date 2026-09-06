@@ -74,6 +74,7 @@ from typing import Awaitable, Callable
 import httpx
 from pydantic import ValidationError
 
+from quorum_backend.core.gemini_quota import GeminiQuotaExhaustedError, reserve_gemini_quota_slot
 from quorum_backend.gate.anonymization import randomize_objection_order
 from quorum_backend.gate.prompts import build_critic_prompt, build_judge_prompt
 from quorum_backend.gate.schemas import ActionProposal, Finding, GateVerdict, Objection
@@ -186,7 +187,15 @@ async def _call_gemini_json(*, prompt: str, api_key: str, max_retries: int = 2) 
     `negotiation/gemini_calls.py`'s own local helper of the same name and
     shape -- a small, local duplicate rather than a forced shared import,
     the same reasoning that module's own docstring already gives for not
-    collapsing genuinely separate call sites into one abstraction."""
+    collapsing genuinely separate call sites into one abstraction.
+
+    **Real, shared quota reservation, `DEC-165`:** a real slot against
+    this backend's own shared daily `generateContent` budget for
+    `GEMINI_JUDGE_MODEL` is reserved BEFORE EACH real network attempt
+    below, inside the retry loop itself, not once above it -- Google
+    counts every real attempt, not just the final one; see `core/
+    gemini_quota.py`'s own top-of-file docstring for the full real
+    reasoning."""
     last_error: Exception | None = None
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -196,6 +205,10 @@ async def _call_gemini_json(*, prompt: str, api_key: str, max_retries: int = 2) 
         },
     }
     for _attempt in range(max_retries):
+        try:
+            await reserve_gemini_quota_slot(model=GEMINI_JUDGE_MODEL)
+        except GeminiQuotaExhaustedError as exc:
+            raise GateLlmCallError(str(exc)) from exc
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(_GEMINI_GENERATE_URL, headers={"x-goog-api-key": api_key}, json=body)

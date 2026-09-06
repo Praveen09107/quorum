@@ -88,20 +88,23 @@ as unreviewed code, but it is a genuinely new real attack surface
 extraction-hallucinated implausible `estimated_hours`) worth a fresh,
 independent look specifically at THIS composition.
 
-A REAL, DISCLOSED OPEN ITEM, NOT SILENTLY IGNORED (CRITICAL-tier
-review, `DEC-153`, M3): there is no rate limiting anywhere in this
-backend, confirmed by direct search before this note was written --
-`POST /quick_capture` makes one real, billed Gemini call per real
-request, from a floating action button visible on every real tab, and
-shares its one real `GEMINI_API_KEY` with `/search`, the Gate's own
-Judge, negotiation translation/backfill, and Career Digest. Live-
-confirmed during this session's own review: the real, shared free-tier
-quota (a real, hard cap of 20 requests/day on this project's own key)
-was genuinely exhausted, causing real, unrelated tests elsewhere in
-this suite to fail as pure collateral. Building real rate limiting is
-genuinely new infrastructure this session was not asked to build
-(`CLAUDE.md` Rule 3) -- logged here as a real, disclosed, future-
-session open item rather than silently worked around or ignored.
+**RESOLVED, `DEC-165`** (originally a real, disclosed open item, CRITICAL-
+tier review, `DEC-153`, M3): there was no rate limiting anywhere in this
+backend, confirmed by direct search at the time -- `POST /quick_capture`
+makes one real, billed Gemini call per real request, from a floating
+action button visible on every real tab, and shares its one real
+`GEMINI_API_KEY` with `/search`, the Gate's own Judge, negotiation
+translation/backfill, and Career Digest. Live-confirmed during `DEC-153`'s
+own review, and again independently during a later real, unrelated
+on-device session: the real, shared free-tier quota (a real, hard cap of
+20 requests/day on this project's own key, for `gemini-3.6-flash`
+specifically) was genuinely exhausted, causing real, unrelated work
+elsewhere to fail as pure collateral both times. `core/gemini_quota.py`
+(new, `DEC-165`) now reserves a real, shared, atomic slot against this
+same real daily budget before every one of this backend's six real
+`generateContent` call sites (this one included) ever attempts its own
+real network call -- see that module's own top-of-file docstring for the
+full real design and reasoning.
 """
 from __future__ import annotations
 
@@ -115,6 +118,7 @@ from typing import Awaitable, Callable
 import asyncpg
 import httpx
 
+from quorum_backend.core.gemini_quota import GeminiQuotaExhaustedError, reserve_gemini_quota_slot
 from quorum_backend.features.retry_queue_drainer import (
     DownstreamTranslationError,
     build_stage_a_checks_for_domain,
@@ -228,7 +232,16 @@ async def _call_gemini_json(prompt: str, *, api_key: str, max_retries: int = 2, 
     response explicitly asks for a real backoff ("Please retry in
     31.6s"). A real, fixed `retry_delay_seconds` between attempts is a
     small, honest improvement -- not a full exponential-backoff
-    implementation, which would be real, disclosed, separate scope."""
+    implementation, which would be real, disclosed, separate scope.
+
+    RESOLVED, the real, disclosed CRITICAL-tier review MEDIUM this same
+    session's own docstring logged as future scope (`DEC-153` M3, closed
+    `DEC-165`): a real slot against this backend's own shared daily
+    `generateContent` budget for `GEMINI_EXTRACTION_MODEL` is now
+    reserved BEFORE EACH real network attempt below, inside the retry
+    loop itself, not once above it -- Google counts every real attempt,
+    not just the final one; see `core/gemini_quota.py`'s own
+    top-of-file docstring for the full real reasoning."""
     last_error: Exception | None = None
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -240,6 +253,10 @@ async def _call_gemini_json(prompt: str, *, api_key: str, max_retries: int = 2, 
     for attempt in range(max_retries):
         if attempt > 0:
             await asyncio.sleep(retry_delay_seconds)
+        try:
+            await reserve_gemini_quota_slot(model=GEMINI_EXTRACTION_MODEL)
+        except GeminiQuotaExhaustedError as exc:
+            raise QuickCaptureError("The extraction service's shared real quota is exhausted for today -- please try again later.") from exc
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(_EXTRACTION_URL, headers={"x-goog-api-key": api_key}, json=body)

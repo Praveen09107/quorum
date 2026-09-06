@@ -476,10 +476,36 @@ class _FakeGeminiClient:
         )
 
 
+async def _no_op_quota_reservation(**_kwargs) -> None:
+    """Real, shared no-op for the deterministic test below -- `DEC-165`'s
+    new `reserve_gemini_quota_slot()` reserves a real, live slot against
+    this project's own real, shared, scarce Upstash Redis-backed quota
+    counter. `monkeypatch.setattr("quorum_backend.negotiation.gemini_
+    calls.httpx.AsyncClient", ...)` below patches the shared `httpx`
+    module's own class, so without this, this mocked-Gemini test would
+    also make a real, live Redis call and increment the real,
+    production `gemini-3.6-flash` counter on every run -- see
+    `test_gate_llm_calls.py`'s own identical fix for the full real
+    reasoning. **A real, live-caught gap this exact fix closes,
+    found by `DEC-165`'s own CRITICAL-tier review:** before this fix,
+    the guard's own real Redis call inside this test's mocked
+    `_FakeGeminiClient.post()` raised a real `KeyError('json')` (the
+    fake client's own `post()` doesn't accept a `json=` kwarg shaped
+    for a Redis command), which an earlier, overly broad `except
+    Exception` in the guard silently swallowed as if it were a real
+    Upstash outage -- this test passed throughout, but the guard was
+    never actually exercised even once. The guard's own `except` is
+    now narrowed to real, anticipated failure classes only; this
+    explicit no-op is what correctly keeps this test from touching the
+    real guard at all, rather than relying on an accidental exception
+    match to skip it."""
+
+
 async def test_generate_detail_for_one_negotiation_a_real_genuine_conflict_produces_real_detailed_output(pool, user_id, monkeypatch):
     monkeypatch.setattr(
         "quorum_backend.negotiation.gemini_calls.httpx.AsyncClient", lambda **kwargs: _FakeGeminiClient()
     )
+    monkeypatch.setattr("quorum_backend.negotiation.gemini_calls.reserve_gemini_quota_slot", _no_op_quota_reservation)
     negotiation_id = await _seed_bare_negotiation(pool, user_id=user_id, trigger_source="deadline_watch")
     await _seed_task(pool, user_id=user_id, hours=12.0, deadline_offset_days=1)
     await _seed_expense(pool, user_id=user_id, payee="real test payee", amount=30000.0, occurred_days_ago=0)
