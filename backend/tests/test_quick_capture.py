@@ -20,6 +20,7 @@ from quorum_backend.features.quick_capture import (
     capture_action_from_text,
     make_gemini_quick_capture_extraction_call,
 )
+from quorum_backend.gate.schemas import GateVerdict
 
 _HAS_REAL_KEY = get_settings().gemini_api_key is not None
 
@@ -265,35 +266,89 @@ async def test_capture_action_from_text_raises_quick_capture_error_on_a_non_posi
                 )
 
 
-async def test_capture_action_from_text_a_genuine_update_budget_invokes_real_stage_b_and_updates_the_real_ceiling(pool, user_id):
-    """THE real, load-bearing proof this session's own top-of-file
-    docstring correction depends on: `UPDATE_BUDGET` is real `Stakes.
-    S2`, so `gate.orchestration.review()` genuinely runs Stage B for it
-    -- proven here with REAL, LIVE `critic_call`/`judge_call`
-    (`gate/llm_calls.py`'s own real Groq/Gemini factories), never fakes,
-    since the entire point is confirming the real Critic (Groq) and this
-    module's own real Gemini extraction call are genuinely different
-    models/providers, not just asserting Stage B ran. Skipped without
-    both real keys configured, matching this backend's own established
-    convention for a real, live, multi-provider capstone."""
-    if not _HAS_REAL_KEY or get_settings().groq_api_key is None:
-        pytest.skip("no real GEMINI_API_KEY/GROQ_API_KEY configured in this environment")
+async def test_capture_action_from_text_a_genuine_update_budget_invokes_the_real_judge_and_never_the_critic(pool, user_id):
+    """THE real, load-bearing structural proof this session's own
+    correction depends on: `UPDATE_BUDGET` is real `Stakes.S2`, so
+    `gate.orchestration.review()` genuinely reaches Stage B for it --
+    proven here with a real, counting fake `judge_call` (asserting it
+    was invoked exactly once) and the SAME real `_unreachable_critic_
+    call` this file's own `S1` tests already use.
 
-    from quorum_backend.gate.llm_calls import make_gemini_judge_call, make_groq_critic_call
+    RESOLVED, a real, disclosed CRITICAL-tier review HIGH, found before
+    merge: an earlier version of this test used REAL, LIVE Groq/Gemini
+    factories for both `critic_call`/`judge_call`, with a docstring
+    claiming the point was "confirming the real Critic (Groq) and this
+    module's own real Gemini extraction call are genuinely different
+    models/providers" -- FACTUALLY WRONG. Confirmed directly against
+    `gate/orchestration.py::run_stage_b()`: `critic_call` is only ever
+    awaited for real `Stakes.S3`, never `S2` -- the real Groq Critic
+    this test passed in was never actually invoked, so the test proved
+    nothing about it, and its own docstring's claimed reasoning
+    described a code path that doesn't exist. This version proves the
+    real, TRUE structural property directly: the real Judge runs
+    exactly once for a genuine `S2` request, and the real Critic
+    genuinely never runs for it at all -- the same proof this file's
+    own `test_capture_action_from_text_never_invokes_critic_or_judge_
+    for_log_expense` already gives for `S1`, extended to cover the one
+    real case where Stage B genuinely does run."""
+    judge_calls: list[dict] = []
+
+    async def _counting_judge_call(proposal, findings, objections):
+        judge_calls.append({"proposal": proposal, "findings": findings, "objections": objections})
+        return GateVerdict(
+            decision="approve", findings=findings, objections=objections,
+            trace_id=str(proposal.proposal_id), revision_count=0,
+        )
 
     extraction = _fake_extraction({"domain": "finance", "action": "update_budget", "amount": 60_000.0, "category": "monthly budget", "payee": None})
-    critic_call = make_groq_critic_call(api_key=get_settings().groq_api_key)
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await capture_action_from_text(
+                conn, user_id=user_id, free_text="raise my monthly budget to 60000",
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_counting_judge_call,
+            )
+
+    assert result.stakes == "S2"
+    assert len(judge_calls) == 1  # would have raised AssertionError above if the Critic ran instead/also
+    assert judge_calls[0]["objections"] == []  # no Critic ever ran, so there are genuinely no real objections to pass the Judge
+    assert result.executed is True
+    assert result.decision == "approve"
+    assert result.finance_action == "update_budget"
+
+    row = await pool.fetchrow("SELECT monthly_budget_limit FROM users WHERE user_id = $1", uuid.UUID(user_id))
+    assert float(row["monthly_budget_limit"]) == 60_000.0
+
+
+async def test_capture_action_from_text_a_real_live_update_budget_reaches_the_real_gemini_judge_and_never_the_critic(pool, user_id):
+    """The real, live sibling to the structural test above -- proves the
+    same real property (`S2` reaches the real Judge, never the Critic)
+    against a genuinely live `gate/llm_calls.py::make_gemini_judge_call`,
+    not a fake. `_unreachable_critic_call` is passed here too: if this
+    session's own corrected understanding of `run_stage_b()` were ever
+    wrong, this would be the test to catch it live. Accepts a real,
+    live `escalate_to_human` outcome too (a legal real Judge decision
+    for `S2`, per `gate/llm_calls.py`'s own real response schema) --
+    the prior version of this test only accepted `approve`/`reject`/
+    `revise`, which would have made a genuine, honest escalation look
+    like a test failure rather than a correct real Gate outcome."""
+    if not _HAS_REAL_KEY:
+        pytest.skip("no real GEMINI_API_KEY configured in this environment")
+
+    from quorum_backend.gate.llm_calls import make_gemini_judge_call
+
+    extraction = _fake_extraction({"domain": "finance", "action": "update_budget", "amount": 60_000.0, "category": "monthly budget", "payee": None})
     judge_call = make_gemini_judge_call(api_key=get_settings().gemini_api_key)
 
     async with pool.acquire() as conn:
         async with conn.transaction():
             result = await capture_action_from_text(
                 conn, user_id=user_id, free_text="raise my monthly budget to 60000",
-                extraction_call=extraction, critic_call=critic_call, judge_call=judge_call,
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=judge_call,
             )
 
     assert result.stakes == "S2"
-    assert result.decision in ("approve", "reject", "revise")  # a real, live Critic/Judge outcome -- never assumed in advance
+    assert result.decision in ("approve", "reject", "revise", "escalate_to_human")  # a real, live Judge outcome -- never assumed in advance
     if result.executed:
         assert result.finance_action == "update_budget"
         row = await pool.fetchrow("SELECT monthly_budget_limit FROM users WHERE user_id = $1", uuid.UUID(user_id))

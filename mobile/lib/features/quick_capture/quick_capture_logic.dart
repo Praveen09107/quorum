@@ -74,6 +74,21 @@ String describeQuickCaptureOutcome(QuickCaptureResultData result) {
     }
     return 'Created: ${result.title}';
   }
+  // RESOLVED, a real, disclosed CRITICAL-tier review LOW: `escalate_to_
+  // human` is genuinely reachable for a real `finance` result (`UPDATE_
+  // BUDGET` is real `Stakes.S2`, unlike `CREATE_TASK`/`LOG_EXPENSE`,
+  // both `S1` -- this is the one real case this switch's own comment
+  // below used to dismiss as unreachable). "create it" is real, honest
+  // wording for a `tasks` result but wrong for a budget change -- fixed
+  // with a domain-aware message. A real, disclosed, accepted limitation,
+  // not fixed here: no real "a human approved this escalated action"
+  // endpoint exists anywhere in this backend yet (`action_executor.py`'s
+  // own docstring says so explicitly) -- a genuinely escalated real
+  // `UPDATE_BUDGET` surfaces honestly on `/today`'s Needs You Now zone,
+  // but has no real in-app way to be approved from there today.
+  if (result.domain == 'finance' && result.decision == 'escalate_to_human') {
+    return 'This needs your direct approval before Quorum can change it.';
+  }
   return switch (result.decision) {
     'revise' => "Quorum couldn't create that as described -- see why below.",
     'escalate_to_human' => 'This needs your direct approval before Quorum can create it.',

@@ -100,6 +100,7 @@ from quorum_backend.features.quick_capture import (
 )
 from quorum_backend.features.trust_digest import fetch_trust_digest
 from quorum_backend.gate.llm_calls import make_gemini_judge_call, make_groq_critic_call
+from quorum_backend.gate.orchestration import InfrastructureFailure
 from quorum_backend.negotiation.downstream_translation import make_gemini_downstream_translation_call
 from quorum_backend.security.account_deletion import delete_account
 from quorum_backend.security.supabase_deletion_store import SupabaseDeletionStore
@@ -429,10 +430,38 @@ async def quick_capture_endpoint(
     plan text asked for a second, Groq-backed extraction call for
     Finance specifically, but `ActionType.UPDATE_BUDGET` is real
     `Stakes.S2` (unlike `CREATE_TASK`/`LOG_EXPENSE`, both `S1`), so
-    Stage B genuinely runs for it -- a Groq-backed Finance extraction
-    call would recreate the exact real Generator/Critic collision just
-    described, specifically for `UPDATE_BUDGET`. See `features/
-    quick_capture.py`'s own top-of-file docstring for the full account.
+    Stage B genuinely runs for it. **Corrected by a CRITICAL-tier
+    review before merge:** the real reason a Groq-backed Finance
+    extraction call would be wrong is NOT that the real Groq Critic
+    would review its own draft -- `gate/orchestration.py::run_stage_b()`
+    only ever invokes `critic_call` for real `Stakes.S3`, never `S2`, so
+    the Critic genuinely never runs on this path. The real reason: a
+    Groq-backed extraction call would split the real Generator away from
+    the real Judge's own provider (both genuinely Gemini today), directly
+    violating `CLAUDE.md`'s "Generator/Judge, one same-provider group"
+    architecture fact -- independent of whether the Critic ever actually
+    runs for this stakes level. See `features/quick_capture.py`'s own
+    top-of-file docstring for the full, corrected account.
+
+    **A real, disclosed, accepted MEDIUM found by the same review, not
+    fixed in this session:** making `UPDATE_BUDGET` (real `S2`) reachable
+    from this route means a real request can now hold the pooled
+    Postgres transaction below open across Stage B's own real Judge
+    network call (up to ~120s worst case: 2 outer infrastructure retries
+    x 2 inner HTTP retries x a 30s timeout) -- the same class of
+    resource-exhaustion risk `DEC-153` M2 fixed for the extraction call
+    itself, now reintroduced one step later for this one real, rare
+    stakes level. Genuinely bounded by this service's own
+    `--concurrency=1 --max-instances=2` (at most 2 such connections can
+    ever be held at once), which is why this wasn't treated as blocking
+    -- but a real, tracked, disclosed open item for a future session
+    (splitting Stage A/B's own network calls from the final persist
+    step's transaction), not silently dropped. The same real request can
+    also draw up to 6 of the day's real, shared, hard 20-request Gemini
+    quota (`DEC-165`) in the worst case (2 extraction attempts + up to 4
+    Judge attempts) -- a real, disclosed operational cost of this one
+    stakes level being reachable from a synchronous, user-facing,
+    tappable surface.
 
     RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-153`
     M2): the real Gemini extraction call happens BEFORE `pool.acquire()`
@@ -464,6 +493,21 @@ async def quick_capture_endpoint(
                 )
     except QuickCaptureError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except InfrastructureFailure as exc:
+        # A real, disclosed CRITICAL-tier review HIGH, found before
+        # merge: making `UPDATE_BUDGET` (`Stakes.S2`) reachable here for
+        # the first time means `gate.orchestration.review()` can now
+        # genuinely raise `InfrastructureFailure` on this synchronous
+        # path -- a real Gate reviewer (the Judge) that stayed
+        # unreachable after every real retry (a timeout, a 429, a
+        # malformed structured response, or the Judge's own shared
+        # Gemini quota slot being exhausted, `DEC-165`). Previously
+        # structurally impossible here (`CREATE_TASK`/`LOG_EXPENSE` are
+        # both `Stakes.S1`, Stage B never ran), so this route never
+        # needed to catch it before. An honest `503` -- this is the
+        # Gate's own infrastructure being unavailable, never a fabricated
+        # verdict and never an anonymous `500`.
+        raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
     except asyncpg.PostgresError as exc:
         # RESOLVED, a real, disclosed CRITICAL-tier review HIGH (`DEC-153`
         # H1): real, defense-in-depth -- `validate_and_build_task_proposal

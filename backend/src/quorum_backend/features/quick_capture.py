@@ -115,26 +115,41 @@ before trusting that, rather than implemented as written (`CLAUDE.md`
 Rule 4). `ActionType.LOG_EXPENSE` is real `Stakes.S1` (Stage B skipped,
 same as `CREATE_TASK`), but `ActionType.UPDATE_BUDGET` is real
 `Stakes.S2` -- and `gate.orchestration.review()` genuinely runs Stage B
-for any `Stakes.S2`/`S3` proposal. A real "raise my monthly budget to
-60000" quick-capture request reaching `UPDATE_BUDGET` would therefore
-have the real Groq Critic (`gate/llm_calls.py::make_groq_critic_call`)
-reviewing a proposal drafted by a Groq extraction call two lines above
-it in the exact same request -- the identical real Generator/Critic
-provider collision `DEC-166` already found and fixed once for this same
-module's task-extraction call (that review's own finding: `CLAUDE.md`'s
-real rule protects "Generator/Judge" as one group against the Critic's
-own, genuinely different provider, not just "Critic != Judge" -- the
-plan's own Decision 3 text still carries that same incomplete
-restatement, which `DEC-166` explicitly flagged as needing a future
-correction, not fixed there to keep that entry's own diff scoped). This
-session is that correction, arriving naturally rather than reopened as
-its own doc-only pass: the new Finance extraction call below stays on
-Gemini, sharing the exact same real extraction call, prompt, and schema
-this module already uses for `tasks` -- a single, real, unified
-extraction call now classifies real free text into ONE of two real
-domains (never a second, parallel Groq-backed call site that would
-reintroduce the exact violation just described for `UPDATE_BUDGET`
-specifically).
+for any `Stakes.S2`/`S3` proposal.
+
+**REAL, DISCLOSED CORRECTION TO THIS MODULE'S OWN FIRST DRAFT OF THE
+REASONING ABOVE, FOUND BY A CRITICAL-TIER REVIEW (Opus) BEFORE MERGE:**
+an earlier version of this docstring claimed a Groq-backed Finance
+extraction call would put the real Groq Critic in the position of
+reviewing a proposal drafted by that same Groq extraction call --
+FACTUALLY WRONG, confirmed directly against `gate/orchestration.py::
+run_stage_b()`: `critic_call` is only ever awaited when `stakes ==
+Stakes.S3`; for `Stakes.S2` (which is what `UPDATE_BUDGET` actually is),
+ONLY `judge_call` runs, and the Critic is never invoked at all. No
+production path in this backend can currently even produce a real S3
+proposal (confirmed by direct search -- `retry_queue_drainer.py`
+hardcodes `has_external_invitee=False`, and nothing wires `email_agent
+.py` into the Gate), so the Groq Critic is reachable today only from
+`self_test_harness.py`'s own synthetic S3 scenario, never from this
+route. **The real, correct mechanism, and the actual reason this
+extraction call must stay on Gemini:** `CLAUDE.md`'s own "must never be
+violated" architecture fact groups Generator and Judge together as ONE
+real, same-provider unit, explicitly separate from the Critic's own,
+genuinely different provider -- not "Critic != Judge" as the plan's own
+Decision 3 text (incorrectly) restates it, per `DEC-166`'s own already-
+disclosed finding. `gate/llm_calls.py::make_gemini_judge_call()` uses
+`gemini-3.6-flash`; this module's own extraction call already uses the
+identical model. A Groq-backed Finance extraction call would split the
+Generator away from the Judge's own provider -- violating that real
+Generator/Judge grouping DIRECTLY, regardless of whether the Critic
+ever actually runs for this specific stakes level. This session is that
+correction, arriving naturally rather than reopened as its own doc-only
+pass: the new Finance extraction call below stays on Gemini, sharing
+the exact same real extraction call, prompt, and schema this module
+already uses for `tasks` -- a single, real, unified extraction call now
+classifies real free text into ONE of two real domains (never a second,
+parallel Groq-backed call site that would split Generator away from
+Judge's own provider for `UPDATE_BUDGET` specifically).
 
 REAL, MAXIMAL REUSE AGAIN, DELIBERATELY, MATCHING THIS MODULE'S OWN
 ALREADY-ESTABLISHED DISCIPLINE: `retry_queue_drainer.py::
@@ -181,13 +196,29 @@ GEMINI_EXTRACTION_MODEL = "gemini-3.6-flash"
 _EXTRACTION_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_EXTRACTION_MODEL}:generateContent"
 
 # A real, unified, multi-domain schema (`DEC-153` originally shipped a
-# tasks-only version of this) -- `domain` is the only field every real
-# response must carry; every other field is nullable, since exactly one
-# domain's own real fields are ever genuinely relevant per real request,
-# never both. `action`/`amount`/`category`/`payee` are the exact real
-# field names `retry_queue_drainer.py::validate_and_build_finance_
-# proposal()` already expects -- named to match that function directly,
-# not translated through a second, parallel naming scheme.
+# tasks-only version of this) -- every field is `nullable`, since exactly
+# one domain's own real fields are ever genuinely relevant per real
+# request, never both. `action`/`amount`/`category`/`payee` are the
+# exact real field names `retry_queue_drainer.py::validate_and_build_
+# finance_proposal()` already expects -- named to match that function
+# directly, not translated through a second, parallel naming scheme.
+#
+# RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM, found before
+# merge: EVERY real field is now listed in `required`, not just `domain`
+# -- Gemini's own `responseSchema` enforces `required` (a listed key
+# must be present) but does NOT guarantee an unlisted, merely-`nullable`
+# property is ever actually emitted. The original `tasks`-only schema
+# (`_TASK_EXTRACTION_SCHEMA`) required `title`/`estimated_hours`/
+# `deadline_iso` unconditionally; narrowing `required` to `["domain"]`
+# alone when this schema became multi-domain silently dropped that real
+# key-presence guarantee for the `tasks` path too -- a real extraction
+# that omitted `estimated_hours` entirely would have reached a real,
+# uncaught `KeyError` (`args["estimated_hours"]` in `validate_and_build_
+# task_proposal`) instead of the honest `QuickCaptureError` a genuinely
+# malformed extraction is supposed to raise. Every field being `required`
+# (while still `nullable`) forces the model to emit each key explicitly,
+# with a real `null` for whichever domain doesn't apply -- restoring the
+# original guarantee for both real domains at once, not just `tasks`.
 _QUICK_CAPTURE_EXTRACTION_SCHEMA = {
     "type": "OBJECT",
     "properties": {
@@ -200,7 +231,7 @@ _QUICK_CAPTURE_EXTRACTION_SCHEMA = {
         "category": {"type": "STRING", "nullable": True},
         "payee": {"type": "STRING", "nullable": True},
     },
-    "required": ["domain"],
+    "required": ["domain", "title", "estimated_hours", "deadline_iso", "action", "amount", "category", "payee"],
 }
 
 
@@ -431,7 +462,19 @@ async def capture_action_from_extracted_args(
     instruction, but never trusted blindly either -- the model's own
     output is never assumed well-formed) raises the same honest
     `QuickCaptureError` a malformed `tasks`/`finance` payload already
-    does, rather than silently defaulting to either domain."""
+    does, rather than silently defaulting to either domain.
+
+    RESOLVED, a real, disclosed CRITICAL-tier review LOW, found before
+    merge: `args` itself is never assumed to be a real dict -- a
+    genuinely malformed real extraction response (a bare JSON array or
+    scalar, which `_call_gemini_json()`'s own `json.loads()` would
+    return unguarded) previously reached a bare `args.get("domain")`
+    outside any `try`, raising an uncaught `AttributeError` rather than
+    this module's own honest `QuickCaptureError` -- the identical
+    failure mode this function's own domain-dispatch is supposed to
+    give every OTHER malformed-extraction case."""
+    if not isinstance(args, dict):
+        raise QuickCaptureError(f"Real extraction returned a non-object response: {args!r}")
     domain = args.get("domain")
     if domain == "tasks":
         try:
