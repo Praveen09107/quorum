@@ -143,6 +143,7 @@ Future<QuickCaptureResultData> _fakeCaptureTask(String text) async {
     executed: true,
     decision: 'approve',
     stakes: 'S1',
+    domain: 'tasks',
     title: 'A real, distinctive quick-captured task: $text',
     findings: const [],
   );

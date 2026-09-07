@@ -24,7 +24,7 @@ void main() {
         capturedAuth = request.headers['Authorization'];
         capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
         return http.Response(
-          jsonEncode({'executed': true, 'decision': 'approve', 'stakes': 'S1', 'title': 'A real task', 'findings': [], 'objections': []}),
+          jsonEncode({'executed': true, 'decision': 'approve', 'stakes': 'S1', 'domain': 'tasks', 'title': 'A real task', 'findings': [], 'objections': []}),
           200,
         );
       });
@@ -66,6 +66,7 @@ void main() {
             'executed': true,
             'decision': 'approve',
             'stakes': 'S1',
+            'domain': 'tasks',
             'title': 'A real, distinctive created task',
             'findings': [
               {'validator': 'provenance_check', 'claim': 'A real user request', 'evidence_state': 'verified_true'},
@@ -93,6 +94,7 @@ void main() {
             'executed': false,
             'decision': 'revise',
             'stakes': 'S1',
+            'domain': 'tasks',
             'title': null,
             'findings': [
               {'validator': 'deadline_conflict_check', 'claim': 'Not enough real capacity', 'evidence_state': 'verified_false'},
@@ -108,6 +110,36 @@ void main() {
 
       expect(result.executed, isFalse);
       expect(result.title, isNull);
+    });
+
+    test('parses a real, genuine finance approve (Session 4) into QuickCaptureResultData with real amount/category/financeAction', () async {
+      final client = MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'executed': true,
+            'decision': 'approve',
+            'stakes': 'S1',
+            'domain': 'finance',
+            'title': null,
+            'amount': 800.0,
+            'category': 'groceries',
+            'finance_action': 'log_expense',
+            'findings': [],
+            'objections': [],
+          }),
+          200,
+        );
+      });
+
+      final capture = createQuickCaptureFetcher(getAccessToken: () async => 'token', client: client);
+      final result = await capture('spent 800 on groceries');
+
+      expect(result.executed, isTrue);
+      expect(result.domain, 'finance');
+      expect(result.title, isNull);
+      expect(result.amount, 800.0);
+      expect(result.category, 'groceries');
+      expect(result.financeAction, 'log_expense');
     });
 
     test('a real 502 (genuine extraction failure) surfaces the real backend detail message', () async {

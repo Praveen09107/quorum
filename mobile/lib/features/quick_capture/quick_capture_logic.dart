@@ -5,26 +5,47 @@
 // exact same real Gate a "Needs you now" tap-through already shows a
 // user, so its own outcome deserves the same trusted rendering, not a
 // second, parallel finding-display concept.
+//
+// REAL, DISCLOSED SESSION-4 EXTENSION (`QUORUM_FINAL_COMPLETION_PLAN.md`):
+// this file's own real backend contract (`POST /quick_capture`) now
+// covers a second real domain, Finance -- `domain` is always present;
+// `amount`/`category`/`financeAction` are the real Finance-domain
+// equivalent of `title`, populated only when `domain == 'finance'` and
+// `executed == true`. `formatCurrency` is reused directly from
+// `finance_logic.dart` (not redefined) -- the same real `₹` display
+// convention the Finance/Subscriptions screens already use.
 
+import 'package:quorum_mobile/features/finance/finance_logic.dart' show formatCurrency;
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
 
 /// A real, honest summary of what genuinely happened to one real,
 /// freshly-typed piece of free text -- never collapsed into a bare
-/// boolean. `title` is only ever non-null when `executed` is `true`
-/// (matches the real backend's own `QuickCaptureResult.title` contract
-/// exactly: `None`/`null` whenever nothing was genuinely created).
+/// boolean. `title` is only ever non-null when `domain == 'tasks'` AND
+/// `executed` is `true` (matches the real backend's own `QuickCapture
+/// Result.title` contract exactly: `None`/`null` whenever nothing was
+/// genuinely created, or the domain isn't `tasks`). `amount`/`category`/
+/// `financeAction` are the real `finance`-domain equivalent, under the
+/// identical "only non-null on a genuine, matching-domain execute" rule.
 class QuickCaptureResultData {
   final bool executed;
   final String decision;
   final String stakes;
+  final String domain;
   final String? title;
+  final double? amount;
+  final String? category;
+  final String? financeAction;
   final List<FindingSummary> findings;
 
   const QuickCaptureResultData({
     required this.executed,
     required this.decision,
     required this.stakes,
+    required this.domain,
     required this.title,
+    this.amount,
+    this.category,
+    this.financeAction,
     required this.findings,
   });
 }
@@ -33,17 +54,45 @@ class QuickCaptureResultData {
 /// banner -- `decision` is read directly, never re-derived from
 /// `executed` alone, since `executed == false` genuinely means
 /// different things for `revise` (Stage A itself refused) vs.
-/// `escalate_to_human` (a real S2/S3 case this specific real path never
-/// actually produces for `CREATE_TASK`, included here only so this
-/// function stays honest if that ever changes upstream).
+/// `escalate_to_human` (a real case `LOG_EXPENSE`/`CREATE_TASK` never
+/// produce, S1 both, but `UPDATE_BUDGET` -- real `S2` -- genuinely can).
+///
+/// REAL, DISCLOSED SESSION-4 EXTENSION: the genuine-approve case now
+/// branches on `result.domain` -- a real `finance` result never had a
+/// real `title` to show (it's a `tasks`-only field), so this never
+/// falls through to a bare "Created: null".
 String describeQuickCaptureOutcome(QuickCaptureResultData result) {
   if (result.executed) {
+    if (result.domain == 'finance') {
+      final amount = result.amount;
+      final formattedAmount = amount == null ? 'an amount' : formatCurrency(amount);
+      return switch (result.financeAction) {
+        'log_expense' => 'Logged: $formattedAmount -- ${result.category ?? 'uncategorized'}',
+        'update_budget' => 'Budget updated to $formattedAmount',
+        _ => 'Recorded a real finance change.', // defensive -- never genuinely reached today
+      };
+    }
     return 'Created: ${result.title}';
   }
+  // RESOLVED, a real, disclosed CRITICAL-tier review LOW: `escalate_to_
+  // human` is genuinely reachable for a real `finance` result (`UPDATE_
+  // BUDGET` is real `Stakes.S2`, unlike `CREATE_TASK`/`LOG_EXPENSE`,
+  // both `S1` -- this is the one real case this switch's own comment
+  // below used to dismiss as unreachable). "create it" is real, honest
+  // wording for a `tasks` result but wrong for a budget change -- fixed
+  // with a domain-aware message. A real, disclosed, accepted limitation,
+  // not fixed here: no real "a human approved this escalated action"
+  // endpoint exists anywhere in this backend yet (`action_executor.py`'s
+  // own docstring says so explicitly) -- a genuinely escalated real
+  // `UPDATE_BUDGET` surfaces honestly on `/today`'s Needs You Now zone,
+  // but has no real in-app way to be approved from there today.
+  if (result.domain == 'finance' && result.decision == 'escalate_to_human') {
+    return 'This needs your direct approval before Quorum can change it.';
+  }
   return switch (result.decision) {
-    'revise' => "Quorum couldn't create that task as described -- see why below.",
+    'revise' => "Quorum couldn't create that as described -- see why below.",
     'escalate_to_human' => 'This needs your direct approval before Quorum can create it.',
-    'reject' => 'Quorum declined to create that task -- see why below.',
-    _ => 'That task was not created.',
+    'reject' => 'Quorum declined to create that -- see why below.',
+    _ => 'That was not created.',
   };
 }

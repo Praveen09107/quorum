@@ -95,11 +95,12 @@ from quorum_backend.features.today import (
 )
 from quorum_backend.features.quick_capture import (
     QuickCaptureError,
-    capture_task_from_extracted_args,
-    make_gemini_task_extraction_call,
+    capture_action_from_extracted_args,
+    make_gemini_quick_capture_extraction_call,
 )
 from quorum_backend.features.trust_digest import fetch_trust_digest
 from quorum_backend.gate.llm_calls import make_gemini_judge_call, make_groq_critic_call
+from quorum_backend.gate.orchestration import InfrastructureFailure
 from quorum_backend.negotiation.downstream_translation import make_gemini_downstream_translation_call
 from quorum_backend.security.account_deletion import delete_account
 from quorum_backend.security.supabase_deletion_store import SupabaseDeletionStore
@@ -395,33 +396,87 @@ async def quick_capture_endpoint(
     """Real, live -- Phase 7, `QUORUM_PRODUCTION_COMPLETION_PLAN.md`,
     `DEC-153`. The first real write path in this backend that isn't
     negotiation-choice or account deletion: a real user's own free
-    text, extracted into a real `CREATE_TASK` proposal, reviewed by the
-    real Gate, and -- for a genuine approve -- written as a real `tasks`
-    row, all synchronously in this one request (`CREATE_TASK` is real
-    `Stakes.S1`; Stage B never runs, so this stays fast). Real per-user
-    scoped from this route's first line. See `features/quick_capture.py`
-    for the full account of this session's own real scope decisions.
+    text, extracted into a real proposal, reviewed by the real Gate,
+    and -- for a genuine approve -- written as a real row. Real
+    per-user scoped from this route's first line. See `features/
+    quick_capture.py` for the full account of this session's own real
+    scope decisions.
 
     A real, honest `503` if the extraction provider isn't configured
     (matching `GET /search`'s own established convention for the
     identical real reason -- no `GEMINI_API_KEY` in this environment).
     A real, honest `502` if a live extraction call itself fails after
     retries, or if its output genuinely can't be turned into a real
-    task -- never a fabricated task standing in for a genuine failure.
+    action -- never a fabricated task/expense standing in for a
+    genuine failure.
 
     **REAL, DISCLOSED, `DEC-166`: this route's own extraction call stays
     on Gemini, deliberately NOT migrated to Groq alongside 3 of the 4
     other real call sites `QUORUM_FINAL_COMPLETION_PLAN.md` Session 1
     moved.** A first pass of that migration DID move this call to Groq;
-    a CRITICAL-tier cross-model review caught, before merge, that doing
-    so put the real Generator (this extraction call, which drafts the
-    proposal below) on the exact same model AND provider as the real
-    Critic (`make_groq_critic_call`) reviewing it two lines down --
-    `CLAUDE.md`'s own "must never be violated" architecture fact groups
-    "Generator/Judge" together against the Critic's own genuinely
-    different provider, not just "Critic ≠ Judge" as this plan's own
-    text had (incorrectly) restated it. Reverted here rather than
-    silently building around the corrected understanding.
+    a CRITICAL-tier cross-model review caught, before merge, that this
+    would violate `CLAUDE.md`'s own "must never be violated" architecture
+    fact, which groups the real Generator (this extraction call, which
+    drafts the proposal below) and the real Judge together as one
+    same-provider unit, against the Critic's own genuinely different
+    provider -- not just "Critic != Judge" as this plan's own text had
+    (incorrectly) restated it. Reverted here rather than silently
+    building around the corrected understanding.
+
+    **A REAL, DISCLOSED CORRECTION TO THIS PARAGRAPH ITSELF, FOUND BY A
+    FOLLOW-UP CRITICAL-TIER REVIEW (`QUORUM_FINAL_COMPLETION_PLAN.md`
+    Session 4, `DEC-170`):** an earlier version of this paragraph said
+    the real Critic would be "reviewing it two lines down" -- FACTUALLY
+    WRONG for this route specifically, the same mechanism error `DEC-170`
+    found and corrected for the Finance path below. `CREATE_TASK` is
+    real `Stakes.S1`; `gate.orchestration.review()` exits after Stage A
+    alone for `S0`/`S1` (confirmed directly against that function), so
+    Stage B -- and therefore the Critic -- never runs for THIS action
+    type either, exactly as this route's own earlier text already
+    correctly stated elsewhere ("Stage B never runs, so this stays
+    fast"). The real, correct reason this extraction call must stay on
+    Gemini is the Generator/Judge same-provider grouping fact stated
+    above -- true independent of whether the Critic (or even Stage B
+    itself) ever actually runs on this specific action type.
+
+    **REAL, DISCLOSED, `QUORUM_FINAL_COMPLETION_PLAN.md` SESSION 4: this
+    route now covers a second real domain (Finance), and the SAME
+    real Gemini extraction call above covers both** -- Session 4's own
+    plan text asked for a second, Groq-backed extraction call for
+    Finance specifically, but `ActionType.UPDATE_BUDGET` is real
+    `Stakes.S2` (unlike `CREATE_TASK`/`LOG_EXPENSE`, both `S1`), so
+    Stage B genuinely runs for it. **Corrected by a CRITICAL-tier
+    review before merge:** the real reason a Groq-backed Finance
+    extraction call would be wrong is NOT that the real Groq Critic
+    would review its own draft -- `gate/orchestration.py::run_stage_b()`
+    only ever invokes `critic_call` for real `Stakes.S3`, never `S2`, so
+    the Critic genuinely never runs on this path. The real reason: a
+    Groq-backed extraction call would split the real Generator away from
+    the real Judge's own provider (both genuinely Gemini today), directly
+    violating `CLAUDE.md`'s "Generator/Judge, one same-provider group"
+    architecture fact -- independent of whether the Critic ever actually
+    runs for this stakes level. See `features/quick_capture.py`'s own
+    top-of-file docstring for the full, corrected account.
+
+    **A real, disclosed, accepted MEDIUM found by the same review, not
+    fixed in this session:** making `UPDATE_BUDGET` (real `S2`) reachable
+    from this route means a real request can now hold the pooled
+    Postgres transaction below open across Stage B's own real Judge
+    network call (up to ~120s worst case: 2 outer infrastructure retries
+    x 2 inner HTTP retries x a 30s timeout) -- the same class of
+    resource-exhaustion risk `DEC-153` M2 fixed for the extraction call
+    itself, now reintroduced one step later for this one real, rare
+    stakes level. Genuinely bounded by this service's own
+    `--concurrency=1 --max-instances=2` (at most 2 such connections can
+    ever be held at once), which is why this wasn't treated as blocking
+    -- but a real, tracked, disclosed open item for a future session
+    (splitting Stage A/B's own network calls from the final persist
+    step's transaction), not silently dropped. The same real request can
+    also draw up to 6 of the day's real, shared, hard 20-request Gemini
+    quota (`DEC-165`) in the worst case (2 extraction attempts + up to 4
+    Judge attempts) -- a real, disclosed operational cost of this one
+    stakes level being reachable from a synchronous, user-facing,
+    tappable surface.
 
     RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-153`
     M2): the real Gemini extraction call happens BEFORE `pool.acquire()`
@@ -429,14 +484,14 @@ async def quick_capture_endpoint(
     in-transaction for the extraction call's own real network latency
     (up to ~60s worst case), a genuine resource-exhaustion risk on a
     free-tier pool for a call that touches no database. See `features/
-    quick_capture.py::capture_task_from_text()`'s own docstring for the
+    quick_capture.py::capture_action_from_text()`'s own docstring for the
     full account."""
     settings = get_settings()
     if settings.gemini_api_key is None:
         raise HTTPException(status_code=503, detail="Quick capture is not currently available -- the extraction provider isn't configured.")
     internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
 
-    extraction_call = make_gemini_task_extraction_call(api_key=settings.gemini_api_key)
+    extraction_call = make_gemini_quick_capture_extraction_call(api_key=settings.gemini_api_key)
     critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
     judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
 
@@ -444,7 +499,7 @@ async def quick_capture_endpoint(
         args = await extraction_call(body.text)
         async with pool.acquire() as conn:
             async with conn.transaction():
-                result = await capture_task_from_extracted_args(
+                result = await capture_action_from_extracted_args(
                     conn,
                     user_id=internal_user_id,
                     args=args,
@@ -453,22 +508,41 @@ async def quick_capture_endpoint(
                 )
     except QuickCaptureError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except InfrastructureFailure as exc:
+        # A real, disclosed CRITICAL-tier review HIGH, found before
+        # merge: making `UPDATE_BUDGET` (`Stakes.S2`) reachable here for
+        # the first time means `gate.orchestration.review()` can now
+        # genuinely raise `InfrastructureFailure` on this synchronous
+        # path -- a real Gate reviewer (the Judge) that stayed
+        # unreachable after every real retry (a timeout, a 429, a
+        # malformed structured response, or the Judge's own shared
+        # Gemini quota slot being exhausted, `DEC-165`). Previously
+        # structurally impossible here (`CREATE_TASK`/`LOG_EXPENSE` are
+        # both `Stakes.S1`, Stage B never ran), so this route never
+        # needed to catch it before. An honest `503` -- this is the
+        # Gate's own infrastructure being unavailable, never a fabricated
+        # verdict and never an anonymous `500`.
+        raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
     except asyncpg.PostgresError as exc:
         # RESOLVED, a real, disclosed CRITICAL-tier review HIGH (`DEC-153`
         # H1): real, defense-in-depth -- `validate_and_build_task_proposal
-        # ()` now genuinely rejects a malformed `title`/`estimated_hours`
-        # before any real database write (the real gap this review
-        # finding closed), but this catches any OTHER genuinely
-        # unexpected real Postgres error the same honest way `action_
-        # executor.py`'s own outer wrapper already does, rather than a
-        # raw, unhandled `500` reaching a real user.
-        raise HTTPException(status_code=502, detail="Couldn't turn that into a real task -- please try rephrasing it.") from exc
+        # ()`/`validate_and_build_finance_proposal()` now genuinely reject
+        # a malformed payload before any real database write (the real
+        # gap this review finding closed), but this catches any OTHER
+        # genuinely unexpected real Postgres error the same honest way
+        # `action_executor.py`'s own outer wrapper already does, rather
+        # than a raw, unhandled `500` reaching a real user.
+        raise HTTPException(status_code=502, detail="Couldn't turn that into a real action -- please try rephrasing it.") from exc
 
     return {
         "executed": result.executed,
         "decision": result.decision,
         "stakes": result.stakes,
+        "domain": result.domain,
         "title": result.title,
+        "amount": result.amount,
+        "category": result.category,
+        "finance_action": result.finance_action,
         "findings": [finding.model_dump(mode="json") for finding in result.findings],
         "objections": [objection.model_dump(mode="json") for objection in result.objections],
     }
@@ -1202,12 +1276,21 @@ async def drain_retry_queue_route(
     this deployment actually runs.
 
     **REAL, DISCLOSED, `DEC-166`: this route's own translation call
-    stays on Gemini** -- the same real Generator-vs-Critic-provider
+    stays on Gemini** -- the same real Generator/Judge-provider-grouping
     reasoning `POST /quick_capture`'s own docstring now documents in
-    full applies identically here: this call drafts the proposal the
-    real Critic (`make_groq_critic_call`) reviews two lines down, so it
-    must stay on a genuinely different provider from the Critic, not
-    the same one.
+    full (`DEC-170`'s own follow-up correction) applies identically
+    here: `CLAUDE.md`'s architecture fact groups this call (the real
+    Generator) with the real Judge as one same-provider unit, so it
+    must stay on Gemini alongside it -- NOT because the real Critic
+    would otherwise review its own draft two lines down. Every real
+    domain this drainer can actually produce (`finance`/`tasks`/local-
+    only `calendar`) resolves to `Stakes.S1`/`S2` (confirmed against
+    `router.STAKES_TABLE`: `LOG_EXPENSE`/`CREATE_TASK` are `S1`,
+    `UPDATE_BUDGET`/`CREATE_CALENDAR_EVENT_LOCAL` are `S2`), and `gate.
+    orchestration.run_stage_b()` only ever invokes the real Critic for
+    `S3` -- so the Critic genuinely never runs on this route either,
+    for the same structural reason it never runs on `/quick_capture`'s
+    own `UPDATE_BUDGET` path.
     """
     settings = get_settings()
     translation_call = make_gemini_downstream_translation_call(api_key=settings.gemini_api_key)

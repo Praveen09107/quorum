@@ -519,6 +519,37 @@ Wraps `trust_digest.py`'s real `compare_weeks()` — confirmed, before building,
 
 ---
 
+### 5.18 `POST /quick_capture` (specified — real and live since `DEC-153`, but never documented in this file until now; extended to a second real domain, `QUORUM_FINAL_COMPLETION_PLAN.md` Session 4)
+
+Request:
+
+```json
+{ "text": "spent 800 on groceries at BigBasket" }
+```
+
+Response (`200`):
+
+```json
+{
+  "executed": true,
+  "decision": "approve",
+  "stakes": "S1",
+  "domain": "finance",
+  "title": null,
+  "amount": 800.0,
+  "category": "groceries",
+  "finance_action": "log_expense",
+  "findings": [ { "...": "a real Finding, see §1.3" } ],
+  "objections": [ { "...": "a real Objection, see §1.4 -- always empty for a real Stakes.S1 result, since Stage B never runs" } ]
+}
+```
+
+One real, unified extraction call classifies a real user's own free text into exactly one of two real domains today, `"tasks"` or `"finance"` — `domain` is always present; every field belonging to the *other* domain is always present too, but always `null`. `title` is `tasks`-only (populated only when `domain == "tasks"` and `executed == true`); `amount`/`category`/`finance_action` are the `finance`-domain equivalent, populated only when `domain == "finance"` and `executed == true`. `finance_action` is the real, resolved `FinanceAction` (`"log_expense"` or `"update_budget"`) — not the free-form `category` a person typed. `stakes` is `"S1"` for `CREATE_TASK`/`LOG_EXPENSE`, or `"S2"` for `UPDATE_BUDGET` — the one real case where Stage B (the Judge only; `gate.orchestration.run_stage_b()` invokes the Critic only for `S3`, never `S2`) genuinely runs on this route. This extraction call stays on Gemini rather than Groq specifically because `CLAUDE.md`'s architecture fact groups the real Generator and Judge together as one same-provider unit — a Groq-backed extraction call would split the Generator away from the Judge's own provider, independent of whether the Critic itself ever runs; see `features/quick_capture.py`'s own top-of-file docstring for the full, corrected account (an earlier draft of this reasoning incorrectly described the Critic reviewing its own draft, caught by CRITICAL-tier review before merge). `executed` follows the same three-valued honesty `action_executor.py::ExecutionResult` established elsewhere: `false` means a genuine Gate `reject`/`revise`/`escalate_to_human`, never a fabricated success.
+
+Errors: `401` no/invalid auth; `422` blank/oversized `text` (a real, client-side-catchable length bound, `min_length=1, max_length=2000`); `503` the extraction provider isn't configured, OR (real, disclosed, `S2`-only) the Gate's own Judge stayed unreachable after every real retry; `502` a real extraction attempt was made and genuinely failed, or its output genuinely couldn't be turned into a real proposal.
+
+---
+
 ## 6. MCP Tool Call Shapes
 
 Each domain agent's tool calls carry the calling agent's declared domain, enforced server-side (not just by graph wiring) per the two-layer authorization design:
