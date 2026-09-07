@@ -414,15 +414,30 @@ async def quick_capture_endpoint(
     on Gemini, deliberately NOT migrated to Groq alongside 3 of the 4
     other real call sites `QUORUM_FINAL_COMPLETION_PLAN.md` Session 1
     moved.** A first pass of that migration DID move this call to Groq;
-    a CRITICAL-tier cross-model review caught, before merge, that doing
-    so put the real Generator (this extraction call, which drafts the
-    proposal below) on the exact same model AND provider as the real
-    Critic (`make_groq_critic_call`) reviewing it two lines down --
-    `CLAUDE.md`'s own "must never be violated" architecture fact groups
-    "Generator/Judge" together against the Critic's own genuinely
-    different provider, not just "Critic ≠ Judge" as this plan's own
-    text had (incorrectly) restated it. Reverted here rather than
-    silently building around the corrected understanding.
+    a CRITICAL-tier cross-model review caught, before merge, that this
+    would violate `CLAUDE.md`'s own "must never be violated" architecture
+    fact, which groups the real Generator (this extraction call, which
+    drafts the proposal below) and the real Judge together as one
+    same-provider unit, against the Critic's own genuinely different
+    provider -- not just "Critic != Judge" as this plan's own text had
+    (incorrectly) restated it. Reverted here rather than silently
+    building around the corrected understanding.
+
+    **A REAL, DISCLOSED CORRECTION TO THIS PARAGRAPH ITSELF, FOUND BY A
+    FOLLOW-UP CRITICAL-TIER REVIEW (`QUORUM_FINAL_COMPLETION_PLAN.md`
+    Session 4, `DEC-170`):** an earlier version of this paragraph said
+    the real Critic would be "reviewing it two lines down" -- FACTUALLY
+    WRONG for this route specifically, the same mechanism error `DEC-170`
+    found and corrected for the Finance path below. `CREATE_TASK` is
+    real `Stakes.S1`; `gate.orchestration.review()` exits after Stage A
+    alone for `S0`/`S1` (confirmed directly against that function), so
+    Stage B -- and therefore the Critic -- never runs for THIS action
+    type either, exactly as this route's own earlier text already
+    correctly stated elsewhere ("Stage B never runs, so this stays
+    fast"). The real, correct reason this extraction call must stay on
+    Gemini is the Generator/Judge same-provider grouping fact stated
+    above -- true independent of whether the Critic (or even Stage B
+    itself) ever actually runs on this specific action type.
 
     **REAL, DISCLOSED, `QUORUM_FINAL_COMPLETION_PLAN.md` SESSION 4: this
     route now covers a second real domain (Finance), and the SAME
@@ -1261,12 +1276,21 @@ async def drain_retry_queue_route(
     this deployment actually runs.
 
     **REAL, DISCLOSED, `DEC-166`: this route's own translation call
-    stays on Gemini** -- the same real Generator-vs-Critic-provider
+    stays on Gemini** -- the same real Generator/Judge-provider-grouping
     reasoning `POST /quick_capture`'s own docstring now documents in
-    full applies identically here: this call drafts the proposal the
-    real Critic (`make_groq_critic_call`) reviews two lines down, so it
-    must stay on a genuinely different provider from the Critic, not
-    the same one.
+    full (`DEC-170`'s own follow-up correction) applies identically
+    here: `CLAUDE.md`'s architecture fact groups this call (the real
+    Generator) with the real Judge as one same-provider unit, so it
+    must stay on Gemini alongside it -- NOT because the real Critic
+    would otherwise review its own draft two lines down. Every real
+    domain this drainer can actually produce (`finance`/`tasks`/local-
+    only `calendar`) resolves to `Stakes.S1`/`S2` (confirmed against
+    `router.STAKES_TABLE`: `LOG_EXPENSE`/`CREATE_TASK` are `S1`,
+    `UPDATE_BUDGET`/`CREATE_CALENDAR_EVENT_LOCAL` are `S2`), and `gate.
+    orchestration.run_stage_b()` only ever invokes the real Critic for
+    `S3` -- so the Critic genuinely never runs on this route either,
+    for the same structural reason it never runs on `/quick_capture`'s
+    own `UPDATE_BUDGET` path.
     """
     settings = get_settings()
     translation_call = make_gemini_downstream_translation_call(api_key=settings.gemini_api_key)

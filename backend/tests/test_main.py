@@ -435,13 +435,16 @@ def test_quick_capture_returns_503_when_the_extraction_provider_is_not_configure
     real extraction provider -- Gemini, DELIBERATELY kept, not migrated
     to Groq alongside 3 of the 4 other real call sites `DEC-166`
     touched: a CRITICAL-tier review caught, before merge, that moving
-    this specific call to Groq would put the real Generator (this
-    extraction call) on the exact same model AND provider as the real
-    Critic reviewing its own output two lines below in `main.py`,
-    violating CLAUDE.md's own Generator/Judge-vs-Critic provider-
-    diversity rule -- reverted, see `main.py`'s own route docstring for
-    the full account. `QUORUM_FINAL_COMPLETION_PLAN.md` Session 4 later
-    extended this same real Gemini call to a second domain (Finance)
+    this specific call to Groq would violate CLAUDE.md's own Generator/
+    Judge-vs-Critic provider-diversity rule, which groups the real
+    Generator (this extraction call) and the real Judge together as one
+    same-provider unit -- NOT because the real Critic would otherwise
+    review this call's own output (a later, `DEC-170` follow-up review
+    found and corrected that specific claim: `CREATE_TASK` is real
+    `Stakes.S1`, so Stage B -- and the Critic with it -- never runs on
+    this route at all). See `main.py`'s own route docstring for the
+    full, corrected account. `QUORUM_FINAL_COMPLETION_PLAN.md` Session 4
+    later extended this same real Gemini call to a second domain (Finance)
     rather than adding a second, Groq-backed one, for the identical
     real reason -- see that route's own docstring addendum."""
     from quorum_backend import main as main_module

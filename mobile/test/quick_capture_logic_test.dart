@@ -66,9 +66,20 @@ void main() {
       expect(describeQuickCaptureOutcome(result), contains("couldn't create"));
     });
 
-    test('a real finance escalate_to_human (genuinely reachable -- UPDATE_BUDGET is real Stakes.S2) gives an honest message', () {
+    test('a real finance escalate_to_human (genuinely reachable -- UPDATE_BUDGET is real Stakes.S2) uses domain-aware wording, never "create it"', () {
+      // A real, disclosed CRITICAL-tier review finding, found before
+      // merge: this test previously only asserted `contains('your
+      // direct approval')`, a substring both the generic and the real
+      // finance-specific message share -- it would have passed
+      // identically whether or not the domain-aware branch below this
+      // module's own `describeQuickCaptureOutcome()` actually existed.
+      // Asserting the exact real string, and explicitly that it does
+      // NOT contain the tasks-only "create it" wording, genuinely
+      // distinguishes the two.
       const result = QuickCaptureResultData(executed: false, decision: 'escalate_to_human', stakes: 'S2', domain: 'finance', title: null, findings: []);
-      expect(describeQuickCaptureOutcome(result), contains('your direct approval'));
+      final message = describeQuickCaptureOutcome(result);
+      expect(message, 'This needs your direct approval before Quorum can change it.');
+      expect(message, isNot(contains('create it')));
     });
   });
 

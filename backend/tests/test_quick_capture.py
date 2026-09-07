@@ -199,6 +199,25 @@ async def test_capture_action_from_text_raises_quick_capture_error_on_an_unrecog
                 )
 
 
+async def test_capture_action_from_text_raises_quick_capture_error_on_a_non_dict_extraction(pool, user_id):
+    """A real, disclosed CRITICAL-tier review LOW, found before merge: a
+    genuinely malformed real extraction response (a bare JSON array or
+    scalar, which `_call_gemini_json()`'s own `json.loads()` returns
+    unguarded) previously reached a bare `args.get("domain")` outside
+    any `try`, raising an uncaught `AttributeError` rather than this
+    module's own honest `QuickCaptureError`. Proven here directly, not
+    just documented in a docstring."""
+    extraction = _fake_extraction(["not", "a", "real", "object"])
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(QuickCaptureError):
+                await capture_action_from_text(
+                    conn, user_id=user_id, free_text="anything",
+                    extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
+                )
+
+
 # --- Real, live-database integration tests: Finance domain (Session 4) ---
 
 

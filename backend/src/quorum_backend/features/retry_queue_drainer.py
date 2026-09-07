@@ -259,17 +259,29 @@ def validate_and_build_finance_proposal(args: dict) -> ActionProposal:
         raise DownstreamTranslationError(f"Translated finance amount {amount!r} exceeds the real, max storable value {_MAX_FINANCE_AMOUNT}")
     # RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM, found
     # before merge (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 4, `DEC-
-    # 170`): `category`/`payee` had zero real validation at all -- the
-    # exact same real gap this function's own sibling, `validate_and_
-    # build_task_proposal()`'s `title` check, already closed (`DEC-153`
-    # H1): `expenses.payee` is real `TEXT NOT NULL`, unbounded, exactly
-    # like `tasks.title` was, so a non-string or `None` real `payee`
-    # reaches a real, uncaught `asyncpg` error, and an unbounded real
-    # string writes successfully. This function's only real caller when
-    # `DEC-148` reviewed it was this backend's own negotiation-option
-    # text; `features/quick_capture.py` (`DEC-170`) is the first real
-    # caller to reach it from a user's own, genuinely untrusted free
-    # text -- the same real reason `title` needed this check.
+    # 170`): `category`/`payee` had zero real validation at all. A real,
+    # disclosed correction to this comment's own first draft, found by a
+    # follow-up review: a real, live `None` `payee` does NOT reach an
+    # uncaught error -- `action_executor.py` already falls back to a
+    # real `_UNKNOWN_PAYEE` constant for that case (`payload.get(
+    # "payee") or _UNKNOWN_PAYEE`). The real, correct risk this check
+    # closes: `expenses.payee` is real `TEXT NOT NULL`, unbounded --
+    # exactly like `tasks.title` was (`DEC-153` H1) -- so a real, NON-
+    # string, non-`None` `payee` (a hallucinated dict/list) would still
+    # reach a real, uncaught `asyncpg` error, and an unbounded real
+    # string would still write successfully. `category` has no
+    # equivalent real database-column risk today -- `expenses` has no
+    # `category` column at all (a real, separately-disclosed, accepted
+    # gap since `DEC-128`; a real category only ever reaches `action_
+    # events.payload`, a JSONB column) -- but it's still bounded here,
+    # since it reaches this module's own real, mobile-visible response
+    # value unchanged, and an unbounded or non-string real value there
+    # is exactly the same class of untrusted-model-output risk `title`
+    # was closed for. This function's only real caller when `DEC-148`
+    # reviewed it was this backend's own negotiation-option text;
+    # `features/quick_capture.py` (`DEC-170`) is the first real caller
+    # to reach it from a user's own, genuinely untrusted free text --
+    # the same real reason `title` needed this check.
     category = args["category"]
     if not isinstance(category, str) or not category.strip():
         raise DownstreamTranslationError(f"Translated finance category must be a real, non-empty string, got {category!r}")
