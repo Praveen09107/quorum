@@ -440,7 +440,10 @@ def test_quick_capture_returns_503_when_the_extraction_provider_is_not_configure
     Critic reviewing its own output two lines below in `main.py`,
     violating CLAUDE.md's own Generator/Judge-vs-Critic provider-
     diversity rule -- reverted, see `main.py`'s own route docstring for
-    the full account."""
+    the full account. `QUORUM_FINAL_COMPLETION_PLAN.md` Session 4 later
+    extended this same real Gemini call to a second domain (Finance)
+    rather than adding a second, Groq-backed one, for the identical
+    real reason -- see that route's own docstring addendum."""
     from quorum_backend import main as main_module
 
     fake_settings = get_settings().model_copy(update={"gemini_api_key": None})
@@ -472,6 +475,7 @@ async def test_quick_capture_endpoint_is_real_and_live_creates_a_real_task_end_t
         assert response.status_code == 200
         body = response.json()
         assert body["stakes"] == "S1"
+        assert body["domain"] == "tasks"
         # A real, genuine approve is the overwhelmingly likely real
         # outcome here (a fresh user, no existing tasks to conflict
         # with) -- asserted directly rather than treated as optional,
@@ -489,6 +493,48 @@ async def test_quick_capture_endpoint_is_real_and_live_creates_a_real_task_end_t
         assert row["estimated_hours"] > 0
     finally:
         await pool.execute("DELETE FROM tasks WHERE user_id = $1", uuid.UUID(internal_user_id))
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
+@pytest.mark.skipif(get_settings().gemini_api_key is None, reason="no real GEMINI_API_KEY configured in this environment")
+async def test_quick_capture_endpoint_is_real_and_live_creates_a_real_expense_end_to_end(pool, provisioned_users):
+    """The real, live, end-to-end Finance-domain proof `QUORUM_FINAL_
+    COMPLETION_PLAN.md` Session 4's own verification line asks for: a
+    real free-text expense, extracted by the SAME real, unified Gemini
+    call the tasks test above already exercises, reviewed by the real
+    Gate, and genuinely visible afterward in the real `expenses` table."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    marker = f"real-quick-capture-finance-test-{uuid.uuid4()}"
+
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/quick_capture",
+                json={"text": f"spent 42 on {marker}"},
+                headers=headers,
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["stakes"] == "S1"
+        assert body["domain"] == "finance"
+        # Same reasoning as the tasks test above: a fresh user, a
+        # simple, unambiguous real expense -- a genuine approve is the
+        # overwhelmingly likely real outcome, asserted directly.
+        assert body["executed"] is True
+        assert body["decision"] == "approve"
+        assert body["finance_action"] == "log_expense"
+        assert body["amount"] == 42.0
+        assert body["title"] is None  # a real, honest tasks-only field, never populated for finance
+
+        # `user_id` alone genuinely, uniquely identifies this row -- this
+        # test's own fresh, real, provisioned user has never had any
+        # other real `expenses` row written for it.
+        row = await pool.fetchrow("SELECT amount FROM expenses WHERE user_id = $1", uuid.UUID(internal_user_id))
+        assert row is not None
+        assert float(row["amount"]) == 42.0
+    finally:
+        await pool.execute("DELETE FROM expenses WHERE user_id = $1", uuid.UUID(internal_user_id))
         await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
 
 

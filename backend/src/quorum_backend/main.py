@@ -95,8 +95,8 @@ from quorum_backend.features.today import (
 )
 from quorum_backend.features.quick_capture import (
     QuickCaptureError,
-    capture_task_from_extracted_args,
-    make_gemini_task_extraction_call,
+    capture_action_from_extracted_args,
+    make_gemini_quick_capture_extraction_call,
 )
 from quorum_backend.features.trust_digest import fetch_trust_digest
 from quorum_backend.gate.llm_calls import make_gemini_judge_call, make_groq_critic_call
@@ -395,19 +395,19 @@ async def quick_capture_endpoint(
     """Real, live -- Phase 7, `QUORUM_PRODUCTION_COMPLETION_PLAN.md`,
     `DEC-153`. The first real write path in this backend that isn't
     negotiation-choice or account deletion: a real user's own free
-    text, extracted into a real `CREATE_TASK` proposal, reviewed by the
-    real Gate, and -- for a genuine approve -- written as a real `tasks`
-    row, all synchronously in this one request (`CREATE_TASK` is real
-    `Stakes.S1`; Stage B never runs, so this stays fast). Real per-user
-    scoped from this route's first line. See `features/quick_capture.py`
-    for the full account of this session's own real scope decisions.
+    text, extracted into a real proposal, reviewed by the real Gate,
+    and -- for a genuine approve -- written as a real row. Real
+    per-user scoped from this route's first line. See `features/
+    quick_capture.py` for the full account of this session's own real
+    scope decisions.
 
     A real, honest `503` if the extraction provider isn't configured
     (matching `GET /search`'s own established convention for the
     identical real reason -- no `GEMINI_API_KEY` in this environment).
     A real, honest `502` if a live extraction call itself fails after
     retries, or if its output genuinely can't be turned into a real
-    task -- never a fabricated task standing in for a genuine failure.
+    action -- never a fabricated task/expense standing in for a
+    genuine failure.
 
     **REAL, DISCLOSED, `DEC-166`: this route's own extraction call stays
     on Gemini, deliberately NOT migrated to Groq alongside 3 of the 4
@@ -423,20 +423,31 @@ async def quick_capture_endpoint(
     text had (incorrectly) restated it. Reverted here rather than
     silently building around the corrected understanding.
 
+    **REAL, DISCLOSED, `QUORUM_FINAL_COMPLETION_PLAN.md` SESSION 4: this
+    route now covers a second real domain (Finance), and the SAME
+    real Gemini extraction call above covers both** -- Session 4's own
+    plan text asked for a second, Groq-backed extraction call for
+    Finance specifically, but `ActionType.UPDATE_BUDGET` is real
+    `Stakes.S2` (unlike `CREATE_TASK`/`LOG_EXPENSE`, both `S1`), so
+    Stage B genuinely runs for it -- a Groq-backed Finance extraction
+    call would recreate the exact real Generator/Critic collision just
+    described, specifically for `UPDATE_BUDGET`. See `features/
+    quick_capture.py`'s own top-of-file docstring for the full account.
+
     RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-153`
     M2): the real Gemini extraction call happens BEFORE `pool.acquire()`
     -- an earlier version held a real, pooled Postgres connection idle-
     in-transaction for the extraction call's own real network latency
     (up to ~60s worst case), a genuine resource-exhaustion risk on a
     free-tier pool for a call that touches no database. See `features/
-    quick_capture.py::capture_task_from_text()`'s own docstring for the
+    quick_capture.py::capture_action_from_text()`'s own docstring for the
     full account."""
     settings = get_settings()
     if settings.gemini_api_key is None:
         raise HTTPException(status_code=503, detail="Quick capture is not currently available -- the extraction provider isn't configured.")
     internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
 
-    extraction_call = make_gemini_task_extraction_call(api_key=settings.gemini_api_key)
+    extraction_call = make_gemini_quick_capture_extraction_call(api_key=settings.gemini_api_key)
     critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
     judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
 
@@ -444,7 +455,7 @@ async def quick_capture_endpoint(
         args = await extraction_call(body.text)
         async with pool.acquire() as conn:
             async with conn.transaction():
-                result = await capture_task_from_extracted_args(
+                result = await capture_action_from_extracted_args(
                     conn,
                     user_id=internal_user_id,
                     args=args,
@@ -456,19 +467,23 @@ async def quick_capture_endpoint(
     except asyncpg.PostgresError as exc:
         # RESOLVED, a real, disclosed CRITICAL-tier review HIGH (`DEC-153`
         # H1): real, defense-in-depth -- `validate_and_build_task_proposal
-        # ()` now genuinely rejects a malformed `title`/`estimated_hours`
-        # before any real database write (the real gap this review
-        # finding closed), but this catches any OTHER genuinely
-        # unexpected real Postgres error the same honest way `action_
-        # executor.py`'s own outer wrapper already does, rather than a
-        # raw, unhandled `500` reaching a real user.
-        raise HTTPException(status_code=502, detail="Couldn't turn that into a real task -- please try rephrasing it.") from exc
+        # ()`/`validate_and_build_finance_proposal()` now genuinely reject
+        # a malformed payload before any real database write (the real
+        # gap this review finding closed), but this catches any OTHER
+        # genuinely unexpected real Postgres error the same honest way
+        # `action_executor.py`'s own outer wrapper already does, rather
+        # than a raw, unhandled `500` reaching a real user.
+        raise HTTPException(status_code=502, detail="Couldn't turn that into a real action -- please try rephrasing it.") from exc
 
     return {
         "executed": result.executed,
         "decision": result.decision,
         "stakes": result.stakes,
+        "domain": result.domain,
         "title": result.title,
+        "amount": result.amount,
+        "category": result.category,
+        "finance_action": result.finance_action,
         "findings": [finding.model_dump(mode="json") for finding in result.findings],
         "objections": [objection.model_dump(mode="json") for objection in result.objections],
     }

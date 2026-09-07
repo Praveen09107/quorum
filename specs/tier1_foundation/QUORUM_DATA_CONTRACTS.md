@@ -519,6 +519,37 @@ Wraps `trust_digest.py`'s real `compare_weeks()` — confirmed, before building,
 
 ---
 
+### 5.18 `POST /quick_capture` (specified — real and live since `DEC-153`, but never documented in this file until now; extended to a second real domain, `QUORUM_FINAL_COMPLETION_PLAN.md` Session 4)
+
+Request:
+
+```json
+{ "text": "spent 800 on groceries at BigBasket" }
+```
+
+Response (`200`):
+
+```json
+{
+  "executed": true,
+  "decision": "approve",
+  "stakes": "S1",
+  "domain": "finance",
+  "title": null,
+  "amount": 800.0,
+  "category": "groceries",
+  "finance_action": "log_expense",
+  "findings": [ { "...": "a real Finding, see §1.3" } ],
+  "objections": [ { "...": "a real Objection, see §1.4 -- always empty for a real Stakes.S1 result, since Stage B never runs" } ]
+}
+```
+
+One real, unified extraction call classifies a real user's own free text into exactly one of two real domains today, `"tasks"` or `"finance"` — `domain` is always present; every field belonging to the *other* domain is always present too, but always `null`. `title` is `tasks`-only (populated only when `domain == "tasks"` and `executed == true`); `amount`/`category`/`finance_action` are the `finance`-domain equivalent, populated only when `domain == "finance"` and `executed == true`. `finance_action` is the real, resolved `FinanceAction` (`"log_expense"` or `"update_budget"`) — not the free-form `category` a person typed. `stakes` is `"S1"` for `CREATE_TASK`/`LOG_EXPENSE`, or `"S2"` for `UPDATE_BUDGET` (Stage B genuinely runs for this one real case — see `features/quick_capture.py`'s own top-of-file docstring for why its own extraction call still stays on Gemini, never Groq, specifically because of this). `executed` follows the same three-valued honesty `action_executor.py::ExecutionResult` established elsewhere: `false` means a genuine Gate `reject`/`revise`/`escalate_to_human`, never a fabricated success.
+
+Errors: `401` no/invalid auth; `422` blank/oversized `text` (a real, client-side-catchable length bound, `min_length=1, max_length=2000`); `503` the extraction provider isn't configured; `502` a real extraction attempt was made and genuinely failed, or its output genuinely couldn't be turned into a real proposal.
+
+---
+
 ## 6. MCP Tool Call Shapes
 
 Each domain agent's tool calls carry the calling agent's declared domain, enforced server-side (not just by graph wiring) per the two-layer authorization design:
