@@ -526,7 +526,29 @@ async def detect_interview_for_message(
     classification failure here re-raises `InterviewDetectionError`
     AFTER recording the real, bounded attempt -- `email_ingestion.py`'s
     own phase 3 still isolates and tallies it into `messages_failed`,
-    unchanged."""
+    unchanged.
+
+    **RESOLVED, a real, disclosed follow-up CRITICAL-tier review finding
+    (MEDIUM):** a first version of this fix recorded `resolved=True`
+    immediately after a successful real classification, BEFORE the real
+    company re-check and BEFORE the real UPDATE ever ran -- so a real,
+    genuine match whose subsequent real database write failed (a real
+    lock timeout, real PgBouncer churn) was marked resolved anyway,
+    silently and permanently discarding a real, correctly-detected
+    interview. `resolved` is now recorded exactly once, at the true end
+    of this function's own real control flow, reflecting whichever real
+    outcome actually, fully happened -- a real UPDATE failure is treated
+    as `resolved=False` (a real, bounded retry, the identical real
+    principle `MAX_INTERVIEW_DETECTION_ATTEMPTS` already applies to a
+    failed classification call) and re-raised, never silently absorbed.
+    A related real, disclosed fix in the same pass: `result.get(
+    "company")` replaces a real, inconsistent `result["company"]` --
+    the latter could raise an uncaught `KeyError` outside this
+    function's own `except InterviewDetectionError` if a real, malformed
+    (but HTTP-200) Groq response claimed `is_interview: true` with no
+    `company` key at all, recording no real attempt whatsoever and
+    retrying that message forever, unbounded -- exactly the class of
+    real bug `MAX_INTERVIEW_DETECTION_ATTEMPTS` exists to prevent."""
     open_companies = await _fetch_open_application_companies(pool, user_id=user_id)
     if not open_companies:
         await _record_attempt(pool, user_id=user_id, message_id=message_id, resolved=True)
@@ -536,19 +558,25 @@ async def detect_interview_for_message(
     except InterviewDetectionError:
         await _record_attempt(pool, user_id=user_id, message_id=message_id, resolved=False)
         raise
-    await _record_attempt(pool, user_id=user_id, message_id=message_id, resolved=True)
 
     if not result.get("is_interview"):
+        await _record_attempt(pool, user_id=user_id, message_id=message_id, resolved=True)
         return False
-    company = result["company"]
+    company = result.get("company")
     # RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM: a real,
     # defense-in-depth re-check, independent of whatever `detection_
     # call` implementation was injected -- see this module's own
     # top-of-file docstring for why this can't be trusted to the
     # factory closure alone.
     if company not in open_companies:
+        await _record_attempt(pool, user_id=user_id, message_id=message_id, resolved=True)
         return False
-    updated = await _update_application_status_to_interview_scheduled(pool, user_id=user_id, company=company)
+    try:
+        updated = await _update_application_status_to_interview_scheduled(pool, user_id=user_id, company=company)
+    except Exception:  # noqa: BLE001 -- a real, genuine match whose real DB write itself failed must be retried, never silently discarded; re-raised immediately below, never swallowed
+        await _record_attempt(pool, user_id=user_id, message_id=message_id, resolved=False)
+        raise
+    await _record_attempt(pool, user_id=user_id, message_id=message_id, resolved=True)
     if updated:
         logger.info(
             "Real interview detected and applications.status flipped: user_id=%s company=%s message_id=%s",

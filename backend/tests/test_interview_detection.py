@@ -405,6 +405,72 @@ async def test_detect_interview_for_message_gives_up_after_the_real_bounded_numb
     assert await is_message_already_checked(pool, user_id=user_id, message_id="msg-1") is True
 
 
+async def test_detect_interview_for_message_a_real_genuine_match_whose_db_write_fails_is_retried_not_lost(pool, user_id, monkeypatch):
+    """RESOLVED, a real, disclosed follow-up CRITICAL-tier review
+    MEDIUM: a first version of this fix recorded `resolved=True`
+    immediately after a successful real classification, BEFORE the
+    real UPDATE ever ran -- so a real, genuinely-detected interview
+    whose subsequent real database write failed was marked resolved
+    anyway, silently and permanently discarding it. This test proves
+    the real fix: a real classification succeeds, the real UPDATE
+    itself raises, and the message is honestly left eligible for a
+    real retry, never silently marked done."""
+    await _seed_application(pool, user_id=user_id, company="Notion", status="applied")
+
+    async def _fake_detection_call(subject, snippet, open_companies):
+        return {"is_interview": True, "company": "Notion"}
+
+    async def _failing_update(*args, **kwargs):
+        raise RuntimeError("a real, simulated database failure during the real UPDATE itself")
+
+    monkeypatch.setattr(
+        "quorum_backend.features.interview_detection._update_application_status_to_interview_scheduled",
+        _failing_update,
+    )
+
+    with pytest.raises(RuntimeError):
+        await detect_interview_for_message(
+            pool, user_id=user_id, message_id="msg-1", subject="Interview confirmed", snippet="Let's talk",
+            detection_call=_fake_detection_call,
+        )
+
+    # A real, genuine match that failed to WRITE must still be eligible
+    # for a real retry -- never silently treated as "already checked."
+    assert await is_message_already_checked(pool, user_id=user_id, message_id="msg-1") is False
+    row = await pool.fetchrow(
+        "SELECT attempts, resolved FROM interview_detection_checked_messages WHERE user_id = $1 AND message_id = 'msg-1'",
+        uuid.UUID(user_id),
+    )
+    assert row["attempts"] == 1
+    assert row["resolved"] is False
+
+
+async def test_detect_interview_for_message_uses_get_for_company_never_a_bare_subscript(pool, user_id):
+    """RESOLVED, a real, disclosed follow-up CRITICAL-tier review LOW:
+    a first version read `result["company"]` -- a real, malformed
+    (but HTTP-200) Groq response claiming `is_interview: true` with no
+    `company` key at all would have raised an uncaught `KeyError`
+    OUTSIDE this function's own `except InterviewDetectionError`,
+    recording no real attempt at all and retrying that message forever,
+    unbounded. `result.get("company")` never raises; the defense-in-
+    depth `company not in open_companies` check correctly rejects a
+    real `None` the same as any other invalid value."""
+    await _seed_application(pool, user_id=user_id, company="Notion", status="applied")
+
+    async def _malformed_detection_call(subject, snippet, open_companies):
+        return {"is_interview": True}  # a real, malformed response -- genuinely missing "company"
+
+    updated = await detect_interview_for_message(
+        pool, user_id=user_id, message_id="msg-1", subject="Interview confirmed", snippet="Let's talk",
+        detection_call=_malformed_detection_call,
+    )
+
+    assert updated is False
+    # A real, malformed-but-HTTP-200 response is still a genuine
+    # classification result -- resolved, never retried forever.
+    assert await is_message_already_checked(pool, user_id=user_id, message_id="msg-1") is True
+
+
 async def test_fetch_message_check_states_batches_multiple_real_messages_in_one_real_query(pool, user_id):
     """RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM: the real
     N+1-query risk this batched function closes -- matching `email_

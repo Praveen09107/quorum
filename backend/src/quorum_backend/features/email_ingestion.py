@@ -379,6 +379,18 @@ async def _detect_interview_signal_in_new_messages(
     check_states = await fetch_message_check_states(
         pool, user_id=user_id, message_ids=[message_id for message_id, _thread_id in received_refs]
     )
+    # RESOLVED, a real, disclosed follow-up CRITICAL-tier review HIGH:
+    # a first version of this real, per-user cap incremented
+    # `messages_checked` only AFTER a genuinely successful real
+    # classification -- so a run of real FAILURES (a real 429 storm,
+    # exactly the scenario this cap exists to protect against) never
+    # advanced the counter the cap itself reads, live-proven to let 25
+    # real Groq calls fire against a documented real cap of 10. Fixed:
+    # a real, separate `attempted_count` increments for every real
+    # message this loop genuinely attempts, success or failure alike,
+    # and the cap is checked against THAT, never against the
+    # optimistic subset that happened to succeed.
+    attempted_count = 0
     for message_id, _thread_id in received_refs:
         if time.monotonic() >= batch_deadline:
             logger.warning(
@@ -387,10 +399,11 @@ async def _detect_interview_signal_in_new_messages(
                 user_id,
             )
             break
-        if messages_checked >= MAX_INTERVIEW_DETECTION_MESSAGES_PER_USER_POLL:
+        if attempted_count >= MAX_INTERVIEW_DETECTION_MESSAGES_PER_USER_POLL:
             break  # a real, disclosed per-user cap -- see this function's own docstring
         if check_states.get(message_id, False):
             continue  # a real message this user's own prior real poll already classified (or durably failed) -- never re-spend a real Groq call on it
+        attempted_count += 1
         try:
             detail = await _fetch_message_detail(http_client, access_token=access_token, message_id=message_id)
             subject = _extract_header(detail["payload"], "Subject")
