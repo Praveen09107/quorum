@@ -16,9 +16,12 @@ from quorum_backend.auth.user_provisioning import get_or_create_user
 from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
 from quorum_backend.features.interview_detection import (
+    MAX_INTERVIEW_DETECTION_ATTEMPTS,
     InterviewDetectionError,
+    _retry_after_seconds,
     build_interview_detection_prompt,
     detect_interview_for_message,
+    fetch_message_check_states,
     is_message_already_checked,
     make_groq_interview_detection_call,
 )
@@ -297,6 +300,161 @@ async def test_detect_interview_for_message_never_leaks_another_real_users_appli
     finally:
         await pool.execute("DELETE FROM applications WHERE user_id = $1", uuid.UUID(other_user_id))
         await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(other_user_id))
+
+
+# --- Real, disclosed CRITICAL-tier review fixes -- regression tests ---
+
+
+async def test_detect_interview_for_message_two_open_applications_at_the_same_company_is_a_real_honest_ambiguity(pool, user_id):
+    """RESOLVED, a real, disclosed CRITICAL-tier review HIGH: `role`
+    exists on the real schema specifically because a user CAN hold more
+    than one real, concurrently-open application at the same real
+    company. A prior version's own single UPDATE would have silently
+    flipped BOTH real rows while reporting `False` (a genuine `!=
+    "UPDATE 1"` mismatch) -- this test proves the real fix: neither row
+    is touched, and the caller gets an honest `False` for the right
+    real reason (genuine ambiguity), not an accidental one."""
+    await _seed_application(pool, user_id=user_id, company="Notion", status="applied")
+    await _seed_application(pool, user_id=user_id, company="Notion", status="applied")
+
+    async def _fake_detection_call(subject, snippet, open_companies):
+        return {"is_interview": True, "company": "Notion"}
+
+    updated = await detect_interview_for_message(
+        pool, user_id=user_id, message_id="msg-1", subject="Interview confirmed", snippet="Let's talk",
+        detection_call=_fake_detection_call,
+    )
+
+    assert updated is False
+    rows = await pool.fetch("SELECT status FROM applications WHERE user_id = $1 AND company = 'Notion'", uuid.UUID(user_id))
+    assert {row["status"] for row in rows} == {"applied"}  # genuinely NEITHER row touched
+
+
+async def test_detect_interview_for_message_rejects_an_out_of_list_company_even_from_a_buggy_detection_call(pool, user_id):
+    """RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM: the real
+    company-name validation must hold at the real write boundary
+    itself, not just inside the one, real, production factory closure
+    -- proven here with a deliberately "buggy" fake `detection_call`
+    that violates its own real contract."""
+    await _seed_application(pool, user_id=user_id, company="Notion", status="applied")
+
+    async def _buggy_detection_call(subject, snippet, open_companies):
+        # A real, deliberately non-compliant fake -- claims a match for
+        # a company that was never a real, valid option.
+        return {"is_interview": True, "company": "A Company Not Actually Open"}
+
+    updated = await detect_interview_for_message(
+        pool, user_id=user_id, message_id="msg-1", subject="Interview confirmed", snippet="Let's talk",
+        detection_call=_buggy_detection_call,
+    )
+
+    assert updated is False
+    row = await pool.fetchrow("SELECT status FROM applications WHERE user_id = $1 AND company = 'Notion'", uuid.UUID(user_id))
+    assert row["status"] == "applied"
+
+
+async def test_detect_interview_for_message_a_real_transient_failure_is_retried_not_permanently_discarded(pool, user_id):
+    """RESOLVED, a real, disclosed CRITICAL-tier review HIGH: a real,
+    transient classification failure must genuinely be retried on a
+    later real poll, bounded by `MAX_INTERVIEW_DETECTION_ATTEMPTS` --
+    never silently discarded after a single real failure."""
+    await _seed_application(pool, user_id=user_id, company="Notion", status="applied")
+
+    async def _failing_detection_call(subject, snippet, open_companies):
+        raise InterviewDetectionError("a real, simulated transient Groq failure")
+
+    with pytest.raises(InterviewDetectionError):
+        await detect_interview_for_message(
+            pool, user_id=user_id, message_id="msg-1", subject="Interview confirmed", snippet="Let's talk",
+            detection_call=_failing_detection_call,
+        )
+
+    # A real, genuine failure must NOT be treated as "already checked"
+    # -- the real message stays eligible for a real retry.
+    assert await is_message_already_checked(pool, user_id=user_id, message_id="msg-1") is False
+
+    row = await pool.fetchrow(
+        "SELECT attempts, resolved FROM interview_detection_checked_messages WHERE user_id = $1 AND message_id = 'msg-1'",
+        uuid.UUID(user_id),
+    )
+    assert row["attempts"] == 1
+    assert row["resolved"] is False
+
+
+async def test_detect_interview_for_message_gives_up_after_the_real_bounded_number_of_attempts(pool, user_id):
+    """The real, disclosed "bounded give-up" -- once a real message has
+    durably failed `MAX_INTERVIEW_DETECTION_ATTEMPTS` real times, it is
+    honestly treated as already-checked (never retried a real, unbounded
+    number of times), matching `career_digest.py`'s/`negotiation_
+    detail_backfill.py`'s own identical real precedent exactly."""
+    await _seed_application(pool, user_id=user_id, company="Notion", status="applied")
+
+    async def _always_failing_detection_call(subject, snippet, open_companies):
+        raise InterviewDetectionError("a real, simulated durable Groq failure")
+
+    for _ in range(MAX_INTERVIEW_DETECTION_ATTEMPTS):
+        assert await is_message_already_checked(pool, user_id=user_id, message_id="msg-1") is False
+        with pytest.raises(InterviewDetectionError):
+            await detect_interview_for_message(
+                pool, user_id=user_id, message_id="msg-1", subject="Interview confirmed", snippet="Let's talk",
+                detection_call=_always_failing_detection_call,
+            )
+
+    # The real, bounded number of real attempts is now exhausted --
+    # this real message is honestly given up on, never retried again.
+    assert await is_message_already_checked(pool, user_id=user_id, message_id="msg-1") is True
+
+
+async def test_fetch_message_check_states_batches_multiple_real_messages_in_one_real_query(pool, user_id):
+    """RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM: the real
+    N+1-query risk this batched function closes -- matching `email_
+    ingestion.py`'s own established `= ANY($2)` convention for phases
+    1/2."""
+    await _seed_application(pool, user_id=user_id, company="Notion", status="applied")
+
+    async def _fake_detection_call(subject, snippet, open_companies):
+        return {"is_interview": False, "company": None}
+
+    await detect_interview_for_message(
+        pool, user_id=user_id, message_id="checked-msg", subject="newsletter", snippet="nothing",
+        detection_call=_fake_detection_call,
+    )
+
+    states = await fetch_message_check_states(pool, user_id=user_id, message_ids=["checked-msg", "never-seen-msg"])
+
+    assert states == {"checked-msg": True}  # a genuinely new message is simply absent, never a real, false `True`
+
+
+def test_retry_after_seconds_honors_a_real_header_value():
+    class _FakeError:
+        retry_after_header = "5"
+
+    assert _retry_after_seconds(_FakeError(), default=99.0) == 5.0
+
+
+def test_retry_after_seconds_caps_an_unreasonably_large_real_header_value():
+    """RESOLVED, a real, disclosed CRITICAL-tier review HIGH: an
+    uncapped real `Retry-After` header could sleep a real, request-
+    scoped Cloud Run invocation for an unbounded real duration."""
+    class _FakeError:
+        retry_after_header = "3600"  # a real, plausible value on a real, shared, daily-quota-limited key
+
+    result = _retry_after_seconds(_FakeError(), default=1.0)
+    assert result <= 30.0
+
+
+def test_retry_after_seconds_falls_back_to_default_when_no_error_is_given():
+    assert _retry_after_seconds(None, default=2.0) == 2.0
+
+
+def test_build_interview_detection_prompt_truncates_a_real_unbounded_subject():
+    """RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM: the
+    first real Groq call site in this backend fed genuinely unbounded,
+    untrusted real sender-controlled text -- bounded here."""
+    huge_subject = "A" * 10_000
+    prompt = build_interview_detection_prompt(huge_subject, "a real, short preview", ["Notion"])
+    assert huge_subject not in prompt
+    assert "AAAA" in prompt  # some real, bounded prefix still genuinely present
 
 
 # --- Real, live tests (skipped without a real GROQ_API_KEY) ---

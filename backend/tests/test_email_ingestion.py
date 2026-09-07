@@ -510,6 +510,69 @@ async def test_scan_one_user_email_phase_3_never_reclassifies_an_already_checked
     assert detection_call_count == 1  # genuinely unchanged -- the real message was already checked
 
 
+async def test_scan_one_user_email_phase_3_never_exceeds_the_real_per_user_message_cap(pool, user_id, monkeypatch):
+    """RESOLVED, a real, disclosed CRITICAL-tier review HIGH: a first
+    version offered every real, unchecked message in the whole real
+    `MAX_MESSAGES_PER_POLL` window to a real, billed Groq call, with no
+    real per-user cap at all -- fixed via `MAX_INTERVIEW_DETECTION_
+    MESSAGES_PER_USER_POLL`, proven here directly."""
+    _patch_valid_token(monkeypatch)
+    from quorum_backend.features.interview_detection import MAX_INTERVIEW_DETECTION_MESSAGES_PER_USER_POLL
+
+    await _seed_application_for_email_ingestion(pool, user_id=user_id, company="Notion")
+
+    real_message_count = MAX_INTERVIEW_DETECTION_MESSAGES_PER_USER_POLL + 5
+    fake_client = _FakeGmailClient([
+        _FakeGmailMessage(
+            id=f"msg-{i}", thread_id=f"thread-{i}", label_ids=["INBOX"], subject="Your weekly newsletter",
+            recipient="me@x.com", internal_date_ms="1700000000000", snippet="nothing real here",
+        )
+        for i in range(real_message_count)
+    ])
+
+    detection_call_count = 0
+
+    async def _counting_detection_call(subject, snippet, open_companies):
+        nonlocal detection_call_count
+        detection_call_count += 1
+        return {"is_interview": False, "company": None}
+
+    await scan_one_user_email(
+        pool, user_id=user_id, client_id="unused", client_secret="unused", encryption_key="unused",
+        http_client=fake_client, interview_detection_call=_counting_detection_call,
+    )
+
+    assert detection_call_count == MAX_INTERVIEW_DETECTION_MESSAGES_PER_USER_POLL  # genuinely capped, not all real messages
+
+
+async def test_scan_one_user_email_phase_3_stops_honestly_at_a_real_shared_batch_deadline(pool, user_id, monkeypatch):
+    """RESOLVED, a real, disclosed CRITICAL-tier review HIGH: a first
+    version checked the real, shared batch deadline only BETWEEN real
+    users, never within one -- proven fixed here with a real deadline
+    that has already, genuinely passed before this user's own phase 3
+    ever starts."""
+    _patch_valid_token(monkeypatch)
+    import time as time_module
+
+    await _seed_application_for_email_ingestion(pool, user_id=user_id, company="Notion")
+
+    fake_client = _FakeGmailClient([
+        _FakeGmailMessage(
+            id="msg-1", thread_id="thread-1", label_ids=["INBOX"], subject="Interview Confirmed",
+            recipient="me@x.com", internal_date_ms="1700000000000", snippet="Let's talk",
+        ),
+    ])
+
+    async def _unreachable_detection_call(subject, snippet, open_companies):
+        raise AssertionError("a real Groq call must never fire once the real, shared batch deadline has already passed")
+
+    await scan_one_user_email(
+        pool, user_id=user_id, client_id="unused", client_secret="unused", encryption_key="unused",
+        http_client=fake_client, interview_detection_call=_unreachable_detection_call,
+        batch_deadline=time_module.monotonic() - 1.0,  # a real deadline already, genuinely in the past
+    )
+
+
 async def _seed_application_for_email_ingestion(pool, *, user_id: str, company: str, status: str = "applied") -> str:
     application_id = uuid.uuid4()
     await pool.execute(

@@ -131,9 +131,10 @@ import httpx
 from quorum_backend.auth.google_oauth import GoogleOAuthExchangeFailed
 from quorum_backend.auth.google_token_store import get_valid_google_access_token
 from quorum_backend.features.interview_detection import (
+    MAX_INTERVIEW_DETECTION_MESSAGES_PER_USER_POLL,
     InterviewDetectionCall,
     detect_interview_for_message,
-    is_message_already_checked,
+    fetch_message_check_states,
 )
 from quorum_backend.features.waiting_on import mark_thread_replied, record_sent_message
 
@@ -342,6 +343,7 @@ async def _detect_interview_signal_in_new_messages(
     access_token: str,
     http_client: httpx.AsyncClient,
     interview_detection_call: InterviewDetectionCall,
+    batch_deadline: float,
 ) -> tuple[int, int, int]:
     """Phase 3 (`DEC-169`): for real, received messages this user
     hasn't already been checked for interview signal (`interview_
@@ -351,14 +353,44 @@ async def _detect_interview_signal_in_new_messages(
     separate real `messages.list` call rather than reusing phase 2's.
     Returns `(messages_checked, interviews_detected, messages_failed)`.
     Same real per-message isolation as phases 1/2 above -- one real
-    message's failure never aborts the rest of this user's real scan."""
+    message's failure never aborts the rest of this user's real scan.
+
+    **RESOLVED, a real, disclosed CRITICAL-tier review HIGH -- three
+    real, disclosed bounds added, none of which existed in the first
+    version:** (1) `batch_deadline` (the same real, shared wall-clock
+    budget `run_email_ingestion()`'s own outer loop already enforces
+    BETWEEN real users) is now also checked INSIDE this real, per-user
+    loop -- a first version checked it only between users, so one real
+    user with many real, newly-received messages could alone consume
+    the whole real batch deadline, defeating `enable_email_ingestion_
+    cron.sql`'s own real timeout margin over it. (2) `MAX_INTERVIEW_
+    DETECTION_MESSAGES_PER_USER_POLL` bounds real Groq-call fan-out per
+    real user per poll -- a first version offered every real, unchecked
+    message in the whole real `MAX_MESSAGES_PER_POLL` (25) window to a
+    real, billed Groq call. (3) the real "already checked" lookup is
+    now one real, batched query (`interview_detection.py::fetch_
+    message_check_states`, matching phases 1/2's own established
+    `= ANY($2)` convention) rather than one real round trip per
+    message."""
     messages_checked = 0
     interviews_detected = 0
     messages_failed = 0
     received_refs = await _list_message_refs(http_client, access_token=access_token, query="in:inbox -in:sent")
+    check_states = await fetch_message_check_states(
+        pool, user_id=user_id, message_ids=[message_id for message_id, _thread_id in received_refs]
+    )
     for message_id, _thread_id in received_refs:
-        if await is_message_already_checked(pool, user_id=user_id, message_id=message_id):
-            continue  # a real message this user's own prior real poll already classified -- never re-spend a real Groq call on it
+        if time.monotonic() >= batch_deadline:
+            logger.warning(
+                "Real interview-detection phase 3 hit the real, shared batch deadline mid-user -- "
+                "stopping early with partial, honest counts for user_id=%s",
+                user_id,
+            )
+            break
+        if messages_checked >= MAX_INTERVIEW_DETECTION_MESSAGES_PER_USER_POLL:
+            break  # a real, disclosed per-user cap -- see this function's own docstring
+        if check_states.get(message_id, False):
+            continue  # a real message this user's own prior real poll already classified (or durably failed) -- never re-spend a real Groq call on it
         try:
             detail = await _fetch_message_detail(http_client, access_token=access_token, message_id=message_id)
             subject = _extract_header(detail["payload"], "Subject")
@@ -400,6 +432,7 @@ async def scan_one_user_email(
     encryption_key: str,
     http_client: httpx.AsyncClient,
     interview_detection_call: InterviewDetectionCall | None = None,
+    batch_deadline: float = float("inf"),
 ) -> tuple[ScanOutcome, int, int, int, int]:
     """Real, live, per-user Gmail poll. Returns `(outcome, new_sent_
     count, new_replies_count, interviews_detected_count, messages_
@@ -420,7 +453,13 @@ async def scan_one_user_email(
     is a real, additive capability" philosophy already applied to a
     user with no Google grant at all: a deployment with no real
     `GROQ_API_KEY` configured still gets real phases 1/2 unaffected,
-    phase 3 honestly skipped rather than failing the whole real scan."""
+    phase 3 honestly skipped rather than failing the whole real scan.
+    `batch_deadline` (a real `time.monotonic()`-comparable value,
+    genuinely unbounded -- `float('inf')` -- by default) is threaded
+    down into phase 3 alone (`DEC-169`, a real, disclosed CRITICAL-tier
+    review fix) -- see that phase's own docstring for why checking this
+    real, shared budget only BETWEEN real users, never within one, was
+    a real gap."""
     try:
         access_token = await get_valid_google_access_token(
             pool, internal_user_id=user_id, client_id=client_id, client_secret=client_secret, encryption_key=encryption_key
@@ -445,7 +484,8 @@ async def scan_one_user_email(
     interview_failures = 0
     if interview_detection_call is not None:
         _messages_checked, interviews_detected, interview_failures = await _detect_interview_signal_in_new_messages(
-            pool, user_id=user_id, access_token=access_token, http_client=http_client, interview_detection_call=interview_detection_call
+            pool, user_id=user_id, access_token=access_token, http_client=http_client,
+            interview_detection_call=interview_detection_call, batch_deadline=batch_deadline,
         )
 
     return (
@@ -554,6 +594,7 @@ async def run_email_ingestion(
                         encryption_key=encryption_key,
                         http_client=http_client,
                         interview_detection_call=interview_detection_call,
+                        batch_deadline=batch_deadline,
                     )
                 except Exception:  # noqa: BLE001 -- one real user's genuinely unexpected failure must never abort the poll for every other real user
                     users_failed += 1
