@@ -186,9 +186,14 @@ async def test_capture_action_from_text_raises_quick_capture_error_on_an_implaus
 
 async def test_capture_action_from_text_raises_quick_capture_error_on_an_unrecognized_domain(pool, user_id):
     """A real, deliberately never-instructed `domain` value -- proves
-    this module never silently defaults to either real domain when the
-    real extraction output doesn't honestly say which one it means."""
-    extraction = _fake_extraction({"domain": "calendar", "title": "not real yet"})
+    this module never silently defaults to any real domain when the
+    real extraction output doesn't honestly say which one it means.
+    `"email"` is used here specifically because it's a real, plausible
+    future domain (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 7) that
+    genuinely isn't real yet -- `"calendar"` was this test's own
+    original example until Session 5 made it real, which would have
+    silently broken this test's own claim without anyone noticing."""
+    extraction = _fake_extraction({"domain": "email", "title": "not real yet"})
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -374,6 +379,193 @@ async def test_capture_action_from_text_a_real_live_update_budget_reaches_the_re
         assert float(row["monthly_budget_limit"]) == 60_000.0
 
 
+# --- Real, live-database integration tests: Calendar domain (Session 5) ---
+
+
+def _fake_approving_judge_call():
+    """A real, minimal, deterministic fake Judge -- always approves,
+    never rejects/revises/escalates. Used only where a test's own point
+    is proving something ELSE (Stage B reachability, the S3 backstop),
+    not the Judge's own real content judgment -- the live capstones
+    below exercise the real Judge directly."""
+    calls: list[dict] = []
+
+    async def judge_call(proposal, findings, objections):
+        calls.append({"proposal": proposal, "findings": findings, "objections": objections})
+        return GateVerdict(
+            decision="approve", findings=findings, objections=objections,
+            trace_id=str(proposal.proposal_id), revision_count=0,
+        )
+
+    return judge_call, calls
+
+
+def _fake_objecting_critic_call():
+    """A real, minimal, deterministic fake Critic -- returns zero real
+    objections (a legal, honest real Critic outcome for a proposal it
+    finds nothing wrong with), but its own real invocation IS recorded,
+    which is the entire real point: proving the real Critic genuinely
+    runs for `S3`, not what it says once it does."""
+    calls: list[dict] = []
+
+    async def critic_call(proposal, findings):
+        calls.append({"proposal": proposal, "findings": findings})
+        return []
+
+    return critic_call, calls
+
+
+async def test_capture_action_from_text_a_local_calendar_event_is_reviewed_correctly_but_never_actually_created(pool, user_id):
+    """`CREATE_CALENDAR_EVENT_LOCAL` is real `Stakes.S2` (same situation
+    as `UPDATE_BUDGET` -- the real Judge runs, the real Critic never
+    does), proven the same structural way. THE real, disclosed point
+    this test exists to prove: even a genuine Gate `approve` never
+    actually creates anything here -- `action_executor.py` has no real
+    execution target anywhere in this backend for this action type (real
+    local-event ground truth belongs on-device) -- so `executed` is
+    correctly `False` on a genuine approve, not because the Gate
+    rejected anything."""
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+    end = start + timedelta(hours=1)
+    extraction = _fake_extraction(
+        {"domain": "calendar", "title": "Design review", "start_iso": start.isoformat(), "end_iso": end.isoformat(), "invitee_email": None}
+    )
+    judge_call, judge_calls = _fake_approving_judge_call()
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await capture_action_from_text(
+                conn, user_id=user_id, free_text="block 2pm-3pm tomorrow for a design review",
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=judge_call,
+            )
+
+    assert result.stakes == "S2"
+    assert len(judge_calls) == 1  # would have raised AssertionError above if the Critic ran instead/also
+    assert result.decision == "approve"
+    assert result.calendar_action == "create_calendar_event_local"
+    assert result.executed is False  # a genuine approve, but no real execution target exists for this action type anywhere in this backend
+    assert result.event_start is None  # only populated on a genuine `executed=True`, which this domain never produces today
+
+
+async def test_capture_action_from_text_an_external_invitee_calendar_event_reaches_the_real_full_stage_b_debate_and_still_never_auto_executes(pool, user_id):
+    """THE single most load-bearing proof in this session: a genuine
+    real free-text request naming a real external invitee resolves to
+    real `Stakes.S3`, and `gate.orchestration.review()` genuinely runs
+    the FULL Stage B debate for it -- both the real Critic AND the real
+    Judge, proven here with counting fakes for both (the first real
+    proof in this backend's history that a genuine, user-typed request
+    can reach this exact path -- confirmed by direct search before this
+    session that no other real code path ever could). Also proves the
+    real, disclosed safety property this session's own top-of-file
+    docstring depends on: even though the fake Judge below returns a
+    genuine `approve`, `executed` is STILL `False` -- the real S3 human-
+    approval backstop in `action_executor.py` refuses to auto-execute a
+    real external Google Calendar booking on a Gate verdict alone,
+    exactly matching `CLAUDE.md`'s own absolute rule, with zero special-
+    casing needed in this module for it to hold."""
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+    end = start + timedelta(hours=1)
+    extraction = _fake_extraction(
+        {
+            "domain": "calendar", "title": "Call with Jane", "start_iso": start.isoformat(), "end_iso": end.isoformat(),
+            "invitee_email": "jane@company.com",
+        }
+    )
+    judge_call, judge_calls = _fake_approving_judge_call()
+    critic_call, critic_calls = _fake_objecting_critic_call()
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await capture_action_from_text(
+                conn, user_id=user_id, free_text="set up a call with jane@company.com next Tuesday at 10",
+                extraction_call=extraction, critic_call=critic_call, judge_call=judge_call,
+            )
+
+    assert result.stakes == "S3"
+    assert len(critic_calls) == 1  # the real, full Stage B debate genuinely ran -- this is the real point of this test
+    assert len(judge_calls) == 1
+    assert result.decision == "approve"  # the Gate's own real verdict -- genuinely approved
+    assert result.calendar_action == "create_calendar_event_external"
+    assert result.executed is False  # NEVER auto-executed for a real S3 action, regardless of the Gate's own verdict -- the real point
+
+
+async def test_capture_action_from_text_never_fabricates_an_invitee_email_for_a_bare_name(pool, user_id):
+    """The real, disclosed 'the model narrates, the code decides
+    structure' proof for this session (matching `interview_detection
+    .py`'s own company-validation precedent, `DEC-169`): a real
+    extraction that honestly returns `invitee_email: None` (because the
+    free text only names a person by first name, never a real email --
+    this module's own prompt explicitly forbids guessing one) resolves
+    to a real LOCAL event, never fabricating an external booking."""
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+    end = start + timedelta(hours=1)
+    extraction = _fake_extraction(
+        {"domain": "calendar", "title": "Call with Jane", "start_iso": start.isoformat(), "end_iso": end.isoformat(), "invitee_email": None}
+    )
+    judge_call, _judge_calls = _fake_approving_judge_call()
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await capture_action_from_text(
+                conn, user_id=user_id, free_text="set up a call with jane next Tuesday at 10",
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=judge_call,
+            )
+
+    assert result.stakes == "S2"  # NOT S3 -- no real external invitee was genuinely established
+    assert result.calendar_action == "create_calendar_event_local"
+
+
+async def test_capture_action_from_text_raises_quick_capture_error_on_a_malformed_invitee_email(pool, user_id):
+    """Proves the real, minimal `"@"` sanity check in `validate_and_
+    build_calendar_proposal()` is genuinely reached -- a real,
+    hallucinated non-email string never silently becomes a real
+    `has_external_invitee=True` proposal."""
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+    end = start + timedelta(hours=1)
+    extraction = _fake_extraction(
+        {"domain": "calendar", "title": "Call", "start_iso": start.isoformat(), "end_iso": end.isoformat(), "invitee_email": "not a real email"}
+    )
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(QuickCaptureError):
+                await capture_action_from_text(
+                    conn, user_id=user_id, free_text="anything",
+                    extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
+                )
+
+
+async def test_capture_action_from_text_raises_quick_capture_error_when_calendar_end_is_not_after_start(pool, user_id):
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+    extraction = _fake_extraction(
+        {"domain": "calendar", "title": "Backwards event", "start_iso": start.isoformat(), "end_iso": start.isoformat(), "invitee_email": None}
+    )
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(QuickCaptureError):
+                await capture_action_from_text(
+                    conn, user_id=user_id, free_text="anything",
+                    extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
+                )
+
+
+async def test_capture_action_from_text_raises_quick_capture_error_on_an_implausibly_long_calendar_event(pool, user_id):
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+    end = start + timedelta(days=3)  # exceeds the real, max plausible 24h bound
+    extraction = _fake_extraction(
+        {"domain": "calendar", "title": "A real, hallucinated-scale event", "start_iso": start.isoformat(), "end_iso": end.isoformat(), "invitee_email": None}
+    )
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(QuickCaptureError):
+                await capture_action_from_text(
+                    conn, user_id=user_id, free_text="anything",
+                    extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
+                )
+
+
 # --- Prompt construction, pure logic ---
 
 
@@ -394,18 +586,29 @@ def test_build_extraction_prompt_includes_a_real_current_utc_time_anchor():
     assert "Current real UTC time:" in prompt
 
 
-def test_build_extraction_prompt_describes_both_real_domains():
-    """A real, disclosed Session-4 proof: the prompt genuinely instructs
-    the model on both real domains, not just `tasks` -- a regression
-    here would silently narrow this module back to a single real
-    domain without any other test catching it (every fake-extraction
-    test above supplies its own `domain` directly, never exercising the
-    prompt's own real instructions)."""
+def test_build_extraction_prompt_describes_all_three_real_domains():
+    """A real, disclosed Session-4/5 proof: the prompt genuinely
+    instructs the model on all three real domains, not just `tasks` --
+    a regression here would silently narrow this module back to fewer
+    real domains without any other test catching it (every fake-
+    extraction test above supplies its own `domain` directly, never
+    exercising the prompt's own real instructions)."""
     prompt = build_extraction_prompt("anything")
     assert '"tasks"' in prompt
     assert '"finance"' in prompt
+    assert '"calendar"' in prompt
     assert "log_expense" in prompt
     assert "update_budget" in prompt
+    assert "start_iso" in prompt
+    assert "invitee_email" in prompt
+
+
+def test_build_extraction_prompt_never_instructs_the_model_to_guess_an_invitee_email():
+    """A real, structural proof of this session's own 'never fabricate'
+    claim -- the prompt explicitly tells the model NOT to invent a real
+    email address for a person named only by a bare name."""
+    prompt = build_extraction_prompt("anything")
+    assert "never invent or guess a real email address" in prompt
 
 
 def test_build_extraction_prompt_places_every_real_instruction_before_the_users_own_free_text():
@@ -457,3 +660,34 @@ async def test_make_gemini_quick_capture_extraction_call_a_real_live_extraction_
     assert isinstance(result["amount"], (int, float))
     assert result["amount"] == pytest.approx(800.0)
     assert isinstance(result["category"], str) and len(result["category"]) > 0
+
+
+@pytest.mark.skipif(not _HAS_REAL_KEY, reason="no real GEMINI_API_KEY configured in this environment")
+async def test_make_gemini_quick_capture_extraction_call_a_real_live_extraction_from_real_calendar_free_text():
+    """The real, live Session-5 sibling to this file's own tasks/finance
+    capstones above -- proves the SAME real, unified Gemini call
+    genuinely classifies real calendar free text into the real
+    `calendar` domain, and genuinely leaves `invitee_email` `null` for a
+    real local-only request (never fabricating one just because the
+    schema has the field)."""
+    extraction_call = make_gemini_quick_capture_extraction_call(api_key=get_settings().gemini_api_key)
+    result = await extraction_call("block 2pm-3pm tomorrow for a design review")
+
+    assert result["domain"] == "calendar"
+    assert isinstance(result["title"], str) and len(result["title"]) > 0
+    assert isinstance(result["start_iso"], str) and len(result["start_iso"]) > 0
+    assert isinstance(result["end_iso"], str) and len(result["end_iso"]) > 0
+    assert result["invitee_email"] is None
+
+
+@pytest.mark.skipif(not _HAS_REAL_KEY, reason="no real GEMINI_API_KEY configured in this environment")
+async def test_make_gemini_quick_capture_extraction_call_a_real_live_extraction_genuinely_finds_a_real_invitee_email():
+    """The real, live proof that a genuine, literal email address in the
+    free text IS genuinely extracted -- the necessary flip side of the
+    "never fabricate" test above; both must hold for this session's own
+    `has_external_invitee`-from-code design to be trustworthy."""
+    extraction_call = make_gemini_quick_capture_extraction_call(api_key=get_settings().gemini_api_key)
+    result = await extraction_call("set up a call with jane@company.com next Tuesday at 10am")
+
+    assert result["domain"] == "calendar"
+    assert result["invitee_email"] == "jane@company.com"

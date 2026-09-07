@@ -519,7 +519,7 @@ Wraps `trust_digest.py`'s real `compare_weeks()` — confirmed, before building,
 
 ---
 
-### 5.18 `POST /quick_capture` (specified — real and live since `DEC-153`, but never documented in this file until now; extended to a second real domain, `QUORUM_FINAL_COMPLETION_PLAN.md` Session 4)
+### 5.18 `POST /quick_capture` (specified — real and live since `DEC-153`, but never documented in this file until now; extended to a second real domain, `QUORUM_FINAL_COMPLETION_PLAN.md` Session 4, and a third, `Stakes.S3`-reaching one, Session 5)
 
 Request:
 
@@ -527,7 +527,7 @@ Request:
 { "text": "spent 800 on groceries at BigBasket" }
 ```
 
-Response (`200`):
+Response (`200`), a `finance` result:
 
 ```json
 {
@@ -539,14 +539,45 @@ Response (`200`):
   "amount": 800.0,
   "category": "groceries",
   "finance_action": "log_expense",
+  "event_start": null,
+  "event_end": null,
+  "event_title": null,
+  "calendar_action": null,
   "findings": [ { "...": "a real Finding, see §1.3" } ],
   "objections": [ { "...": "a real Objection, see §1.4 -- always empty for a real Stakes.S1 result, since Stage B never runs" } ]
 }
 ```
 
-One real, unified extraction call classifies a real user's own free text into exactly one of two real domains today, `"tasks"` or `"finance"` — `domain` is always present; every field belonging to the *other* domain is always present too, but always `null`. `title` is `tasks`-only (populated only when `domain == "tasks"` and `executed == true`); `amount`/`category`/`finance_action` are the `finance`-domain equivalent, populated only when `domain == "finance"` and `executed == true`. `finance_action` is the real, resolved `FinanceAction` (`"log_expense"` or `"update_budget"`) — not the free-form `category` a person typed. `stakes` is `"S1"` for `CREATE_TASK`/`LOG_EXPENSE`, or `"S2"` for `UPDATE_BUDGET` — the one real case where Stage B (the Judge only; `gate.orchestration.run_stage_b()` invokes the Critic only for `S3`, never `S2`) genuinely runs on this route. This extraction call stays on Gemini rather than Groq specifically because `CLAUDE.md`'s architecture fact groups the real Generator and Judge together as one same-provider unit — a Groq-backed extraction call would split the Generator away from the Judge's own provider, independent of whether the Critic itself ever runs; see `features/quick_capture.py`'s own top-of-file docstring for the full, corrected account (an earlier draft of this reasoning incorrectly described the Critic reviewing its own draft, caught by CRITICAL-tier review before merge). `executed` follows the same three-valued honesty `action_executor.py::ExecutionResult` established elsewhere: `false` means a genuine Gate `reject`/`revise`/`escalate_to_human`, never a fabricated success.
+Response (`200`), a `calendar` result naming a real external invitee -- genuinely reviewed, genuinely never executed:
 
-Errors: `401` no/invalid auth; `422` blank/oversized `text` (a real, client-side-catchable length bound, `min_length=1, max_length=2000`); `503` the extraction provider isn't configured, OR (real, disclosed, `S2`-only) the Gate's own Judge stayed unreachable after every real retry; `502` a real extraction attempt was made and genuinely failed, or its output genuinely couldn't be turned into a real proposal.
+```json
+{
+  "executed": false,
+  "decision": "approve",
+  "stakes": "S3",
+  "domain": "calendar",
+  "title": null,
+  "amount": null,
+  "category": null,
+  "finance_action": null,
+  "event_start": null,
+  "event_end": null,
+  "event_title": null,
+  "calendar_action": "create_calendar_event_external",
+  "findings": [ { "...": "a real Finding, see §1.3" } ],
+  "objections": [ { "...": "a real, genuine Critic objection, see §1.4 -- Stage B's full debate DOES run for this one real case" } ]
+}
+```
+
+One real, unified extraction call classifies a real user's own free text into exactly one of three real domains today, `"tasks"`, `"finance"`, or `"calendar"` — `domain` is always present; every field belonging to the *other* domains is always present too, but always `null`, with ONE deliberate exception: `calendar_action` is populated whenever `domain == "calendar"` REGARDLESS of `executed` (see below for why). `title` is `tasks`-only (populated only when `domain == "tasks"` and `executed == true`); `amount`/`category`/`finance_action` are the `finance`-domain equivalent, populated only when `domain == "finance"` and `executed == true`; `event_start`/`event_end`/`event_title` are the `calendar`-domain equivalent of `title`, populated only when `executed == true` (which no real path produces today — see below). `finance_action`/`calendar_action` are the real, resolved `FinanceAction`/`ActionType` values (`"log_expense"`/`"update_budget"`, `"create_calendar_event_local"`/`"create_calendar_event_external"`) — never the free-form text a person typed.
+
+`stakes` is `"S1"` for `CREATE_TASK`/`LOG_EXPENSE`, `"S2"` for `UPDATE_BUDGET`/`CREATE_CALENDAR_EVENT_LOCAL` (the Judge only runs; `gate.orchestration.run_stage_b()` invokes the Critic only for `S3`), or `"S3"` for `CREATE_CALENDAR_EVENT_EXTERNAL` — the one real case on this route where the FULL Stage B debate genuinely runs (both the real Groq Critic and the real Gemini Judge). This extraction call stays on Gemini rather than Groq for all three domains specifically because `CLAUDE.md`'s architecture fact groups the real Generator and Judge together as one same-provider unit; for `calendar` specifically, this is not just a provider-grouping technicality -- a Groq-backed extraction call would put the real Critic in the position of reviewing a proposal drafted by that same Groq model, for real, since the Critic genuinely runs for `S3`. See `features/quick_capture.py`'s own top-of-file docstring for the full account.
+
+**A real, disclosed, safety-driven fact, not an implementation gap:** a genuine `calendar` result with `executed == false` and `decision == "approve"` is the ORDINARY, expected outcome for both real calendar action types today, not a rare exception like it is for `finance`/`tasks`. `CREATE_CALENDAR_EVENT_LOCAL` has no real execution target anywhere in this backend (real local-event ground truth belongs on-device); `CREATE_CALENDAR_EVENT_EXTERNAL`'s real `Stakes.S3` human-approval backstop refuses to auto-execute a real Google Calendar booking from this route's own Gate verdict alone, matching `CLAUDE.md`'s absolute rule that S3 actions always require a separate, explicit human approval. This route can genuinely review a calendar request end to end and correctly explain why, but it can never book or create one.
+
+`executed` follows the same three-valued honesty `action_executor.py::ExecutionResult` established elsewhere: `false` means either a genuine Gate `reject`/`revise`/`escalate_to_human`, OR (calendar-specific, see above) a genuine `approve` that still correctly never executed — never a fabricated success either way.
+
+Errors: `401` no/invalid auth; `422` blank/oversized `text` (a real, client-side-catchable length bound, `min_length=1, max_length=2000`); `503` the extraction provider isn't configured, OR (real, disclosed, `S2`/`S3`-only) the Gate's own Stage B stayed unreachable after every real retry; `502` a real extraction attempt was made and genuinely failed, or its output genuinely couldn't be turned into a real proposal.
 
 ---
 

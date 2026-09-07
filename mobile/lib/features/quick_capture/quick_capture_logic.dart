@@ -14,6 +14,12 @@
 // `executed == true`. `formatCurrency` is reused directly from
 // `finance_logic.dart` (not redefined) -- the same real `₹` display
 // convention the Finance/Subscriptions screens already use.
+//
+// REAL, DISCLOSED SESSION-5 EXTENSION: a third real domain, Calendar --
+// `eventStart`/`eventEnd`/`eventTitle` follow `title`/`amount`/
+// `category`'s own "only when genuinely executed" rule, but
+// `calendarAction` deliberately does NOT (see `QuickCaptureResultData`'s
+// own docstring below for why this domain's own convention differs).
 
 import 'package:quorum_mobile/features/finance/finance_logic.dart' show formatCurrency;
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
@@ -35,6 +41,10 @@ class QuickCaptureResultData {
   final double? amount;
   final String? category;
   final String? financeAction;
+  final String? eventStart;
+  final String? eventEnd;
+  final String? eventTitle;
+  final String? calendarAction;
   final List<FindingSummary> findings;
 
   const QuickCaptureResultData({
@@ -46,6 +56,10 @@ class QuickCaptureResultData {
     this.amount,
     this.category,
     this.financeAction,
+    this.eventStart,
+    this.eventEnd,
+    this.eventTitle,
+    this.calendarAction,
     required this.findings,
   });
 }
@@ -72,6 +86,14 @@ String describeQuickCaptureOutcome(QuickCaptureResultData result) {
         _ => 'Recorded a real finance change.', // defensive -- never genuinely reached today
       };
     }
+    if (result.domain == 'calendar') {
+      // Defensive, future-proof (`QUORUM_FINAL_COMPLETION_PLAN.md`
+      // Session 5) -- no real path produces `executed: true` for
+      // calendar today (see the `decision == 'approve'` branch below
+      // for the real, disclosed reason), but this stays honest if a
+      // future session ever wires up a real execution target.
+      return 'Created: ${result.eventTitle}';
+    }
     return 'Created: ${result.title}';
   }
   // RESOLVED, a real, disclosed CRITICAL-tier review LOW: `escalate_to_
@@ -88,6 +110,30 @@ String describeQuickCaptureOutcome(QuickCaptureResultData result) {
   // but has no real in-app way to be approved from there today.
   if (result.domain == 'finance' && result.decision == 'escalate_to_human') {
     return 'This needs your direct approval before Quorum can change it.';
+  }
+  // REAL, DISCLOSED SESSION-5 ADDITION: a genuine Gate `approve` that
+  // still never executed is the ORDINARY real outcome for `calendar`
+  // today, not a rare exception -- neither real calendar action type
+  // has a real, live execution path through this route (`QUORUM_DATA_
+  // CONTRACTS.md` §5.18 has the full, disclosed reasoning: no real,
+  // server-side local execution target exists anywhere in this
+  // backend, and a real external Google Calendar booking always needs
+  // a real, separate, explicit human approval this route can never
+  // itself provide, per `CLAUDE.md`'s own absolute S3 rule). Handled
+  // here, before the generic decision switch below, which has no real
+  // `'approve'` case of its own and would otherwise fall through to
+  // the same uninformative "That was not created" every genuine Stage
+  // A/B refusal already gets -- misleadingly implying the Gate
+  // declined it, when it genuinely didn't.
+  if (result.decision == 'approve') {
+    if (result.domain == 'calendar') {
+      return switch (result.calendarAction) {
+        'create_calendar_event_external' => 'This needs your direct approval before Quorum can send that invite.',
+        'create_calendar_event_local' => "Approved -- add this to your calendar for now; direct creation isn't wired up yet.",
+        _ => 'Approved, but nothing was written yet.', // defensive -- never genuinely reached today
+      };
+    }
+    return 'Approved, but nothing was written yet.'; // defensive -- a genuine approve should already have executed for every other real domain today
   }
   return switch (result.decision) {
     'revise' => "Quorum couldn't create that as described -- see why below.",

@@ -478,6 +478,34 @@ async def quick_capture_endpoint(
     stakes level being reachable from a synchronous, user-facing,
     tappable surface.
 
+    **REAL, DISCLOSED, `QUORUM_FINAL_COMPLETION_PLAN.md` SESSION 5: this
+    route now covers a third real domain (Calendar), the most severe
+    real instance yet of the same plan-text error corrected above.**
+    `ActionType.CREATE_CALENDAR_EVENT_EXTERNAL` is real `Stakes.S3`, and
+    `run_stage_b()` genuinely DOES invoke the real Critic for `S3` --
+    unlike `finance`'s own `UPDATE_BUDGET` (`S2`), where it structurally
+    never does. A Groq-backed calendar extraction call would therefore
+    be a REAL, directly reachable Generator/Critic collision, confirmed
+    by direct search to be the first one this entire backend's history
+    could actually produce (`action_executor.py`'s own top-of-file
+    docstring already documented `CREATE_CALENDAR_EVENT_EXTERNAL` as
+    unreachable everywhere else in this codebase). Fixed the same way:
+    the calendar extraction stays on the same unified Gemini call.
+
+    **A real, disclosed, safety-driven correction to this session's own
+    verification text, not a shortfall:** a genuine external-invitee
+    calendar request through this route can NEVER auto-execute a real
+    Google Calendar booking, by construction -- `persist_gate_verdict()`
+    never supplies the real, explicit `approved_by_user_id` `action_
+    executor.py`'s own real S3 backstop requires, matching `CLAUDE.md`'s
+    absolute rule that S3 actions always need a separate, explicit human
+    approval, never an unsupervised free-text submission's own Gate
+    verdict alone. `CREATE_CALENDAR_EVENT_LOCAL` has no real execution
+    target anywhere in this backend either (real local-event ground
+    truth belongs on-device). This domain's real value here is entirely
+    the Gate's own honest review -- see `features/quick_capture.py`'s
+    own top-of-file docstring for the full account.
+
     RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-153`
     M2): the real Gemini extraction call happens BEFORE `pool.acquire()`
     -- an earlier version held a real, pooled Postgres connection idle-
@@ -543,6 +571,10 @@ async def quick_capture_endpoint(
         "amount": result.amount,
         "category": result.category,
         "finance_action": result.finance_action,
+        "event_start": result.event_start,
+        "event_end": result.event_end,
+        "event_title": result.event_title,
+        "calendar_action": result.calendar_action,
         "findings": [finding.model_dump(mode="json") for finding in result.findings],
         "objections": [objection.model_dump(mode="json") for objection in result.objections],
     }
