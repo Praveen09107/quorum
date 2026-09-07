@@ -1,0 +1,1 @@
+DROP TABLE interview_detection_checked_messages;

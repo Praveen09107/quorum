@@ -63,6 +63,13 @@ async def user_id(pool):
     uid = await get_or_create_user(pool, google_sub=google_sub, email=None)
     yield uid
     await pool.execute("DELETE FROM sent_messages WHERE user_id = $1", uuid.UUID(uid))
+    # RESOLVED, `DEC-169`: `applications.user_id` has no real FK/CASCADE
+    # at all (confirmed directly against migration `0001` before adding
+    # this -- unlike `interview_detection_checked_messages`, which does)
+    # -- this file's own phase-3 tests are the first here to seed real
+    # `applications` rows, and would otherwise leave them permanently
+    # orphaned in the real, live database on every real test run.
+    await pool.execute("DELETE FROM applications WHERE user_id = $1", uuid.UUID(uid))
     await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(uid))
 
 
@@ -117,6 +124,10 @@ class _FakeGmailMessage:
     subject: str
     recipient: str
     internal_date_ms: str
+    # RESOLVED, `DEC-169`: real, optional real body-preview text for
+    # phase-3 (interview detection) tests -- defaults to empty, backward
+    # compatible with every pre-existing real test that never needed it.
+    snippet: str = ""
 
 
 class _FakeResponse:
@@ -140,6 +151,7 @@ def _fake_detail_body(message: _FakeGmailMessage) -> dict:
             ]
         },
         "internalDate": message.internal_date_ms,
+        "snippet": message.snippet,
     }
 
 
@@ -185,12 +197,12 @@ class _FakeGmailClient:
 
 
 async def test_scan_one_user_email_returns_no_google_token_for_a_user_who_never_granted_access(pool, user_id):
-    outcome, new_sent, new_replies, messages_failed = await scan_one_user_email(
+    outcome, new_sent, new_replies, interviews_detected, messages_failed = await scan_one_user_email(
         pool, user_id=user_id, client_id="unused", client_secret="unused", encryption_key="unused",
         http_client=_FakeGmailClient([]),
     )
     assert outcome is ScanOutcome.NO_GOOGLE_TOKEN
-    assert (new_sent, new_replies, messages_failed) == (0, 0, 0)
+    assert (new_sent, new_replies, interviews_detected, messages_failed) == (0, 0, 0, 0)
 
 
 async def test_scan_one_user_email_a_real_refresh_failure_is_a_distinct_honest_outcome_not_a_failure(pool, user_id, monkeypatch):
@@ -205,12 +217,12 @@ async def test_scan_one_user_email_a_real_refresh_failure_is_a_distinct_honest_o
 
     monkeypatch.setattr("quorum_backend.features.email_ingestion.get_valid_google_access_token", _fake_valid_token_raises)
 
-    outcome, new_sent, new_replies, messages_failed = await scan_one_user_email(
+    outcome, new_sent, new_replies, interviews_detected, messages_failed = await scan_one_user_email(
         pool, user_id=user_id, client_id="unused", client_secret="unused", encryption_key="unused",
         http_client=_FakeGmailClient([]),
     )
     assert outcome is ScanOutcome.GOOGLE_TOKEN_REFRESH_FAILED
-    assert (new_sent, new_replies, messages_failed) == (0, 0, 0)
+    assert (new_sent, new_replies, interviews_detected, messages_failed) == (0, 0, 0, 0)
 
 
 async def test_scan_one_user_email_records_a_real_new_sent_message_and_skips_already_known_ones(pool, user_id, monkeypatch):
@@ -220,13 +232,14 @@ async def test_scan_one_user_email_records_a_real_new_sent_message_and_skips_alr
         _FakeGmailMessage(id="msg-1", thread_id="thread-1", label_ids=["SENT"], subject="Hi", recipient="a@x.com", internal_date_ms="1700000000000"),
     ])
 
-    outcome, new_sent, new_replies, messages_failed = await scan_one_user_email(
+    outcome, new_sent, new_replies, interviews_detected, messages_failed = await scan_one_user_email(
         pool, user_id=user_id, client_id="unused", client_secret="unused", encryption_key="unused", http_client=fake_client
     )
 
     assert outcome is ScanOutcome.SCANNED
     assert new_sent == 1
     assert new_replies == 0
+    assert interviews_detected == 0
     assert messages_failed == 0
     assert fake_client.detail_calls == ["msg-1"]  # a real detail fetch genuinely happened for the new message
 
@@ -239,7 +252,7 @@ async def test_scan_one_user_email_records_a_real_new_sent_message_and_skips_alr
     fake_client_2 = _FakeGmailClient([
         _FakeGmailMessage(id="msg-1", thread_id="thread-1", label_ids=["SENT"], subject="Hi", recipient="a@x.com", internal_date_ms="1700000000000"),
     ])
-    outcome_2, new_sent_2, _, _ = await scan_one_user_email(
+    outcome_2, new_sent_2, _, _, _ = await scan_one_user_email(
         pool, user_id=user_id, client_id="unused", client_secret="unused", encryption_key="unused", http_client=fake_client_2
     )
     assert new_sent_2 == 0
@@ -269,7 +282,7 @@ async def test_scan_one_user_email_a_real_message_detail_failure_is_tallied_not_
 
     fake_client.get = _flaky_get
 
-    outcome, new_sent, new_replies, messages_failed = await scan_one_user_email(
+    outcome, new_sent, new_replies, interviews_detected, messages_failed = await scan_one_user_email(
         pool, user_id=user_id, client_id="unused", client_secret="unused", encryption_key="unused", http_client=fake_client
     )
 
@@ -297,7 +310,7 @@ async def test_scan_one_user_email_detects_a_real_reply_in_a_genuinely_unreplied
         _FakeGmailMessage(id="reply-1", thread_id="thread-1", label_ids=["INBOX"], subject="Re: original", recipient="me@x.com", internal_date_ms="1700000100000"),  # 100s later
     ])
 
-    outcome, new_sent, new_replies, messages_failed = await scan_one_user_email(
+    outcome, new_sent, new_replies, interviews_detected, messages_failed = await scan_one_user_email(
         pool, user_id=user_id, client_id="unused", client_secret="unused", encryption_key="unused", http_client=fake_client
     )
 
@@ -330,7 +343,7 @@ async def test_scan_one_user_email_an_old_inbound_message_never_marks_a_newer_re
         ),
     ])
 
-    outcome, new_sent, new_replies, messages_failed = await scan_one_user_email(
+    outcome, new_sent, new_replies, interviews_detected, messages_failed = await scan_one_user_email(
         pool, user_id=user_id, client_id="unused", client_secret="unused", encryption_key="unused", http_client=fake_client
     )
 
@@ -357,7 +370,7 @@ async def test_scan_one_user_email_a_self_sent_message_never_marks_itself_as_its
         _FakeGmailMessage(id="self-sent", thread_id="self-thread", label_ids=["SENT", "INBOX"], subject="To myself", recipient="me@x.com", internal_date_ms="1700000000000"),
     ])
 
-    outcome, new_sent, new_replies, messages_failed = await scan_one_user_email(
+    outcome, new_sent, new_replies, interviews_detected, messages_failed = await scan_one_user_email(
         pool, user_id=user_id, client_id="unused", client_secret="unused", encryption_key="unused", http_client=fake_client
     )
 
@@ -390,6 +403,120 @@ async def test_gmail_list_failure_raises_a_real_gmail_api_error(pool, user_id, m
         await scan_one_user_email(
             pool, user_id=user_id, client_id="unused", client_secret="unused", encryption_key="unused", http_client=fake_client
         )
+
+
+# --- Phase 3, interview detection (`DEC-169`) ---
+
+
+async def test_scan_one_user_email_skips_phase_3_entirely_when_no_interview_detection_call_is_given(pool, user_id, monkeypatch):
+    """`interview_detection_call=None` (the real, live default when no
+    real `GROQ_API_KEY` is configured) must never even attempt the
+    real, separate `messages.list` phase 3 needs -- see `scan_one_
+    user_email`'s own docstring for why this is a real, honest skip,
+    never a failure."""
+    _patch_valid_token(monkeypatch)
+
+    fake_client = _FakeGmailClient([
+        _FakeGmailMessage(id="msg-1", thread_id="thread-1", label_ids=["INBOX"], subject="Interview Confirmed", recipient="me@x.com", internal_date_ms="1700000000000"),
+    ])
+
+    outcome, _new_sent, _new_replies, interviews_detected, _messages_failed = await scan_one_user_email(
+        pool, user_id=user_id, client_id="unused", client_secret="unused", encryption_key="unused", http_client=fake_client,
+    )
+
+    assert outcome is ScanOutcome.SCANNED
+    assert interviews_detected == 0
+    # This real, fresh user has no real `sent_messages` at all, so
+    # phase 2's own already-established "quota-saving skip" means it
+    # never calls `in:inbox -in:sent` either (see `test_scan_one_user_
+    # email_skips_the_received_query_entirely_when_no_thread_is_
+    # unreplied` above) -- a real, honest ZERO here proves phase 3's
+    # own, unconditional-when-enabled real `messages.list` call
+    # genuinely never fired, not just that it happened to be masked by
+    # phase 2's own identical query.
+    assert fake_client.list_calls.count("in:inbox -in:sent") == 0
+
+
+async def test_scan_one_user_email_phase_3_detects_a_real_interview_and_flips_the_real_application(pool, user_id, monkeypatch):
+    _patch_valid_token(monkeypatch)
+
+    await _seed_application_for_email_ingestion(pool, user_id=user_id, company="Notion")
+
+    fake_client = _FakeGmailClient([
+        _FakeGmailMessage(
+            id="interview-msg", thread_id="interview-thread", label_ids=["INBOX"],
+            subject="Interview Confirmed: Software Engineer", recipient="me@x.com",
+            internal_date_ms="1700000000000", snippet="We'd like to confirm your interview with Notion.",
+        ),
+    ])
+
+    async def _fake_detection_call(subject, snippet, open_companies):
+        assert open_companies == ["Notion"]
+        assert "Interview Confirmed" in subject
+        return {"is_interview": True, "company": "Notion"}
+
+    outcome, _new_sent, _new_replies, interviews_detected, messages_failed = await scan_one_user_email(
+        pool, user_id=user_id, client_id="unused", client_secret="unused", encryption_key="unused",
+        http_client=fake_client, interview_detection_call=_fake_detection_call,
+    )
+
+    assert outcome is ScanOutcome.SCANNED
+    assert interviews_detected == 1
+    assert messages_failed == 0
+    row = await pool.fetchrow("SELECT status FROM applications WHERE user_id = $1 AND company = 'Notion'", uuid.UUID(user_id))
+    assert row["status"] == "interview_scheduled"
+
+
+async def test_scan_one_user_email_phase_3_never_reclassifies_an_already_checked_real_message(pool, user_id, monkeypatch):
+    _patch_valid_token(monkeypatch)
+
+    await _seed_application_for_email_ingestion(pool, user_id=user_id, company="Notion")
+
+    fake_client = _FakeGmailClient([
+        _FakeGmailMessage(
+            id="interview-msg", thread_id="interview-thread", label_ids=["INBOX"],
+            subject="Interview Confirmed", recipient="me@x.com", internal_date_ms="1700000000000",
+            snippet="We'd like to confirm your interview.",
+        ),
+    ])
+
+    detection_call_count = 0
+
+    async def _counting_detection_call(subject, snippet, open_companies):
+        nonlocal detection_call_count
+        detection_call_count += 1
+        return {"is_interview": False, "company": None}
+
+    await scan_one_user_email(
+        pool, user_id=user_id, client_id="unused", client_secret="unused", encryption_key="unused",
+        http_client=fake_client, interview_detection_call=_counting_detection_call,
+    )
+    assert detection_call_count == 1
+
+    # A real, repeat poll of the SAME message (still in the top of a
+    # real inbox, per this module's own accepted "most recent N"
+    # window) must never spend a second real Groq call on it.
+    fake_client_2 = _FakeGmailClient([
+        _FakeGmailMessage(
+            id="interview-msg", thread_id="interview-thread", label_ids=["INBOX"],
+            subject="Interview Confirmed", recipient="me@x.com", internal_date_ms="1700000000000",
+            snippet="We'd like to confirm your interview.",
+        ),
+    ])
+    await scan_one_user_email(
+        pool, user_id=user_id, client_id="unused", client_secret="unused", encryption_key="unused",
+        http_client=fake_client_2, interview_detection_call=_counting_detection_call,
+    )
+    assert detection_call_count == 1  # genuinely unchanged -- the real message was already checked
+
+
+async def _seed_application_for_email_ingestion(pool, *, user_id: str, company: str, status: str = "applied") -> str:
+    application_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company, status) VALUES ($1, $2, $3, $4)",
+        application_id, uuid.UUID(user_id), company, status,
+    )
+    return str(application_id)
 
 
 # --- Batch entry point -- real per-user failure isolation, and the real job-level lock ---
@@ -528,7 +655,7 @@ async def test_scan_one_user_email_a_real_genuine_send_is_genuinely_detected_end
             assert send_response.status_code == 200
             sent_message_id = send_response.json()["id"]
 
-            outcome, new_sent, new_replies, messages_failed = await scan_one_user_email(
+            outcome, new_sent, new_replies, interviews_detected, messages_failed = await scan_one_user_email(
                 pool, user_id=real_user_id, client_id=settings.google_oauth_client_id,
                 client_secret=settings.google_oauth_client_secret, encryption_key=settings.google_token_encryption_key,
                 http_client=client,

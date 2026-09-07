@@ -2266,10 +2266,10 @@ def test_email_ingestion_real_secret_and_matching_header_reaches_the_real_route_
     in `test_email_ingestion.py`, scoped to real, test-owned users only."""
     from quorum_backend.features.email_ingestion import EmailIngestionResult
 
-    async def _fake_run_email_ingestion(pool, *, client_id, client_secret, encryption_key, user_ids=None):
+    async def _fake_run_email_ingestion(pool, *, client_id, client_secret, encryption_key, user_ids=None, interview_detection_call=None):
         return EmailIngestionResult(
             users_scanned=3, users_failed=0, users_skipped_no_token=1, users_token_refresh_failed=1,
-            messages_failed=0, new_sent_messages=2, new_replies_detected=1,
+            messages_failed=0, new_sent_messages=2, new_replies_detected=1, interviews_detected=0,
         )
 
     monkeypatch.setattr("quorum_backend.main.run_email_ingestion", _fake_run_email_ingestion)
@@ -2290,10 +2290,59 @@ def test_email_ingestion_real_secret_and_matching_header_reaches_the_real_route_
             "messages_failed": 0,
             "new_sent_messages": 2,
             "new_replies_detected": 1,
+            "interviews_detected": 0,
             "already_running": False,
         }
     finally:
         get_settings.cache_clear()
+
+
+def test_email_ingestion_route_wires_a_real_interview_detection_call_only_when_groq_is_configured(monkeypatch):
+    """RESOLVED, `DEC-169`: this route's own real, conditional wiring
+    (`make_groq_interview_detection_call(...) if settings.groq_api_key
+    else None`) is proven directly here, both ways -- never assumed
+    correct just because the individual pieces (`interview_detection.py`,
+    `email_ingestion.py`'s own optional param) are each tested in
+    isolation elsewhere. Uses the same real, established `model_copy()`
+    fix every other test in this file already relies on for this exact
+    kind of check: `monkeypatch.setenv`/`delenv` alone has no effect on
+    `GROQ_API_KEY` here, since pydantic-settings reads `backend/.env` as
+    a file, not this shell's own OS environment."""
+    from quorum_backend import main as main_module
+    from quorum_backend.features.email_ingestion import EmailIngestionResult
+
+    captured: dict = {}
+
+    async def _capturing_fake_run_email_ingestion(pool, *, client_id, client_secret, encryption_key, user_ids=None, interview_detection_call=None):
+        captured["interview_detection_call"] = interview_detection_call
+        return EmailIngestionResult(
+            users_scanned=0, users_failed=0, users_skipped_no_token=0, users_token_refresh_failed=0,
+            messages_failed=0, new_sent_messages=0, new_replies_detected=0, interviews_detected=0,
+        )
+
+    monkeypatch.setattr(main_module, "run_email_ingestion", _capturing_fake_run_email_ingestion)
+
+    configured_settings = get_settings().model_copy(
+        update={
+            "groq_api_key": "a-real-configured-groq-key",
+            "google_oauth_client_id": "a-real-configured-client-id",
+            "google_oauth_client_secret": "a-real-configured-client-secret",
+            "google_token_encryption_key": "a-real-configured-encryption-key",
+            "internal_drain_secret": "a-real-configured-secret",
+        }
+    )
+    monkeypatch.setattr(main_module, "get_settings", lambda: configured_settings)
+    with TestClient(app) as client:
+        response = client.post("/internal/email-ingestion", headers={"X-Internal-Secret": "a-real-configured-secret"})
+    assert response.status_code == 200
+    assert captured["interview_detection_call"] is not None
+
+    unconfigured_settings = configured_settings.model_copy(update={"groq_api_key": None})
+    monkeypatch.setattr(main_module, "get_settings", lambda: unconfigured_settings)
+    with TestClient(app) as client:
+        response = client.post("/internal/email-ingestion", headers={"X-Internal-Secret": "a-real-configured-secret"})
+    assert response.status_code == 200
+    assert captured["interview_detection_call"] is None
 
 
 # --- GET /career_pipeline/{application_id}/digest (Phase 6, DEC-147) ---

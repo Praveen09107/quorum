@@ -99,6 +99,22 @@ ALL FIXED HERE:**
    longer collapsed into the same bucket as an unrelated code bug, the
    same three-valued-over-collapsing discipline `Finding.evidence_
    state` already holds elsewhere in this project.
+
+REAL, NEW PHASE 3 (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 3,
+`DEC-169`): `_detect_interview_signal_in_new_messages()` below, closing
+the one Phase 4 item this project's own text explicitly deferred until
+this module had been proven live for a real while -- it has. Delegates
+the real classification itself entirely to `features/interview_
+detection.py` (a genuinely different kind of code -- an outbound Groq
+call -- kept out of this file per its own established, zero-LLM-call
+scope); this module's own real job is only the Gmail-specific
+mechanics: listing real received messages and fetching their real
+detail. Deliberately makes its OWN, separate real `messages.list` call
+rather than reusing phase 2's -- a real, disclosed, accepted minor
+inefficiency (this file's own quota-conscious philosophy already
+accepts a comparable one for `MAX_MESSAGES_PER_POLL`) traded for
+leaving phase 2 (already `DEC-140` CRITICAL-tier reviewed) completely
+untouched.
 """
 from __future__ import annotations
 
@@ -114,6 +130,11 @@ import httpx
 
 from quorum_backend.auth.google_oauth import GoogleOAuthExchangeFailed
 from quorum_backend.auth.google_token_store import get_valid_google_access_token
+from quorum_backend.features.interview_detection import (
+    InterviewDetectionCall,
+    detect_interview_for_message,
+    is_message_already_checked,
+)
 from quorum_backend.features.waiting_on import mark_thread_replied, record_sent_message
 
 logger = logging.getLogger("quorum_backend")
@@ -161,6 +182,10 @@ class EmailIngestionResult:
     messages_failed: int
     new_sent_messages: int
     new_replies_detected: int
+    # RESOLVED, `DEC-169`: real, honest count of applications this real
+    # run genuinely, atomically flipped to `interview_scheduled` -- see
+    # `features/interview_detection.py`'s own top-of-file docstring.
+    interviews_detected: int = 0
     # True only when this real run did no real work at all because a
     # previous real run still held the job-level advisory lock -- see
     # review finding 3. Every other field is a real, honest zero in
@@ -310,6 +335,62 @@ async def _detect_real_replies(
     return new_replies, messages_failed
 
 
+async def _detect_interview_signal_in_new_messages(
+    pool: asyncpg.Pool,
+    *,
+    user_id: str,
+    access_token: str,
+    http_client: httpx.AsyncClient,
+    interview_detection_call: InterviewDetectionCall,
+) -> tuple[int, int, int]:
+    """Phase 3 (`DEC-169`): for real, received messages this user
+    hasn't already been checked for interview signal (`interview_
+    detection_checked_messages`, migration `0017`), delegates one real
+    classification call each to `features/interview_detection.py`. See
+    this module's own top-of-file docstring for why this makes its own,
+    separate real `messages.list` call rather than reusing phase 2's.
+    Returns `(messages_checked, interviews_detected, messages_failed)`.
+    Same real per-message isolation as phases 1/2 above -- one real
+    message's failure never aborts the rest of this user's real scan."""
+    messages_checked = 0
+    interviews_detected = 0
+    messages_failed = 0
+    received_refs = await _list_message_refs(http_client, access_token=access_token, query="in:inbox -in:sent")
+    for message_id, _thread_id in received_refs:
+        if await is_message_already_checked(pool, user_id=user_id, message_id=message_id):
+            continue  # a real message this user's own prior real poll already classified -- never re-spend a real Groq call on it
+        try:
+            detail = await _fetch_message_detail(http_client, access_token=access_token, message_id=message_id)
+            subject = _extract_header(detail["payload"], "Subject")
+            # Gmail's real Messages resource always carries a top-level
+            # `snippet` (a short, real body preview) regardless of the
+            # `metadataHeaders` requested -- a real, defensive empty-
+            # string fallback here, never a crash, if a genuinely
+            # malformed real response were ever missing it.
+            snippet = detail.get("snippet", "")
+            updated = await detect_interview_for_message(
+                pool,
+                user_id=user_id,
+                message_id=message_id,
+                subject=subject,
+                snippet=snippet,
+                detection_call=interview_detection_call,
+            )
+        except Exception:  # noqa: BLE001 -- one real message's failure must never abort the rest of this user's real scan; same real precedent phases 1/2 above already established
+            messages_failed += 1
+            logger.exception(
+                "Real interview-detection failed to process real message_id=%s for user_id=%s -- "
+                "continuing to the next real message",
+                message_id,
+                user_id,
+            )
+            continue
+        messages_checked += 1
+        if updated:
+            interviews_detected += 1
+    return messages_checked, interviews_detected, messages_failed
+
+
 async def scan_one_user_email(
     pool: asyncpg.Pool,
     *,
@@ -318,19 +399,28 @@ async def scan_one_user_email(
     client_secret: str,
     encryption_key: str,
     http_client: httpx.AsyncClient,
-) -> tuple[ScanOutcome, int, int, int]:
+    interview_detection_call: InterviewDetectionCall | None = None,
+) -> tuple[ScanOutcome, int, int, int, int]:
     """Real, live, per-user Gmail poll. Returns `(outcome, new_sent_
-    count, new_replies_count, messages_failed_count)`. Real, honest
-    `NO_GOOGLE_TOKEN` for a user who never granted access at all, and a
-    real, honest, DISTINCT `GOOGLE_TOKEN_REFRESH_FAILED` for a user who
-    has a real, stored grant that a real refresh attempt just failed
-    for (review finding 4) -- neither is a code-level failure, the same
-    real precedent `deadline_watch.py`'s own `NO_CLAIM` outcome already
-    established for "nothing real to do here, not a failure."
+    count, new_replies_count, interviews_detected_count, messages_
+    failed_count)`. Real, honest `NO_GOOGLE_TOKEN` for a user who never
+    granted access at all, and a real, honest, DISTINCT `GOOGLE_TOKEN_
+    REFRESH_FAILED` for a user who has a real, stored grant that a real
+    refresh attempt just failed for (review finding 4) -- neither is a
+    code-level failure, the same real precedent `deadline_watch.py`'s
+    own `NO_CLAIM` outcome already established for "nothing real to do
+    here, not a failure."
 
-    Delegates to `_record_new_sent_messages()` and `_detect_real_
-    replies()` above for the two real phases -- kept as separate
-    functions, each individually testable, rather than one large loop."""
+    Delegates to `_record_new_sent_messages()`, `_detect_real_
+    replies()`, and (`DEC-169`) `_detect_interview_signal_in_new_
+    messages()` above for the three real phases -- kept as separate
+    functions, each individually testable, rather than one large loop.
+    `interview_detection_call` is genuinely optional (`None` by
+    default) -- matching this file's own established "Gmail integration
+    is a real, additive capability" philosophy already applied to a
+    user with no Google grant at all: a deployment with no real
+    `GROQ_API_KEY` configured still gets real phases 1/2 unaffected,
+    phase 3 honestly skipped rather than failing the whole real scan."""
     try:
         access_token = await get_valid_google_access_token(
             pool, internal_user_id=user_id, client_id=client_id, client_secret=client_secret, encryption_key=encryption_key
@@ -341,9 +431,9 @@ async def scan_one_user_email(
             "own endpoint is currently degraded; treated as an honest skip, not a code failure",
             user_id,
         )
-        return ScanOutcome.GOOGLE_TOKEN_REFRESH_FAILED, 0, 0, 0
+        return ScanOutcome.GOOGLE_TOKEN_REFRESH_FAILED, 0, 0, 0, 0
     if access_token is None:
-        return ScanOutcome.NO_GOOGLE_TOKEN, 0, 0, 0
+        return ScanOutcome.NO_GOOGLE_TOKEN, 0, 0, 0, 0
 
     new_sent, sent_failures = await _record_new_sent_messages(
         pool, user_id=user_id, access_token=access_token, http_client=http_client
@@ -351,8 +441,20 @@ async def scan_one_user_email(
     new_replies, reply_failures = await _detect_real_replies(
         pool, user_id=user_id, access_token=access_token, http_client=http_client
     )
+    interviews_detected = 0
+    interview_failures = 0
+    if interview_detection_call is not None:
+        _messages_checked, interviews_detected, interview_failures = await _detect_interview_signal_in_new_messages(
+            pool, user_id=user_id, access_token=access_token, http_client=http_client, interview_detection_call=interview_detection_call
+        )
 
-    return ScanOutcome.SCANNED, new_sent, new_replies, sent_failures + reply_failures
+    return (
+        ScanOutcome.SCANNED,
+        new_sent,
+        new_replies,
+        interviews_detected,
+        sent_failures + reply_failures + interview_failures,
+    )
 
 
 async def _try_claim_job_lock(pool: asyncpg.Pool) -> bool:
@@ -379,7 +481,13 @@ async def _release_job_lock(pool: asyncpg.Pool) -> None:
 
 
 async def run_email_ingestion(
-    pool: asyncpg.Pool, *, client_id: str, client_secret: str, encryption_key: str, user_ids: list[str] | None = None
+    pool: asyncpg.Pool,
+    *,
+    client_id: str,
+    client_secret: str,
+    encryption_key: str,
+    user_ids: list[str] | None = None,
+    interview_detection_call: InterviewDetectionCall | None = None,
 ) -> EmailIngestionResult:
     """The real entry point -- `POST /internal/email-ingestion`
     (`main.py`) calls this with `user_ids=None` (the real, live
@@ -394,7 +502,11 @@ async def run_email_ingestion(
     docstring, review finding 3, for why. `user_ids`, when explicitly
     passed, scopes the real poll to exactly those users -- the same
     real, disclosed test-safety boundary every other real autonomous
-    job in this backend already established."""
+    job in this backend already established.
+
+    `interview_detection_call` (`DEC-169`) is genuinely optional -- see
+    `scan_one_user_email`'s own docstring for why threading `None`
+    through must never fail this real job, only honestly skip phase 3."""
     acquired = await _try_claim_job_lock(pool)
     if not acquired:
         logger.warning("Real email ingestion skipped this cycle -- a previous real run still holds the job lock")
@@ -419,6 +531,7 @@ async def run_email_ingestion(
         messages_failed_total = 0
         new_sent_messages = 0
         new_replies_detected = 0
+        interviews_detected_total = 0
 
         batch_deadline = time.monotonic() + EMAIL_INGESTION_BATCH_DEADLINE_SECONDS
 
@@ -433,13 +546,14 @@ async def run_email_ingestion(
                     )
                     break
                 try:
-                    outcome, new_sent, new_replies, messages_failed = await scan_one_user_email(
+                    outcome, new_sent, new_replies, interviews_detected, messages_failed = await scan_one_user_email(
                         pool,
                         user_id=user_id,
                         client_id=client_id,
                         client_secret=client_secret,
                         encryption_key=encryption_key,
                         http_client=http_client,
+                        interview_detection_call=interview_detection_call,
                     )
                 except Exception:  # noqa: BLE001 -- one real user's genuinely unexpected failure must never abort the poll for every other real user
                     users_failed += 1
@@ -459,6 +573,7 @@ async def run_email_ingestion(
                 users_scanned += 1
                 new_sent_messages += new_sent
                 new_replies_detected += new_replies
+                interviews_detected_total += interviews_detected
 
         return EmailIngestionResult(
             users_scanned=users_scanned,
@@ -468,6 +583,7 @@ async def run_email_ingestion(
             messages_failed=messages_failed_total,
             new_sent_messages=new_sent_messages,
             new_replies_detected=new_replies_detected,
+            interviews_detected=interviews_detected_total,
         )
     finally:
         await _release_job_lock(pool)
