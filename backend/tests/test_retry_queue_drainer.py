@@ -96,11 +96,24 @@ def test_available_hours_before_deadline_scales_with_real_calendar_days():
 
 
 def test_map_verdict_to_outcome_is_exhaustive_over_every_real_decision():
-    assert map_verdict_to_outcome(_verdict("approve", revision_count=0)) == ("approved_unchanged", True)
-    assert map_verdict_to_outcome(_verdict("approve", revision_count=1)) == ("caught_by_gate", True)
-    assert map_verdict_to_outcome(_verdict("reject")) == ("caught_by_gate", True)
-    assert map_verdict_to_outcome(_verdict("revise")) == ("caught_by_gate", True)
-    assert map_verdict_to_outcome(_verdict("escalate_to_human")) == (None, False)
+    assert map_verdict_to_outcome(_verdict("approve", revision_count=0), executed=True) == ("approved_unchanged", True)
+    assert map_verdict_to_outcome(_verdict("approve", revision_count=1), executed=True) == ("caught_by_gate", True)
+    assert map_verdict_to_outcome(_verdict("reject"), executed=False) == ("caught_by_gate", True)
+    assert map_verdict_to_outcome(_verdict("revise"), executed=False) == ("caught_by_gate", True)
+    assert map_verdict_to_outcome(_verdict("escalate_to_human"), executed=False) == (None, False)
+
+
+def test_map_verdict_to_outcome_a_genuine_approve_that_never_executed_stays_honestly_unresolved():
+    """RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-
+    171`): a genuine `approve` whose real execution never happened (no
+    real execution target exists yet, or -- a real `Stakes.S3` action --
+    the real human-approval backstop correctly refused to auto-execute)
+    must NEVER be recorded as `approved_unchanged`/resolved -- that
+    would be a real, live claim that a real effect happened when it
+    provably didn't. Proven here directly for both real revision
+    counts, matching the exhaustive test above."""
+    assert map_verdict_to_outcome(_verdict("approve", revision_count=0), executed=False) == (None, False)
+    assert map_verdict_to_outcome(_verdict("approve", revision_count=1), executed=False) == (None, False)
 
 
 def test_validate_and_build_finance_proposal_rejects_a_non_positive_amount():
@@ -334,6 +347,47 @@ async def test_drain_due_jobs_an_unsupported_domain_fails_loud_via_the_real_retr
     assert row is not None
     assert row["attempt_count"] == 1
     assert "career" in row["last_error"]
+
+
+async def test_drain_due_jobs_processes_a_real_calendar_local_job_and_correctly_stays_unresolved(pool, user_id):
+    """RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM, found
+    before merge (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 5, `DEC-
+    171`): this is the FIRST real, live, end-to-end drainer test to
+    ever exercise the `calendar` domain through `drain_due_jobs()` --
+    confirmed by direct search before writing it. `CREATE_CALENDAR_
+    EVENT_LOCAL` has no real execution target anywhere in this backend
+    (real local-event ground truth belongs on-device), so a genuine
+    Gate `approve` here never actually executes -- this test proves
+    that real, already-live fact is now correctly reflected as an
+    honestly UNRESOLVED `action_events` row (`outcome`/`resolved_at`
+    both real `NULL`, the same shape `escalate_to_human` already gets),
+    not the `approved_unchanged`/resolved row this exact real, already-
+    deployed code path incorrectly wrote before this fix -- a real,
+    live correctness gap this session's own new `calendar` work in
+    `quick_capture.py` surfaced, but which was already reachable, and
+    already wrong, through this pre-existing drainer pipeline."""
+    retry_id = await _seed_job(pool, user_id=user_id, source_domains=["calendar"])
+    translation_call = await _fake_translation_call_factory(
+        {"calendar": {"start_iso": "2026-09-10T14:00:00+00:00", "end_iso": "2026-09-10T15:00:00+00:00", "title": "Design review"}}
+    )
+
+    result = await drain_due_jobs(pool, translation_call=translation_call, critic_call=_fake_critic_call, judge_call=_fake_judge_approve)
+
+    assert result.jobs_succeeded == 1
+    assert result.downstream_actions_produced == 1
+    assert result.downstream_actions_executed == 0  # genuinely never executes -- no real target exists
+    assert await pool.fetchrow("SELECT 1 FROM retry_queue WHERE retry_id = $1", retry_id) is None
+
+    event = await pool.fetchrow(
+        "SELECT action_type, stakes, gate_decision, outcome, resolved_at FROM action_events WHERE user_id = $1", uuid.UUID(user_id)
+    )
+    assert event["action_type"] == "create_calendar_event_local"
+    assert event["stakes"] == "S2"
+    assert event["gate_decision"] == "approve"
+    # THE real point: a genuine approve that never executed stays
+    # honestly unresolved -- never falsely recorded as a real success.
+    assert event["outcome"] is None
+    assert event["resolved_at"] is None
 
 
 async def test_drain_due_jobs_processes_a_real_single_domain_job_and_persists_a_real_action_event(pool, user_id):
