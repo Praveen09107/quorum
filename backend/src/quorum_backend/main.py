@@ -69,6 +69,7 @@ from quorum_backend.features.email_ingestion import run_email_ingestion
 from quorum_backend.features.follow_up import run_follow_up
 from quorum_backend.features.gate_reveal import fetch_gate_reveal
 from quorum_backend.features.honesty_log import fetch_honesty_feed
+from quorum_backend.features.interview_detection import make_groq_interview_detection_call
 from quorum_backend.features.negotiation_choice import (
     InvalidChosenOption,
     NegotiationAlreadyResolved,
@@ -1375,15 +1376,26 @@ async def email_ingestion_route(
     batch (`features/email_ingestion.py::EMAIL_INGESTION_JOB_LOCK_KEY`)
     -- a real, overlapping `pg_cron` fire is a real, honest no-op
     (`already_running: true`, every other field a real `0`), not a
-    second, wasteful concurrent scan."""
+    second, wasteful concurrent scan.
+
+    RESOLVED, `DEC-169`: real, autonomous interview detection (Session 3,
+    `QUORUM_FINAL_COMPLETION_PLAN.md`) now rides this same real poll --
+    see `features/interview_detection.py`'s own top-of-file docstring.
+    Genuinely optional, not a new hard dependency: a real, missing
+    `GROQ_API_KEY` on this deployment honestly skips phase 3 only
+    (`interviews_detected` stays a real `0`), never fails phases 1/2."""
     settings = get_settings()
     if not settings.google_oauth_client_id or not settings.google_oauth_client_secret or not settings.google_token_encryption_key:
         raise HTTPException(status_code=503, detail="Email ingestion is not currently available -- Google OAuth isn't fully configured on this deployment.")
+    interview_detection_call = (
+        make_groq_interview_detection_call(api_key=settings.groq_api_key) if settings.groq_api_key else None
+    )
     result = await run_email_ingestion(
         pool,
         client_id=settings.google_oauth_client_id,
         client_secret=settings.google_oauth_client_secret,
         encryption_key=settings.google_token_encryption_key,
+        interview_detection_call=interview_detection_call,
     )
     return {
         "users_scanned": result.users_scanned,
@@ -1393,6 +1405,7 @@ async def email_ingestion_route(
         "messages_failed": result.messages_failed,
         "new_sent_messages": result.new_sent_messages,
         "new_replies_detected": result.new_replies_detected,
+        "interviews_detected": result.interviews_detected,
         "already_running": result.already_running,
     }
 
