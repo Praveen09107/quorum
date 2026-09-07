@@ -83,6 +83,51 @@ void main() {
     });
   });
 
+  group('describeQuickCaptureOutcome -- calendar domain (Session 5)', () {
+    test('a genuine approve for a real LOCAL event is honest about not being created yet, never "declined"', () {
+      // REAL, DISCLOSED: `executed: false` + `decision: 'approve'` is
+      // the ORDINARY real outcome for `calendar` today -- no real
+      // server-side execution target exists for a local event anywhere
+      // in this backend. This must never read like the Gate rejected
+      // anything, since it genuinely didn't.
+      const result = QuickCaptureResultData(
+        executed: false, decision: 'approve', stakes: 'S2', domain: 'calendar',
+        title: null, calendarAction: 'create_calendar_event_local', findings: [],
+      );
+      final message = describeQuickCaptureOutcome(result);
+      expect(message, "Approved -- add this to your calendar for now; direct creation isn't wired up yet.");
+      expect(message, isNot(contains('declined')));
+      expect(message, isNot(contains('not created')));
+    });
+
+    test('a genuine approve for a real EXTERNAL invite asks for real, separate human approval, never auto-implies it was sent', () {
+      // REAL, DISCLOSED, load-bearing safety wording: `CREATE_CALENDAR_
+      // EVENT_EXTERNAL` is real `Stakes.S3` and can NEVER auto-execute
+      // through quick-capture (`CLAUDE.md`'s own absolute S3 rule) --
+      // this message must never claim or imply a real invite was sent.
+      const result = QuickCaptureResultData(
+        executed: false, decision: 'approve', stakes: 'S3', domain: 'calendar',
+        title: null, calendarAction: 'create_calendar_event_external', findings: [],
+      );
+      final message = describeQuickCaptureOutcome(result);
+      expect(message, 'This needs your direct approval before Quorum can send that invite.');
+      expect(message, isNot(contains('Created')));
+    });
+
+    test('a real calendar revise gives the same honest, distinct message as tasks/finance', () {
+      const result = QuickCaptureResultData(executed: false, decision: 'revise', stakes: 'S2', domain: 'calendar', title: null, findings: []);
+      expect(describeQuickCaptureOutcome(result), contains("couldn't create"));
+    });
+
+    test('a real, defensive executed=true case (no real path produces this today) names the real event title, never a task title', () {
+      const result = QuickCaptureResultData(
+        executed: true, decision: 'approve', stakes: 'S2', domain: 'calendar',
+        title: null, eventTitle: 'Design review', findings: [],
+      );
+      expect(describeQuickCaptureOutcome(result), 'Created: Design review');
+    });
+  });
+
   test('FindingSummary/EvidenceVisualState are genuinely reused, not redefined', () {
     // A real, direct proof this file imports the real gate_reveal_logic.dart
     // types rather than shadowing them with a second, parallel definition.

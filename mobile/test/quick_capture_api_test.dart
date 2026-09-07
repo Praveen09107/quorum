@@ -142,6 +142,38 @@ void main() {
       expect(result.financeAction, 'log_expense');
     });
 
+    test('parses a real, genuine calendar review (Session 5) into QuickCaptureResultData with a real calendarAction, even though executed is false', () async {
+      final client = MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'executed': false,
+            'decision': 'approve',
+            'stakes': 'S3',
+            'domain': 'calendar',
+            'title': null,
+            'event_start': null,
+            'event_end': null,
+            'event_title': null,
+            'calendar_action': 'create_calendar_event_external',
+            'findings': [],
+            'objections': [],
+          }),
+          200,
+        );
+      });
+
+      final capture = createQuickCaptureFetcher(getAccessToken: () async => 'token', client: client);
+      final result = await capture('set up a call with jane@company.com next Tuesday at 10');
+
+      expect(result.executed, isFalse);
+      expect(result.domain, 'calendar');
+      expect(result.stakes, 'S3');
+      // The real, load-bearing parsing proof: `calendar_action` is
+      // genuinely readable even when `executed` is false -- the one
+      // real field this domain deliberately populates regardless.
+      expect(result.calendarAction, 'create_calendar_event_external');
+    });
+
     test('a real 502 (genuine extraction failure) surfaces the real backend detail message', () async {
       final client = MockClient((request) async {
         return http.Response(jsonEncode({'detail': "Couldn't turn that into a real task: real reason"}), 502);

@@ -373,21 +373,51 @@ async def _translate_and_build_proposal(
     raise DownstreamDrainError(f"Unsupported domain for downstream translation: {domain!r}")
 
 
-def map_verdict_to_outcome(verdict: GateVerdict) -> tuple[str | None, bool]:
-    """Real, exhaustive mapping from `GateVerdict.decision` onto
-    `action_events`'s own real, closed `outcome` vocabulary
-    (`approved_unchanged`/`corrected_by_user`/`caught_by_gate`/
-    `uncertain_no_data`), confirmed against `trust_digest.py`'s own real
-    usage before choosing it, not guessed. Returns `(outcome,
-    is_resolved)`: `is_resolved=False` means both `outcome` AND
-    `resolved_at` stay real, honest `NULL` -- exactly `features/
-    today.py`'s own established "only a genuinely still-open action ever
-    has a live NULL resolved_at" semantics, so an `escalate_to_human`
-    verdict from this drainer genuinely, correctly appears as a real
-    `needs_you_now` entry the next time `/today` is called -- closing a
-    real, small piece of that screen's own disclosed "correct but empty"
-    gap (`DEC-119`), not by fabricating content, but by this module
-    finally being a real producer for a table `/today` already reads.
+def map_verdict_to_outcome(verdict: GateVerdict, *, executed: bool) -> tuple[str | None, bool]:
+    """Real, exhaustive mapping from `GateVerdict.decision` (and, for a
+    genuine `approve`, whether it genuinely executed) onto `action_
+    events`'s own real, closed `outcome` vocabulary (`approved_
+    unchanged`/`corrected_by_user`/`caught_by_gate`/`uncertain_no_
+    data`), confirmed against `trust_digest.py`'s own real usage before
+    choosing it, not guessed. Returns `(outcome, is_resolved)`:
+    `is_resolved=False` means both `outcome` AND `resolved_at` stay
+    real, honest `NULL` -- exactly `features/today.py`'s own established
+    "only a genuinely still-open action ever has a live NULL
+    resolved_at" semantics, so an `escalate_to_human` verdict from this
+    drainer genuinely, correctly appears as a real `needs_you_now` entry
+    the next time `/today` is called -- closing a real, small piece of
+    that screen's own disclosed "correct but empty" gap (`DEC-119`), not
+    by fabricating content, but by this module finally being a real
+    producer for a table `/today` already reads.
+
+    RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM, found
+    before merge (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 5, `DEC-
+    171`): this function used to decide `outcome`/`resolved_at` from
+    `verdict.decision` ALONE, before `persist_gate_verdict()` below ever
+    called the real executor -- correct back when a genuine `approve`
+    essentially always meant "and it was genuinely written" for this
+    drainer's own three original real action types. `quick_capture.py`'s
+    own real `calendar` domain (`DEC-171`) broke that assumption for
+    real: a genuine `approve` on `CREATE_CALENDAR_EVENT_LOCAL`/`_
+    EXTERNAL` is the ORDINARY outcome that STILL never executes (no real
+    execution target exists for the local case; the real S3 human-
+    approval backstop correctly refuses the external case) -- and this
+    function was recording that as `"approved_unchanged"`/resolved
+    regardless, a real, live claim that a real effect happened when it
+    provably never did. Two real, disclosed, concrete consequences this
+    fix closes: `trust_digest.py` counted every such row as a real
+    success, inflating a user's own displayed trust rate for an action
+    the system deliberately never carried out; and `/today`'s own
+    `resolved_at IS NULL` Needs-You-Now query could never surface it,
+    even though the real mobile client's own message for this exact
+    case (`describeQuickCaptureOutcome()`, `create_calendar_event_
+    external`) tells the user it genuinely needs their separate
+    approval -- a real, permanent dead end with no surface anywhere to
+    grant it. Fixed: a genuine `approve` that did NOT actually execute
+    now stays exactly as unresolved as `escalate_to_human` already is
+    (`outcome`/`resolved_at` both `NULL`) -- the same honest "still
+    needs attention" shape, reached through a second, now genuinely
+    live, real path.
 
     No `corrected_by_user` case exists here: that outcome specifically
     means a HUMAN corrected a draft, which never happens anywhere in
@@ -398,9 +428,11 @@ def map_verdict_to_outcome(verdict: GateVerdict) -> tuple[str | None, bool]:
     """
     if verdict.decision == "escalate_to_human":
         return None, False
-    if verdict.decision == "approve" and verdict.revision_count == 0:
-        return "approved_unchanged", True
-    if verdict.decision == "approve" and verdict.revision_count == 1:
+    if verdict.decision == "approve":
+        if not executed:
+            return None, False
+        if verdict.revision_count == 0:
+            return "approved_unchanged", True
         return "caught_by_gate", True
     if verdict.decision == "reject":
         return "caught_by_gate", True
@@ -457,8 +489,23 @@ async def persist_gate_verdict(
     `severity`/`signed_off` as plain JSON values, never Python enum
     reprs) and `datetime` fields as real ISO-8601 strings -- verified
     directly against `gate/schemas.py`'s actual models, not assumed."""
-    outcome, is_resolved = map_verdict_to_outcome(verdict)
     final_payload = verdict.revised_payload if verdict.revised_payload is not None else proposal.payload
+
+    # RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-
+    # 171`): execution now happens BEFORE `outcome`/`resolved_at` are
+    # decided, not after -- see `map_verdict_to_outcome()`'s own
+    # docstring for the full account of why recording a genuine approve
+    # as resolved/successful regardless of whether it actually executed
+    # was a real, live honesty gap, not just a hypothetical one.
+    executed = False
+    if verdict.decision == "approve":
+        result = await execute_approved_action(conn, action_type=proposal.action_type, payload=final_payload, user_id=user_id)
+        executed = bool(result.executed)
+    # Never executes on reject/revise/escalate_to_human -- see this
+    # module's and action_executor.py's own top-of-file docstrings for
+    # why escalate_to_human specifically must never execute.
+
+    outcome, is_resolved = map_verdict_to_outcome(verdict, executed=executed)
     await conn.execute(
         "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at, findings, objections) "
         "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)",
@@ -474,15 +521,7 @@ async def persist_gate_verdict(
         json.dumps([finding.model_dump(mode="json") for finding in verdict.findings]),
         json.dumps([objection.model_dump(mode="json") for objection in verdict.objections]),
     )
-
-    if verdict.decision != "approve":
-        # Never executes on reject/revise/escalate_to_human -- see this
-        # module's and action_executor.py's own top-of-file docstrings
-        # for why escalate_to_human specifically must never execute.
-        return False
-
-    result = await execute_approved_action(conn, action_type=proposal.action_type, payload=final_payload, user_id=user_id)
-    return result.executed
+    return executed
 
 
 async def process_negotiation_downstream_job(

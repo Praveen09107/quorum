@@ -541,6 +541,42 @@ async def test_quick_capture_endpoint_is_real_and_live_creates_a_real_expense_en
         await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
 
 
+@pytest.mark.skipif(get_settings().gemini_api_key is None or get_settings().groq_api_key is None, reason="no real GEMINI_API_KEY/GROQ_API_KEY configured in this environment")
+async def test_quick_capture_endpoint_is_real_and_live_reviews_an_external_calendar_invite_via_the_real_full_stage_b_debate(pool, provisioned_users):
+    """The real, live, end-to-end Calendar-domain proof `QUORUM_FINAL_
+    COMPLETION_PLAN.md` Session 5's own verification asks for -- with
+    Session 5's own real, disclosed correction applied: this can never
+    produce a real Google Calendar booking (see `main.py`'s own route
+    docstring for the full account), so this test's own real point is
+    proving the full, real pipeline -- real Gemini extraction, real
+    Stage A, the real FULL Stage B debate (Groq Critic AND Gemini
+    Judge, genuinely different providers, zero collision) -- resolves
+    correctly end to end for a genuine external-invitee request, and
+    that the real S3 backstop correctly refuses to auto-execute
+    regardless of the real, live Gate's own verdict."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/quick_capture",
+                json={"text": "set up a call with jane@company.com next Tuesday at 10am for 30 minutes"},
+                headers=headers,
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["domain"] == "calendar"
+        assert body["stakes"] == "S3"
+        assert body["calendar_action"] == "create_calendar_event_external"
+        # The real, load-bearing safety proof: NEVER executed, no matter
+        # what the real, live Gate decided -- confirmed directly, not
+        # just documented.
+        assert body["executed"] is False
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
 # --- GET /predictive_risk (Phase 6, DEC-149) ---
 
 

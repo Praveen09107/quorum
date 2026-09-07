@@ -91,15 +91,23 @@ QuickCaptureResultData _parseQuickCaptureResult(Map<String, dynamic> json) {
     executed: json['executed'] as bool,
     decision: json['decision'] as String,
     stakes: json['stakes'] as String,
-    // REAL, DISCLOSED SESSION-4 EXTENSION: `domain` is always present in
-    // the real backend response (`QUORUM_DATA_CONTRACTS.md` §5.18);
+    // REAL, DISCLOSED SESSION-4/5 EXTENSION: `domain` is always present
+    // in the real backend response (`QUORUM_DATA_CONTRACTS.md` §5.18);
     // `amount`/`category`/`finance_action` are the real `finance`-domain
-    // fields, always present but `null` for a `tasks`-domain result.
+    // fields, `event_start`/`event_end`/`event_title`/`calendar_action`
+    // the real `calendar`-domain ones -- all always present but `null`
+    // for a non-matching domain's result (`calendar_action` is the one
+    // real exception, populated regardless of `executed` -- see
+    // `QuickCaptureResultData`'s own docstring for why).
     domain: json['domain'] as String,
     title: json['title'] as String?,
     amount: (json['amount'] as num?)?.toDouble(),
     category: json['category'] as String?,
     financeAction: json['finance_action'] as String?,
+    eventStart: json['event_start'] as String?,
+    eventEnd: json['event_end'] as String?,
+    eventTitle: json['event_title'] as String?,
+    calendarAction: json['calendar_action'] as String?,
     findings: [
       for (final findingJson in findingsJson)
         FindingSummary(
