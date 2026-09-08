@@ -237,10 +237,11 @@ async def build_stage_a_checks_for_domain(
             # payload (`tasks_agent.py::build_task_proposal()` always sets
             # it), genuinely `None` on a real CREATE_TASK payload and a real
             # id only on a real UPDATE_TASK one -- `.get()` below reads the
-            # same `None` either way the key is merely absent, so nothing
-            # downstream depends on which of those two is literally true,
-            # but the comment itself should say what the payload actually
-            # is. Threaded through so this task's own real, currently-committed
+            # same `None` either way, whether the key is actually present
+            # with a `None` value or genuinely absent, so nothing downstream
+            # depends on which of those two is literally true here, but the
+            # comment itself should say what the payload actually is.
+            # Threaded through so this task's own real, currently-committed
             # hours are excluded from its own capacity check -- see
             # `fetch_committed_hours_before()`'s own docstring for the full
             # real double-counting bug this fixes.

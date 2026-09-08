@@ -642,25 +642,56 @@ def test_resolve_single_reference_a_lone_multi_word_candidate_still_rejects_a_we
         _resolve_single_reference(candidates, "the membership renewal for car insurance")
 
 
-def test_resolve_single_reference_a_short_candidate_and_a_longer_one_correctly_fail_loud_together():
+def test_resolve_single_reference_the_real_longer_correct_candidate_wins_by_raw_overlap_count():
     """THE real, concrete reproduction of this session's own CONFIRMED
-    BLOCKER (DEC-172, H1) -- AND of the real follow-up finding (F1) the
-    FIRST fix attempt introduced -- both preserved here as one permanent
-    regression test. A task titled plainly "Gym" (one significant word)
-    and a real, longer candidate both plausibly match "gym membership":
-    the ORIGINAL broken rule (candidate-side only) silently, uniquely
-    picked "Gym" alone (H1). The FIRST fix attempt (reference-side only)
-    would have silently, uniquely picked the longer one instead -- the
-    identical class of harm from the opposite direction (F1). Neither
-    silent pick is safe: with both real rules combined, BOTH candidates
-    are correctly recognized as plausible, and the function correctly
-    fails loud instead of silently guessing either way."""
+    BLOCKER (DEC-172, H1), preserved as a permanent regression test under
+    the FINAL, comparative-ranking design. A task titled plainly "Gym"
+    (one significant word) and a real, longer, genuinely-correct
+    candidate both share a word with "gym membership" -- but the longer
+    one shares TWO real words (`gym`, `membership`) while "Gym" shares
+    only one. Raw overlap COUNT comparison correctly, uniquely resolves
+    to the real, longer candidate (`2 &gt; 1`, a real, unambiguous winner)
+    -- achieving H1's own original safety goal, but via comparison
+    rather than any independent, exploitable threshold."""
     candidates = [
         ("id-short", "Gym"),
         ("id-correct", "Renew gym membership at the new place downtown"),
     ]
+    assert _resolve_single_reference(candidates, "gym membership") == "id-correct"
+
+
+def test_resolve_single_reference_a_genuine_tie_in_raw_overlap_count_correctly_fails_loud():
+    """THE real, concrete reproduction of this session's own CONFIRMED
+    round-2 regression (DEC-172, F-A): a short candidate and a longer
+    candidate that EACH share only the exact same single word with the
+    reference (the longer one does NOT contain "membership" at all,
+    unlike the test above) -- a genuine 1-1 TIE in raw lexical evidence,
+    which no amount of ratio-juggling can safely break. The comparative
+    design's own tie-detection (checked BEFORE any ratio) correctly
+    fails loud here instead of arbitrarily picking either real
+    candidate, closing the exact hole a plain OR-of-two-thresholds
+    design (this session's own second fix attempt) left open."""
+    candidates = [
+        ("id-a", "Gym shoes"),
+        ("id-b", "Cancel my gym subscription at the new place"),
+    ]
     with pytest.raises(AmbiguousReferenceError):
         _resolve_single_reference(candidates, "gym membership")
+
+
+def test_resolve_single_reference_a_short_correct_candidate_resolves_when_it_is_the_sole_contender():
+    """THE real, dedicated proof that F3 (ordinary short `finance`/
+    `career` candidates like a bare payee/company failing to resolve at
+    all under the reference-side-only design) stays fixed under the
+    FINAL, comparative design too: a real, one-word candidate that is
+    the ONLY real contender (the other real candidate shares zero words
+    at all, so never enters the running) still resolves -- it is a
+    trivial, unique leader by raw count, and its own real overlap
+    accounts for 100% of ITS OWN word count, clearing the sufficiency
+    bar even though it covers only half of the (slightly more
+    descriptive) reference."""
+    candidates = [("id-notion", "Notion"), ("id-stripe", "Stripe")]
+    assert _resolve_single_reference(candidates, "the Notion application") == "id-notion"
 
 
 # --- Real, live-database integration tests: Task update/delete (Session 6) ---

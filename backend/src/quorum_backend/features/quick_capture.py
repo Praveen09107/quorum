@@ -958,34 +958,46 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
     place downtown" also present but failing ITS OWN 50% bar.
 
     RESOLVED, a real, disclosed follow-up CRITICAL-tier review finding
-    (F1/F3) on the FIRST fix attempt, found before merge in the same
-    round: dropping the candidate-side ratio ENTIRELY (matching only on
-    "does the candidate cover 2/3 of the reference") traded H1's bug for
-    its OWN mirror image, and broke ordinary short-candidate matching
-    for `finance`/`career` (a bare payee/company is often one word,
-    which can never cover 2/3 of a two-word reference). Concretely: with
-    candidates `["Gym", "Cancel gym membership card"]` and reference
-    "the gym membership task", the reference-side-only rule EXCLUDED the
-    real, intended "Gym" (1 of 3 reference words covered) and uniquely,
-    SILENTLY resolved to the wrong "Cancel gym membership card" (which
-    covers 2 of 3) -- the exact class of harm H1 exists to prevent,
-    reached from the opposite direction.
+    (F1/F3), found before merge in the same round: the FIRST fix
+    (dropping the candidate-side ratio entirely, matching only on "does
+    the candidate cover 2/3 of the reference") traded H1's bug for its
+    OWN mirror image, and broke ordinary short-candidate matching for
+    `finance`/`career` (a bare payee/company is often one word, which
+    can never cover 2/3 of a two-word reference).
 
-    THE REAL, FINAL FIX: a candidate is included if EITHER real rule
-    flags it -- the original candidate-side rule (`>= half of the
-    CANDIDATE's own words`) OR the reference-side rule (`>= 2/3 of the
-    REFERENCE's own words`, `3 * len(overlap) >= 2 * len(reference_
-    words)`, plain integer arithmetic, no float boundary). Each rule
-    alone has exactly one blind spot (favoring short candidates /
-    favoring long candidates, respectively); together, EITHER one
-    flagging a candidate is enough to put it in play. This does NOT
-    reduce safety -- it can only ever ADD a candidate to the "in the
-    running" set, never silently drop the correct one. Where this makes
-    a case that used to auto-resolve now correctly report `Ambiguous
-    ReferenceError` instead (the user must be more specific), that is
-    the deliberately safe outcome this whole function's own docstring
-    already demands: fail loud, NEVER a fallback guess -- a slightly
-    less convenient safe answer beats a wrong one, in either direction."""
+    RESOLVED, a real, disclosed THIRD-round follow-up CRITICAL-tier
+    review finding, found before merge: the SECOND fix (admit a
+    candidate if EITHER the candidate-side OR the reference-side rule
+    flags it) was still an INDEPENDENT, PER-CANDIDATE threshold check --
+    which structurally cannot fix both H1 and F1 at once, because a
+    union of two rules keeps BOTH rules' false positives. Concretely,
+    verified live: open tasks `"Gym shoes"` and `"Cancel my gym
+    subscription at the new place"`, reference "gym membership" -- both
+    candidates share only the single word "gym" with the reference (the
+    longer one does NOT contain "membership" at all), so BOTH fail the
+    reference-side rule, but the SHORT one alone satisfies the restored
+    candidate-side rule (`1 >= max(1, 2/2) = 1`) -- H1's exact mechanism,
+    live again, silently resolving to the wrong short candidate.
+
+    THE REAL, FINAL FIX -- structurally different, not a fourth
+    threshold arrangement: matching is now COMPARATIVE, not independent
+    per candidate. Every candidate with at least one shared word is a
+    real "contender," ranked by its RAW overlap word COUNT (not a
+    ratio). If exactly one contender has the strictly highest count, it
+    is the sole leader; if two or more tie for the highest count, that
+    is a genuine, irreducible tie in the real lexical evidence, and the
+    function correctly fails loud regardless of any ratio (the "Gym
+    shoes" reproduction above is a genuine 1-1 tie under this rule, and
+    correctly raises `AmbiguousReferenceError` rather than picking
+    either side). A lone leader still has to clear a minimum bar to
+    resolve at all -- the same two real rules from before (candidate-
+    side OR reference-side), now applied ONLY to decide whether the
+    winning count is substantial enough to act on, never to decide
+    which candidate wins in the first place. This is what a "union of
+    thresholds" could never do: raw-count comparison correctly picks the
+    real, longer, correct candidate over a short coincidental one
+    (H1: `2 > 1`, unique winner) WITHOUT ever letting two candidates that
+    are genuinely, equally weak (F-A: `1 == 1`) resolve to either one."""
     if not reference_description or not reference_description.strip():
         raise AmbiguousReferenceError("No real reference was given for which existing record this refers to.")
     reference_words = _significant_words(reference_description)
@@ -993,7 +1005,7 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
         raise AmbiguousReferenceError(
             f"{reference_description!r} has no real, significant words to match an existing record against."
         )
-    matches = []
+    contenders = []  # (candidate_id, candidate_text, overlap_count, candidate_word_count)
     for candidate_id, candidate_text in candidates:
         if not candidate_text:
             continue
@@ -1001,18 +1013,23 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
         if not candidate_words:
             continue
         overlap = candidate_words & reference_words
-        covers_candidate = len(overlap) >= max(1, len(candidate_words) / 2)
-        covers_reference = 3 * len(overlap) >= 2 * len(reference_words)
-        if covers_candidate or covers_reference:
-            matches.append((candidate_id, candidate_text))
-    if len(matches) == 0:
+        if overlap:
+            contenders.append((candidate_id, candidate_text, len(overlap), len(candidate_words)))
+    if not contenders:
         raise AmbiguousReferenceError(f"No real, existing record matches {reference_description!r}.")
-    if len(matches) > 1:
-        matched_texts = ", ".join(repr(text) for _, text in matches)
+    max_overlap = max(count for _, _, count, _ in contenders)
+    leaders = [(cid, text, cand_len) for cid, text, count, cand_len in contenders if count == max_overlap]
+    if len(leaders) > 1:
+        matched_texts = ", ".join(repr(text) for _, text, _ in leaders)
         raise AmbiguousReferenceError(
-            f"{reference_description!r} matches {len(matches)} real, existing records ({matched_texts}) -- too ambiguous to act on safely."
+            f"{reference_description!r} matches {len(leaders)} real, existing records ({matched_texts}) -- too ambiguous to act on safely."
         )
-    return matches[0][0]
+    leader_id, _leader_text, leader_candidate_words = leaders[0]
+    covers_candidate = max_overlap >= max(1, leader_candidate_words / 2)
+    covers_reference = 3 * max_overlap >= 2 * len(reference_words)
+    if not (covers_candidate or covers_reference):
+        raise AmbiguousReferenceError(f"No real, existing record matches {reference_description!r}.")
+    return leader_id
 
 
 async def _fetch_open_task_candidates(conn: asyncpg.Connection, *, user_id: str) -> list[tuple[str, str]]:
