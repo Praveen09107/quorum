@@ -174,6 +174,35 @@ void main() {
       expect(result.calendarAction, 'create_calendar_event_external');
     });
 
+    test('parses a real, genuine career status update (Session 6) into QuickCaptureResultData with real company/newStatus/operation', () async {
+      final client = MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'executed': true,
+            'decision': 'approve',
+            'stakes': 'S1',
+            'domain': 'career',
+            'operation': 'update',
+            'title': null,
+            'company': 'Notion',
+            'new_status': 'rejected',
+            'findings': [],
+            'objections': [],
+          }),
+          200,
+        );
+      });
+
+      final capture = createQuickCaptureFetcher(getAccessToken: () async => 'token', client: client);
+      final result = await capture('mark the Notion application as rejected');
+
+      expect(result.executed, isTrue);
+      expect(result.domain, 'career');
+      expect(result.operation, 'update');
+      expect(result.company, 'Notion');
+      expect(result.newStatus, 'rejected');
+    });
+
     test('a real 502 (genuine extraction failure) surfaces the real backend detail message', () async {
       final client = MockClient((request) async {
         return http.Response(jsonEncode({'detail': "Couldn't turn that into a real task: real reason"}), 502);

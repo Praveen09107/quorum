@@ -35,11 +35,16 @@ class CareerAgentState(TypedDict):
     digest: dict | None
 
 
-def build_status_update_proposal(application_id: str, new_status: str) -> ActionProposal:
+def build_status_update_proposal(application_id: str, new_status: str, company: str | None = None) -> ActionProposal:
+    """`company` is optional, real DISPLAY-ONLY context
+    (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 6, matching `tasks_agent
+    .py::build_task_deletion_proposal()`'s own identical real reasoning)
+    -- `action_executor.py`'s own real `UPDATE_APPLICATION_STATUS`
+    branch only ever reads `application_id`/`status`."""
     authorize_tool_call("career.update_application_status", calling_agent_domain="career")
     return ActionProposal(
         action_type=ActionType.UPDATE_APPLICATION_STATUS,
-        payload={"application_id": application_id, "status": new_status},
+        payload={"application_id": application_id, "status": new_status, "company": company},
     )
 
 

@@ -299,7 +299,16 @@ def validate_and_build_finance_proposal(args: dict) -> ActionProposal:
 _MAX_TASK_TITLE_LENGTH = 500
 
 
-def validate_and_build_task_proposal(args: dict) -> ActionProposal:
+def validate_and_build_task_proposal(args: dict, *, existing_task_id: str | None = None) -> ActionProposal:
+    # RESOLVED, `QUORUM_FINAL_COMPLETION_PLAN.md` Session 6: a real,
+    # backward-compatible widening -- `existing_task_id` defaults to
+    # `None`, preserving this function's own exact, existing behavior
+    # for its one real, pre-existing caller (`process_negotiation_
+    # downstream_job`, which never edits an existing task). `features/
+    # quick_capture.py`'s own new real `UPDATE_TASK` path passes a real,
+    # already-resolved id here instead of re-deriving this function's
+    # own already-reviewed `estimated_hours`/`title` bound checks a
+    # second time.
     # RESOLVED, a real, disclosed CRITICAL-tier review BLOCKER (`DEC-153`
     # B1): this real sibling to `validate_and_build_finance_proposal()`
     # above was missing the identical `math.isfinite()` check that
@@ -347,7 +356,7 @@ def validate_and_build_task_proposal(args: dict) -> ActionProposal:
         raise DownstreamTranslationError(f"Translated title exceeds the real, max plausible length {_MAX_TASK_TITLE_LENGTH}")
     deadline_iso = args.get("deadline_iso")
     deadline = datetime.fromisoformat(deadline_iso) if deadline_iso else None
-    return build_task_proposal(title=args["title"], estimated_hours=estimated_hours, deadline=deadline, existing_task_id=None)
+    return build_task_proposal(title=args["title"], estimated_hours=estimated_hours, deadline=deadline, existing_task_id=existing_task_id)
 
 
 def validate_and_build_calendar_proposal(args: dict) -> ActionProposal:

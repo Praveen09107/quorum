@@ -506,6 +506,20 @@ async def quick_capture_endpoint(
     the Gate's own honest review -- see `features/quick_capture.py`'s
     own top-of-file docstring for the full account.
 
+    **REAL, DISCLOSED, `QUORUM_FINAL_COMPLETION_PLAN.md` SESSION 6: this
+    route now genuinely supports editing and deleting existing real
+    rows across `tasks`/`finance`, plus a fourth real domain (Career),
+    all through the same one, unified free-text box.** `UPDATE_TASK`/
+    `DELETE_TASK`/`UPDATE_EXPENSE`/`DELETE_EXPENSE`/`UPDATE_APPLICATION_
+    STATUS` all resolve WHICH existing real row a vague reference means
+    entirely in code, never a second real LLM call -- see `features/
+    quick_capture.py`'s own top-of-file docstring for the full,
+    disclosed account, including a real, deliberate scope correction
+    (calendar editing/cancellation is NOT built here, since a real
+    local calendar event has no real, addressable server-side row to
+    resolve a reference against or execute a change on in the first
+    place).
+
     RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-153`
     M2): the real Gemini extraction call happens BEFORE `pool.acquire()`
     -- an earlier version held a real, pooled Postgres connection idle-
@@ -567,14 +581,18 @@ async def quick_capture_endpoint(
         "decision": result.decision,
         "stakes": result.stakes,
         "domain": result.domain,
+        "operation": result.operation,
         "title": result.title,
         "amount": result.amount,
         "category": result.category,
+        "payee": result.payee,
         "finance_action": result.finance_action,
         "event_start": result.event_start,
         "event_end": result.event_end,
         "event_title": result.event_title,
         "calendar_action": result.calendar_action,
+        "company": result.company,
+        "new_status": result.new_status,
         "findings": [finding.model_dump(mode="json") for finding in result.findings],
         "objections": [objection.model_dump(mode="json") for objection in result.objections],
     }
