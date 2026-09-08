@@ -937,19 +937,42 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
     `(real_id, real_matchable_text)` pairs -- e.g. every one of THIS
     user's own real, currently-open tasks. Matches `reference_
     description` against each candidate's own real text using real,
-    auditable word-overlap (at least half of a candidate's own real,
-    significant words must appear in the reference) -- deliberately
-    lenient about word order and extra filler words (a real reference
-    like "the Q3 budget review task" should still match a real title
-    like "Finish the Q3 budget review"), while still requiring genuine,
-    substantial overlap, not a single incidental shared word. Fails
-    loud on zero or multiple genuine matches -- NEVER a fallback guess,
-    which is the entire real point: this project's own explicit warning
-    is that a wrong guess here silently corrupts or destroys the wrong
-    real record."""
+    auditable word-overlap -- deliberately lenient about word order and
+    extra filler words (a real reference like "the Q3 budget review
+    task" should still match a real title like "Finish the Q3 budget
+    review"), while still requiring genuine, substantial overlap, not a
+    single incidental shared word. Fails loud on zero or multiple
+    genuine matches -- NEVER a fallback guess, which is the entire real
+    point: this project's own explicit warning is that a wrong guess
+    here silently corrupts or destroys the wrong real record.
+
+    RESOLVED, a real, disclosed CRITICAL-tier review BLOCKER, found
+    before merge (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 6, `DEC-
+    172`): the original threshold required overlap to cover at least
+    half of the CANDIDATE's own significant words. That let a short
+    candidate win by matching only ONE shared word -- e.g. a task
+    titled plainly "Gym" has exactly one significant word, so any
+    reference merely containing "gym" (say, "the gym membership task")
+    satisfied `1 >= max(1, 1/2)` and matched, even with a real, longer,
+    genuinely-correct candidate like "Renew gym membership at the new
+    place downtown" also present but failing ITS OWN 50% bar. The fix
+    drops the candidate-side ratio entirely and requires instead that
+    the REFERENCE's own significant words be substantially covered by
+    the candidate: at least 2/3 of `reference_words` must appear in the
+    candidate (checked as `3 * len(overlap) >= 2 * len(reference_words)`
+    -- plain integer arithmetic, never a float division, so there's no
+    floating-point boundary to get wrong). A short, generic candidate
+    can no longer win off a single incidental word, because the bar now
+    scales with how much of the user's OWN real reference text it
+    actually accounts for, not with how short the candidate happens to
+    be."""
     if not reference_description or not reference_description.strip():
         raise AmbiguousReferenceError("No real reference was given for which existing record this refers to.")
     reference_words = _significant_words(reference_description)
+    if not reference_words:
+        raise AmbiguousReferenceError(
+            f"{reference_description!r} has no real, significant words to match an existing record against."
+        )
     matches = []
     for candidate_id, candidate_text in candidates:
         if not candidate_text:
@@ -958,7 +981,7 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
         if not candidate_words:
             continue
         overlap = candidate_words & reference_words
-        if len(overlap) >= max(1, len(candidate_words) / 2):
+        if 3 * len(overlap) >= 2 * len(reference_words):
             matches.append((candidate_id, candidate_text))
     if len(matches) == 0:
         raise AmbiguousReferenceError(f"No real, existing record matches {reference_description!r}.")
@@ -1041,6 +1064,14 @@ async def resolve_and_build_task_deletion_proposal(conn: asyncpg.Connection, *, 
 # established "small, stable bound per real caller" precedent.
 _MAX_EXPENSE_UPDATE_AMOUNT = 99_999_999.99
 
+# A real, deliberate local duplicate of `retry_queue_drainer.py`'s own
+# `_MAX_FINANCE_PAYEE_LENGTH` bound (same value, 200) -- matching this
+# module's own already-established "reimplement a small, stable bound
+# per real caller" precedent (see `_fetch_recent_expense_candidates`'s
+# own docstring) rather than importing a `_`-prefixed private name
+# across modules, which this backend never does anywhere else.
+_MAX_EXPENSE_PAYEE_LENGTH = 200
+
 
 async def resolve_and_build_expense_update_proposal(conn: asyncpg.Connection, *, user_id: str, args: dict) -> ActionProposal:
     candidates = await _fetch_recent_expense_candidates(conn, user_id=user_id)
@@ -1059,6 +1090,13 @@ async def resolve_and_build_expense_update_proposal(conn: asyncpg.Connection, *,
         raise DownstreamTranslationError(f"Translated expense amount exceeds the real, max storable value {_MAX_EXPENSE_UPDATE_AMOUNT}")
     payee = args.get("payee")
     new_payee = payee if isinstance(payee, str) and payee.strip() else row["payee"]
+    # RESOLVED, a real, disclosed CRITICAL-tier review LOW (DEC-172, L2):
+    # a genuinely new payee value from extraction previously had no
+    # length bound here, unlike the sibling `validate_and_build_finance_
+    # proposal()` path (`retry_queue_drainer.py`), which has always
+    # enforced one.
+    if len(new_payee) > _MAX_EXPENSE_PAYEE_LENGTH:
+        raise DownstreamTranslationError(f"Translated expense payee exceeds the real, max plausible length {_MAX_EXPENSE_PAYEE_LENGTH}")
     return build_finance_proposal(action="update_expense", amount=new_amount, payee=new_payee, existing_expense_id=existing_expense_id)
 
 
@@ -1190,6 +1228,34 @@ async def capture_action_from_extracted_args(
     stakes = get_stakes(proposal.action_type)
     stage_a_checks = await build_stage_a_checks_for_domain(conn, domain=domain, proposal=proposal, user_id=user_id)
     verdict = await review(proposal, stakes, stage_a_checks, critic_call, judge_call)
+
+    # RESOLVED, a real, disclosed CRITICAL-tier review HIGH, found before
+    # merge (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 6, `DEC-172`): a
+    # Judge-authored `verdict.revised_payload` was never checked against
+    # the original `proposal.payload` for WHICH real row it targets --
+    # only this module's own `_resolve_single_reference()` (Stage A/B
+    # never re-runs it) ever verified the real id genuinely matches the
+    # user's own free-text reference. A `revise` verdict that changed
+    # `existing_task_id`/`existing_expense_id`/`application_id` to a
+    # DIFFERENT real row's id -- however low-probability, since the
+    # Judge is only ever asked to narrow or clarify a payload, never
+    # re-target it -- would silently execute against the wrong real
+    # record, on a genuinely destructive branch (update/delete). These
+    # identity fields must be immutable across a revision; anything else
+    # in the payload may still legitimately change.
+    for identity_key in ("existing_task_id", "existing_expense_id", "application_id"):
+        original_identity = proposal.payload.get(identity_key)
+        if original_identity is None:
+            continue
+        revised_identity = (
+            verdict.revised_payload.get(identity_key) if verdict.revised_payload is not None else original_identity
+        )
+        if revised_identity != original_identity:
+            raise QuickCaptureError(
+                f"The Gate's own revision changed which real record {identity_key!r} refers to -- refusing to "
+                "act on a different real row than the one the user's own reference actually resolved to."
+            )
+
     executed = await persist_gate_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
 
     final_payload = verdict.revised_payload if verdict.revised_payload is not None else proposal.payload

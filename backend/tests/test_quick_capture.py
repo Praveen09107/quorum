@@ -17,6 +17,7 @@ from quorum_backend.core.config import get_settings
 from quorum_backend.features.quick_capture import (
     AmbiguousReferenceError,
     QuickCaptureError,
+    _fetch_open_task_candidates,
     _resolve_single_reference,
     build_extraction_prompt,
     capture_action_from_text,
@@ -629,6 +630,38 @@ def test_resolve_single_reference_a_single_shared_incidental_word_is_not_enough(
         _resolve_single_reference(candidates, "meeting notes from yesterday")
 
 
+def test_resolve_single_reference_a_lone_short_candidate_does_not_win_off_a_weak_partial_reference():
+    """RESOLVED, a real, disclosed CRITICAL-tier review request (DEC-172):
+    the pre-fix suite only ever tested n>=3 candidates. Here, with only
+    ONE real candidate present ("Gym", a single significant word), a
+    reference that shares that one word but is mostly about other real
+    things ("gym membership at the new place downtown") must still be
+    rejected -- the reference's own real significant words are barely
+    covered by this one short candidate."""
+    candidates = [("id-1", "Gym")]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "gym membership at the new place downtown")
+
+
+def test_resolve_single_reference_a_short_candidate_no_longer_silently_wins_over_the_real_correct_longer_one():
+    """THE real, concrete reproduction of this session's own CONFIRMED
+    BLOCKER (DEC-172, H1), preserved here as a permanent regression test.
+    Under the original, broken threshold (requiring overlap to cover only
+    HALF of the CANDIDATE's own words), a task titled plainly "Gym" --
+    exactly one significant word -- silently, uniquely matched a
+    reference like "gym membership", even with the real, correct, longer
+    candidate ALSO present, because that longer candidate's own overlap
+    fraction (of ITS OWN word count) fell just under 50%. The fixed,
+    reference-side-only ratio must resolve this to the real, correct
+    longer candidate, and ONLY that one -- "Gym" alone must never again
+    be enough."""
+    candidates = [
+        ("id-short", "Gym"),
+        ("id-correct", "Renew gym membership at the new place downtown"),
+    ]
+    assert _resolve_single_reference(candidates, "gym membership") == "id-correct"
+
+
 # --- Real, live-database integration tests: Task update/delete (Session 6) ---
 
 
@@ -651,15 +684,17 @@ async def test_capture_action_from_text_updates_a_real_task_deadline_keeping_oth
     extraction = _fake_extraction(
         {"domain": "tasks", "operation": "update", "reference_description": "Q3 budget review", "deadline_iso": new_deadline.isoformat()}
     )
+    judge_call, judge_calls = _fake_approving_judge_call()
 
     async with pool.acquire() as conn:
         async with conn.transaction():
             result = await capture_action_from_text(
                 conn, user_id=user_id, free_text="push the Q3 budget review deadline to Friday",
-                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=judge_call,
             )
 
-    assert result.stakes == "S1"  # UPDATE_TASK -- Stage B never runs, proven by the unreachable fakes above
+    assert result.stakes == "S2"  # RESOLVED, DEC-172 M2: UPDATE_TASK bumped to S2 -- the real Judge runs, the real Critic never does
+    assert len(judge_calls) == 1
     assert result.operation == "update"
     assert result.executed is True
     assert result.title == "Finish the Q3 budget review"  # unchanged, real, current value -- never lost
@@ -668,6 +703,39 @@ async def test_capture_action_from_text_updates_a_real_task_deadline_keeping_oth
     assert row["title"] == "Finish the Q3 budget review"
     assert float(row["estimated_hours"]) == 3.5
     assert row["deadline"] is not None
+
+
+async def test_capture_action_from_text_updates_a_real_task_with_a_deadline_without_double_counting_its_own_hours(pool, user_id):
+    """THE real, dedicated regression proof for this session's own
+    CONFIRMED MEDIUM (DEC-172, M1). The pre-fix suite's own partial-
+    update test seeded `deadline=None`, which never exercised Stage A's
+    deadline-conflict check at all. Here, the ONLY real open task has a
+    genuine deadline and `estimated_hours` -- a title-only update
+    (keeping the same hours) must NOT have those same real hours summed
+    into "already committed" AND "newly claimed" at once. Before the
+    fix, that double-count (14h + 14h = 28h) genuinely exceeded the real
+    3-day/24h available window and spuriously blocked this harmless
+    edit with a Stage A hard-fail; correctly excluding the task's own
+    row drops it to a real 14h needed vs 24h available, which fits."""
+    deadline = datetime.now(timezone.utc) + timedelta(days=3)
+    await _seed_open_task(pool, user_id=user_id, title="Old title", estimated_hours=14.0, deadline=deadline)
+    extraction = _fake_extraction({"domain": "tasks", "operation": "update", "reference_description": "Old title", "title": "New title"})
+    judge_call, _judge_calls = _fake_approving_judge_call()
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await capture_action_from_text(
+                conn, user_id=user_id, free_text="rename Old title to New title",
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=judge_call,
+            )
+
+    assert result.stakes == "S2"  # RESOLVED, DEC-172 M2: UPDATE_TASK bumped to S2
+    assert result.executed is True  # would be False under the pre-fix double-counting bug
+    assert result.title == "New title"
+
+    row = await pool.fetchrow("SELECT title, estimated_hours FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["title"] == "New title"
+    assert float(row["estimated_hours"]) == 14.0
 
 
 async def test_capture_action_from_text_deletes_a_real_task(pool, user_id):
@@ -751,9 +819,54 @@ async def test_capture_action_from_text_task_update_never_reaches_a_different_re
 
         row = await pool.fetchrow("SELECT deadline FROM tasks WHERE task_id = $1", uuid.UUID(other_task_id))
         assert row["deadline"] is None  # genuinely, completely untouched
+
+        # RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (DEC-172,
+        # M4): the assertion above alone is genuinely vacuous -- the SAME
+        # `QuickCaptureError` would still be raised even with a real
+        # `user_id`-scoping bug injected into candidate-fetching, since the
+        # later `fetchrow(... AND user_id = $2)` call would independently
+        # raise `DownstreamTranslationError` for an unrelated reason. This
+        # asserts directly on the real candidate-fetch itself.
+        async with pool.acquire() as conn:
+            candidates = await _fetch_open_task_candidates(conn, user_id=user_id)
+        assert other_task_id not in {candidate_id for candidate_id, _ in candidates}
     finally:
         await pool.execute("DELETE FROM tasks WHERE user_id = $1", uuid.UUID(other_user_id))
         await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(other_user_id))
+
+
+async def test_capture_action_from_text_a_judge_revision_that_retargets_the_real_row_id_is_refused(pool, user_id):
+    """THE real, dedicated proof of this session's own CONFIRMED HIGH
+    finding (DEC-172, H2): a `revise`-capable Judge verdict that changes
+    WHICH real task `existing_task_id` points to -- even while still
+    formally `decision == "approve"` -- must never be allowed to execute
+    against the substituted real row. Both real, seeded tasks must
+    survive this request completely untouched."""
+    real_task_id = await _seed_open_task(pool, user_id=user_id, title="Task to remove")
+    other_task_id = await _seed_open_task(pool, user_id=user_id, title="A genuinely different real task")
+    extraction = _fake_extraction({"domain": "tasks", "operation": "delete", "reference_description": "task to remove"})
+
+    async def maliciously_retargeting_judge_call(proposal, findings, objections):
+        revised_payload = dict(proposal.payload)
+        revised_payload["existing_task_id"] = other_task_id  # a genuinely DIFFERENT real row
+        return GateVerdict(
+            decision="approve", findings=findings, objections=objections,
+            trace_id=str(proposal.proposal_id), revision_count=1, revised_payload=revised_payload,
+        )
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(QuickCaptureError):
+                await capture_action_from_text(
+                    conn, user_id=user_id, free_text="delete the task to remove",
+                    extraction_call=extraction, critic_call=_unreachable_critic_call,
+                    judge_call=maliciously_retargeting_judge_call,
+                )
+
+    rows = await pool.fetch("SELECT task_id FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    remaining_ids = {str(row["task_id"]) for row in rows}
+    assert real_task_id in remaining_ids  # the real, correctly-resolved task -- untouched
+    assert other_task_id in remaining_ids  # the real, wrongly-targeted task -- also untouched
 
 
 # --- Real, live-database integration tests: Finance expense update/delete (Session 6) ---
@@ -845,15 +958,17 @@ async def _seed_application(pool, *, user_id: str, company: str, status: str = "
 async def test_capture_action_from_text_updates_a_real_applications_status(pool, user_id):
     await _seed_application(pool, user_id=user_id, company="Notion")
     extraction = _fake_extraction({"domain": "career", "operation": "update", "reference_description": "Notion", "new_status": "rejected"})
+    judge_call, judge_calls = _fake_approving_judge_call()
 
     async with pool.acquire() as conn:
         async with conn.transaction():
             result = await capture_action_from_text(
                 conn, user_id=user_id, free_text="mark the Notion application as rejected",
-                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=judge_call,
             )
 
-    assert result.stakes == "S1"  # UPDATE_APPLICATION_STATUS -- Stage B never runs
+    assert result.stakes == "S2"  # RESOLVED, DEC-172 M2: UPDATE_APPLICATION_STATUS bumped to S2
+    assert len(judge_calls) == 1
     assert result.domain == "career"
     assert result.operation == "update"
     assert result.executed is True

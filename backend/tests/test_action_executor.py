@@ -405,6 +405,35 @@ async def test_execute_approved_action_update_expense_rejects_a_real_non_positiv
     assert float(row["amount"]) == 800.0  # genuinely untouched
 
 
+async def test_execute_approved_action_update_expense_never_reaches_a_different_real_users_row(pool, user_id):
+    """RESOLVED, a real, disclosed CRITICAL-tier review LOW (DEC-172,
+    L1): matches `UPDATE_TASK`/`DELETE_TASK`/`UPDATE_APPLICATION_STATUS`'s
+    own already-established per-write cross-user-isolation proof -- the
+    same real `AND user_id = $N` structural guarantee, now also directly
+    proven for the two expense branches."""
+    other_google_sub = f"test-executor-other-{uuid.uuid4()}"
+    other_user_id = await get_or_create_user(pool, google_sub=other_google_sub, email=None)
+    try:
+        expense_id = uuid.uuid4()
+        await pool.execute(
+            "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, now(), 'manual')",
+            expense_id, uuid.UUID(other_user_id), "Someone else's expense", 800.0,
+        )
+        async with pool.acquire() as conn:
+            result = await execute_approved_action(
+                conn, action_type=ActionType.UPDATE_EXPENSE,
+                payload={"existing_expense_id": str(expense_id), "amount": 1.0, "payee": "Hijacked"},
+                user_id=user_id,
+            )
+        assert result.executed is False
+        row = await pool.fetchrow("SELECT amount, payee FROM expenses WHERE expense_id = $1", expense_id)
+        assert float(row["amount"]) == 800.0
+        assert row["payee"] == "Someone else's expense"
+    finally:
+        await pool.execute("DELETE FROM expenses WHERE user_id = $1", uuid.UUID(other_user_id))
+        await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(other_user_id))
+
+
 async def test_execute_approved_action_delete_expense_removes_the_real_row(pool, user_id):
     expense_id = uuid.uuid4()
     await pool.execute(
@@ -417,6 +446,26 @@ async def test_execute_approved_action_delete_expense_removes_the_real_row(pool,
         )
     assert result.executed is True
     assert await pool.fetchrow("SELECT 1 FROM expenses WHERE expense_id = $1", expense_id) is None
+
+
+async def test_execute_approved_action_delete_expense_never_reaches_a_different_real_users_row(pool, user_id):
+    other_google_sub = f"test-executor-other-{uuid.uuid4()}"
+    other_user_id = await get_or_create_user(pool, google_sub=other_google_sub, email=None)
+    try:
+        expense_id = uuid.uuid4()
+        await pool.execute(
+            "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, now(), 'manual')",
+            expense_id, uuid.UUID(other_user_id), "Someone else's expense", 42.0,
+        )
+        async with pool.acquire() as conn:
+            result = await execute_approved_action(
+                conn, action_type=ActionType.DELETE_EXPENSE, payload={"existing_expense_id": str(expense_id)}, user_id=user_id,
+            )
+        assert result.executed is False
+        assert await pool.fetchrow("SELECT 1 FROM expenses WHERE expense_id = $1", expense_id) is not None
+    finally:
+        await pool.execute("DELETE FROM expenses WHERE user_id = $1", uuid.UUID(other_user_id))
+        await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(other_user_id))
 
 
 async def test_execute_approved_action_update_application_status_writes_the_real_new_status(pool, user_id):

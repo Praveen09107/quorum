@@ -14,14 +14,14 @@
 | `create_calendar_event_external` | S3 | Full Gate + mandatory human approval |
 | `create_calendar_event_local` | S2 | Stage A + single-check Stage B |
 | `create_task` | S1 | Stage A only |
-| `update_task` | S1 | Stage A only |
+| `update_task` | S2 | Stage A + single-check Stage B |
 | `delete_task` | S2 | Stage A + single-check Stage B |
 | `log_expense` | S1 | Stage A only |
 | `update_expense` | S2 | Stage A + single-check Stage B |
 | `delete_expense` | S2 | Stage A + single-check Stage B |
 | `update_budget` | S2 | Stage A + single-check Stage B |
 | `create_note` | S1 | Stage A only |
-| `update_application_status` | S1 | Stage A only |
+| `update_application_status` | S2 | Stage A + single-check Stage B |
 | `archive_email` | S1 | Stage A only |
 | `label_email` | S0 | None |
 

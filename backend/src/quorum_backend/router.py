@@ -29,7 +29,20 @@ STAKES_TABLE: dict[ActionType, Stakes] = {
     ActionType.CREATE_CALENDAR_EVENT_EXTERNAL: Stakes.S3,
     ActionType.CREATE_CALENDAR_EVENT_LOCAL: Stakes.S2,
     ActionType.CREATE_TASK: Stakes.S1,
-    ActionType.UPDATE_TASK: Stakes.S1,
+    # RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (DEC-172,
+    # M2), found before merge: `UPDATE_TASK` was made real for the FIRST
+    # TIME this same session (it existed in `ActionType` before, but no
+    # real execution branch or Stage A wiring ever ran for it), yet was
+    # left at its old, unexamined `Stakes.S1` -- genuinely inconsistent
+    # with the very reasoning laid out just below for `DELETE_TASK`/
+    # `UPDATE_EXPENSE`/`DELETE_EXPENSE`, which explicitly invokes `UPDATE_
+    # BUDGET`'s own established "an update of an EXISTING row sits one
+    # real stakes level above its CREATE sibling" precedent. `UPDATE_
+    # TASK` is a full-field overwrite of an existing row by that exact
+    # same definition -- bumped to `S2` for genuine consistency, not left
+    # as a silent double standard between two action types made real in
+    # the same session for the same reason.
+    ActionType.UPDATE_TASK: Stakes.S2,
     # RESOLVED, `QUORUM_FINAL_COMPLETION_PLAN.md` Session 6, real,
     # deliberate stakes assignments for 3 new real action types, each
     # reasoned explicitly rather than pattern-matched from a sibling:
@@ -60,7 +73,12 @@ STAKES_TABLE: dict[ActionType, Stakes] = {
     ActionType.DELETE_EXPENSE: Stakes.S2,
     ActionType.UPDATE_BUDGET: Stakes.S2,
     ActionType.CREATE_NOTE: Stakes.S1,
-    ActionType.UPDATE_APPLICATION_STATUS: Stakes.S1,
+    # RESOLVED, the same real DEC-172 M2 review finding as `UPDATE_TASK`
+    # above -- also made real for the first time this session, also a
+    # real update of an existing row, bumped to `S2` for the identical
+    # reason and the identical consistency this project's own review
+    # discipline exists to catch.
+    ActionType.UPDATE_APPLICATION_STATUS: Stakes.S2,
     ActionType.ARCHIVE_EMAIL: Stakes.S1,
     ActionType.LABEL_EMAIL: Stakes.S0,
 }
