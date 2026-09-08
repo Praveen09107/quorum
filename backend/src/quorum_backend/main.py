@@ -96,6 +96,7 @@ from quorum_backend.features.today import (
 from quorum_backend.features.quick_capture import (
     QuickCaptureError,
     capture_action_from_extracted_args,
+    make_gemini_email_draft_call,
     make_gemini_quick_capture_extraction_call,
 )
 from quorum_backend.features.trust_digest import fetch_trust_digest
@@ -520,6 +521,27 @@ async def quick_capture_endpoint(
     resolve a reference against or execute a change on in the first
     place).
 
+    **REAL, DISCLOSED, `QUORUM_FINAL_COMPLETION_PLAN.md` SESSION 7: this
+    route now covers the fifth and final real domain (Email), the same
+    plan-text error corrected above, caught a third time before writing
+    any code.** `SEND_EMAIL` is real `Stakes.S3` -- the most severe
+    stakes level this backend has -- and the plan's own text asked for a
+    Groq-backed extraction call for this domain specifically. Fixed the
+    same way, for the same reason: the real Generator/Judge same-provider
+    grouping fact applies regardless of stakes level, and this domain's
+    own real proposal content (`recipient_description`/`user_intent`)
+    comes from this SAME unified Gemini extraction call, never a second
+    one. A NEW real Gemini call is added here too (`make_gemini_email_
+    draft_call`) -- `agents/email_agent.py`'s own real drafting step,
+    also, for the identical reason, Gemini rather than Groq. **A genuine
+    `SEND_EMAIL` approve through this route can never auto-send a real
+    email, by the exact same real S3 backstop mechanism as calendar's
+    external booking above** -- see `features/quick_capture.py`'s own
+    top-of-file docstring for the full account, including why this
+    session does not, and per `CLAUDE.md`'s absolute S3 rule must not,
+    build a real human-approval endpoint as an undisclosed side effect
+    of adding this domain.
+
     RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-153`
     M2): the real Gemini extraction call happens BEFORE `pool.acquire()`
     -- an earlier version held a real, pooled Postgres connection idle-
@@ -536,6 +558,7 @@ async def quick_capture_endpoint(
     extraction_call = make_gemini_quick_capture_extraction_call(api_key=settings.gemini_api_key)
     critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
     judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
+    draft_call = make_gemini_email_draft_call(api_key=settings.gemini_api_key)
 
     try:
         args = await extraction_call(body.text)
@@ -547,6 +570,7 @@ async def quick_capture_endpoint(
                     args=args,
                     critic_call=critic_call,
                     judge_call=judge_call,
+                    draft_call=draft_call,
                 )
     except QuickCaptureError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

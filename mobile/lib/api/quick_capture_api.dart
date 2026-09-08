@@ -115,6 +115,12 @@ QuickCaptureResultData _parseQuickCaptureResult(Map<String, dynamic> json) {
     calendarAction: json['calendar_action'] as String?,
     company: json['company'] as String?,
     newStatus: json['new_status'] as String?,
+    // REAL, DISCLOSED SESSION-7 EXTENSION: `email_recipient`/`email_
+    // action` are the fifth, final real domain's own fields -- see
+    // `QuickCaptureResultData`'s own docstring for the real, considered
+    // "only when genuinely executed"/"regardless of executed" split.
+    emailRecipient: json['email_recipient'] as String?,
+    emailAction: json['email_action'] as String?,
     findings: [
       for (final findingJson in findingsJson)
         FindingSummary(

@@ -33,6 +33,16 @@
 // separate follow-on, not built here) -- this file's own real job is
 // making sure the SAME, already-existing Quick-capture text box
 // renders every one of this session's new real outcomes honestly.
+//
+// REAL, DISCLOSED SESSION-7 EXTENSION: the fifth and final real domain,
+// Email -- `emailRecipient`/`emailAction` follow the exact same real
+// convention `eventStart`/`eventTitle`/`calendarAction` already
+// established for Calendar (`SEND_EMAIL` is real `Stakes.S3` too):
+// `emailAction` populated regardless of `executed`, `emailRecipient`
+// only when genuinely executed. `executed` is always `false` through
+// this real route today, by the same real S3 human-approval backstop
+// -- see `features/quick_capture.py`'s own top-of-file docstring for
+// the full account.
 
 import 'package:quorum_mobile/features/finance/finance_logic.dart' show formatCurrency;
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
@@ -62,6 +72,8 @@ class QuickCaptureResultData {
   final String? calendarAction;
   final String? company;
   final String? newStatus;
+  final String? emailRecipient;
+  final String? emailAction;
   final List<FindingSummary> findings;
 
   const QuickCaptureResultData({
@@ -81,6 +93,8 @@ class QuickCaptureResultData {
     this.calendarAction,
     this.company,
     this.newStatus,
+    this.emailRecipient,
+    this.emailAction,
     required this.findings,
   });
 }
@@ -127,6 +141,14 @@ String describeQuickCaptureOutcome(QuickCaptureResultData result) {
       // `operation` is always genuinely "update" here (Quorum never
       // creates a new application from free text).
       return 'Updated: ${result.company ?? 'that application'} -- now ${result.newStatus ?? 'updated'}';
+    }
+    if (result.domain == 'email') {
+      // Defensive, future-proof (`QUORUM_FINAL_COMPLETION_PLAN.md`
+      // Session 7) -- no real path produces `executed: true` for email
+      // today (see the `decision == 'approve'` branch below for the
+      // real, disclosed S3 reason), but this stays honest if a future
+      // session ever wires up a real human-approval endpoint.
+      return 'Sent: ${result.emailRecipient ?? 'that email'}';
     }
     // REAL, DISCLOSED SESSION-6 ADDITION: `tasks` now genuinely covers
     // update/delete, not just create -- `operation` drives the real
@@ -175,6 +197,13 @@ String describeQuickCaptureOutcome(QuickCaptureResultData result) {
         'create_calendar_event_local' => "Approved -- add this to your calendar for now; direct creation isn't wired up yet.",
         _ => 'Approved, but nothing was written yet.', // defensive -- never genuinely reached today
       };
+    }
+    // REAL, DISCLOSED SESSION-7 ADDITION: the fifth real domain, Email --
+    // `SEND_EMAIL` is real `Stakes.S3` too, and a genuine approve here
+    // NEVER auto-sends, by the identical real S3 backstop mechanism as
+    // calendar's external booking above.
+    if (result.domain == 'email') {
+      return 'This needs your direct approval before Quorum can send that email.';
     }
     return 'Approved, but nothing was written yet.'; // defensive -- a genuine approve should already have executed for every other real domain today
   }

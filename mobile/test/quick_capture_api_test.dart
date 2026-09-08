@@ -203,6 +203,35 @@ void main() {
       expect(result.newStatus, 'rejected');
     });
 
+    test('parses a real, genuine email review (Session 7) into QuickCaptureResultData with real emailAction, never executed', () async {
+      final client = MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'executed': false,
+            'decision': 'approve',
+            'stakes': 'S3',
+            'domain': 'email',
+            'operation': 'create',
+            'title': null,
+            'email_recipient': null,
+            'email_action': 'send_email',
+            'findings': [],
+            'objections': [],
+          }),
+          200,
+        );
+      });
+
+      final capture = createQuickCaptureFetcher(getAccessToken: () async => 'token', client: client);
+      final result = await capture('tell Sarah the proposal looks good');
+
+      expect(result.executed, isFalse);
+      expect(result.domain, 'email');
+      expect(result.stakes, 'S3');
+      expect(result.emailAction, 'send_email');
+      expect(result.emailRecipient, isNull); // never shown before a genuine send, which never happens through this real route today
+    });
+
     test('a real 502 (genuine extraction failure) surfaces the real backend detail message', () async {
       final client = MockClient((request) async {
         return http.Response(jsonEncode({'detail': "Couldn't turn that into a real task: real reason"}), 502);

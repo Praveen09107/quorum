@@ -198,6 +198,36 @@ void main() {
     });
   });
 
+  group('describeQuickCaptureOutcome -- email domain (Session 7)', () {
+    test('a genuine approve for a real email asks for real, separate human approval, never auto-implies it was sent', () {
+      // REAL, DISCLOSED, load-bearing safety wording, matching calendar's
+      // own EXTERNAL-invite precedent exactly: `SEND_EMAIL` is real
+      // `Stakes.S3` and can NEVER auto-execute through quick-capture
+      // (`CLAUDE.md`'s own absolute S3 rule) -- this message must never
+      // claim or imply a real email was sent.
+      const result = QuickCaptureResultData(
+        executed: false, decision: 'approve', stakes: 'S3', domain: 'email',
+        title: null, emailAction: 'send_email', findings: [],
+      );
+      final message = describeQuickCaptureOutcome(result);
+      expect(message, 'This needs your direct approval before Quorum can send that email.');
+      expect(message, isNot(contains('Sent')));
+    });
+
+    test('a real email revise gives the same honest, distinct message as every other domain', () {
+      const result = QuickCaptureResultData(executed: false, decision: 'revise', stakes: 'S3', domain: 'email', title: null, findings: []);
+      expect(describeQuickCaptureOutcome(result), contains("couldn't create"));
+    });
+
+    test('a real, defensive executed=true case (no real path produces this today) names the real recipient, never a task title', () {
+      const result = QuickCaptureResultData(
+        executed: true, decision: 'approve', stakes: 'S3', domain: 'email',
+        title: null, emailRecipient: 'sarah@company.com', findings: [],
+      );
+      expect(describeQuickCaptureOutcome(result), 'Sent: sarah@company.com');
+    });
+  });
+
   test('FindingSummary/EvidenceVisualState are genuinely reused, not redefined', () {
     // A real, direct proof this file imports the real gate_reveal_logic.dart
     // types rather than shadowing them with a second, parallel definition.
