@@ -979,25 +979,67 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
     candidate-side rule (`1 >= max(1, 2/2) = 1`) -- H1's exact mechanism,
     live again, silently resolving to the wrong short candidate.
 
-    THE REAL, FINAL FIX -- structurally different, not a fourth
-    threshold arrangement: matching is now COMPARATIVE, not independent
-    per candidate. Every candidate with at least one shared word is a
-    real "contender," ranked by its RAW overlap word COUNT (not a
-    ratio). If exactly one contender has the strictly highest count, it
-    is the sole leader; if two or more tie for the highest count, that
-    is a genuine, irreducible tie in the real lexical evidence, and the
-    function correctly fails loud regardless of any ratio (the "Gym
-    shoes" reproduction above is a genuine 1-1 tie under this rule, and
-    correctly raises `AmbiguousReferenceError` rather than picking
-    either side). A lone leader still has to clear a minimum bar to
-    resolve at all -- the same two real rules from before (candidate-
-    side OR reference-side), now applied ONLY to decide whether the
-    winning count is substantial enough to act on, never to decide
-    which candidate wins in the first place. This is what a "union of
-    thresholds" could never do: raw-count comparison correctly picks the
-    real, longer, correct candidate over a short coincidental one
-    (H1: `2 > 1`, unique winner) WITHOUT ever letting two candidates that
-    are genuinely, equally weak (F-A: `1 == 1`) resolve to either one."""
+    ATTEMPTED, then FOUND BROKEN, a real, disclosed FOURTH-round
+    follow-up CRITICAL-tier review finding, found before merge: the
+    THIRD fix (rank candidates by raw overlap word COUNT, unique max
+    wins) removed the one real cross-candidate protection the SECOND
+    fix actually had -- "exactly one candidate may clear the sufficiency
+    bar, else raise" -- and replaced it with a strictly weaker "strict
+    max of an UNWEIGHTED count," which a genuinely wrong candidate can
+    win outright (not just tie) by accumulating overlap from GENERIC
+    FILLER words (`"at"`, `"new"`, `"place"`, `"about"`, `"with"` are
+    all real, significant, non-stop words in this function's own small,
+    deliberately non-domain-specific stopword list) while the real,
+    correct candidate's overlap -- fewer words, but the actual
+    MEANINGFUL, on-topic ones (`"gym"`, `"membership"`, `"budget"`) --
+    loses the raw count race. Concretely, verified live: reference "gym
+    membership at the new place", candidate A "Meet Dan at the new
+    place" (overlap `{at, new, place}`, count 3), candidate B "Cancel
+    gym membership" (overlap `{gym, membership}`, count 2) -- pure
+    count-ranking picks A, the wrong, unrelated task, over B, the
+    obviously correct one, with NO tie to trigger the ambiguity check.
+
+    THE REAL, FINAL FIX (fourth round) -- keeps the third round's
+    comparative RANKING (still the right structural idea: never an
+    independent per-candidate threshold), but restores a real
+    cross-candidate check the count-only version had silently dropped:
+    an EVIDENCE-DOMINANCE guard. The ranked leader (still: unique
+    highest raw overlap count, ties fail loud exactly as before) may
+    only resolve if its own overlap word SET is a superset of every
+    other contender's overlap set -- i.e., no other real candidate
+    matched on so much as one word the leader's own match doesn't
+    already include. A runner-up whose evidence is a pure subset of the
+    leader's (H1's own "Gym" vs "Renew gym membership...": `{gym}` is a
+    subset of `{gym, membership}`) is not a genuine competing
+    interpretation, just weaker evidence for the same one -- resolution
+    proceeds. A runner-up with even one word of DIFFERENT evidence the
+    leader lacks (the filler-word repro above: B's `{gym, membership}`
+    is NOT a subset of A's `{at, new, place}`) means the two candidates
+    are supported by genuinely different parts of the reference text --
+    a real, honest sign of ambiguity a raw count alone cannot see, and
+    the function now correctly fails loud instead of silently trusting
+    whichever count happened to be numerically larger. This closes the
+    hole without reopening H1 or F-A: H1's own scenario still resolves
+    (subset relationship holds), F-A's own tie still fails loud (caught
+    by the tie check before dominance is even examined), and the new
+    filler-word class of attack is caught by dominance specifically.
+
+    A REAL, DISCLOSED, NOT FULLY CLOSED EDGE CASE, found by the same
+    fourth-round review, left as an intentional, disclosed trade-off
+    rather than a further threshold change (re-tuning a threshold is
+    exactly the move that produced three straight regressions on this
+    same function): a LONE contender (nothing else in the running at
+    all) with only 1-2 significant words can still resolve off a single
+    shared word (`covers_candidate` trivially clears for a 1-2-word
+    candidate). This differs from every broken case above in one
+    structural way that matters: with no other real candidate to be
+    silently preferred OVER, there is no wrong-target risk, only a
+    weaker-evidence-than-ideal risk -- and rejecting it outright would
+    break ordinary short `finance`/`career` matching (a bare payee like
+    `"Notion"` IS meant to resolve off one shared word when it is the
+    only real candidate in play, see F3 above). Accepted as-is; not
+    "never a single incidental shared word" universally, only when a
+    genuinely competing interpretation exists to compare it against."""
     if not reference_description or not reference_description.strip():
         raise AmbiguousReferenceError("No real reference was given for which existing record this refers to.")
     reference_words = _significant_words(reference_description)
@@ -1005,7 +1047,7 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
         raise AmbiguousReferenceError(
             f"{reference_description!r} has no real, significant words to match an existing record against."
         )
-    contenders = []  # (candidate_id, candidate_text, overlap_count, candidate_word_count)
+    contenders = []  # (candidate_id, candidate_text, overlap_word_set, candidate_word_count)
     for candidate_id, candidate_text in candidates:
         if not candidate_text:
             continue
@@ -1014,19 +1056,29 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
             continue
         overlap = candidate_words & reference_words
         if overlap:
-            contenders.append((candidate_id, candidate_text, len(overlap), len(candidate_words)))
+            contenders.append((candidate_id, candidate_text, overlap, len(candidate_words)))
     if not contenders:
         raise AmbiguousReferenceError(f"No real, existing record matches {reference_description!r}.")
-    max_overlap = max(count for _, _, count, _ in contenders)
-    leaders = [(cid, text, cand_len) for cid, text, count, cand_len in contenders if count == max_overlap]
+    max_overlap_count = max(len(overlap) for _, _, overlap, _ in contenders)
+    leaders = [c for c in contenders if len(c[2]) == max_overlap_count]
     if len(leaders) > 1:
-        matched_texts = ", ".join(repr(text) for _, text, _ in leaders)
+        matched_texts = ", ".join(repr(text) for _, text, _, _ in leaders)
         raise AmbiguousReferenceError(
             f"{reference_description!r} matches {len(leaders)} real, existing records ({matched_texts}) -- too ambiguous to act on safely."
         )
-    leader_id, _leader_text, leader_candidate_words = leaders[0]
-    covers_candidate = max_overlap >= max(1, leader_candidate_words / 2)
-    covers_reference = 3 * max_overlap >= 2 * len(reference_words)
+    leader_id, leader_text, leader_overlap, leader_candidate_words = leaders[0]
+    conflicting = [
+        (cid, text) for cid, text, overlap, _ in contenders
+        if cid != leader_id and not overlap.issubset(leader_overlap)
+    ]
+    if conflicting:
+        conflicting_texts = ", ".join(repr(text) for _, text in conflicting)
+        raise AmbiguousReferenceError(
+            f"{reference_description!r} matches {leader_text!r} but also, on genuinely different evidence, "
+            f"{conflicting_texts} -- too ambiguous to act on safely."
+        )
+    covers_candidate = max_overlap_count >= max(1, leader_candidate_words / 2)
+    covers_reference = 3 * max_overlap_count >= 2 * len(reference_words)
     if not (covers_candidate or covers_reference):
         raise AmbiguousReferenceError(f"No real, existing record matches {reference_description!r}.")
     return leader_id
