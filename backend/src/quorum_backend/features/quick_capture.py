@@ -1418,7 +1418,18 @@ THE REAL FIX (ROUND 5): a lone overlap word is no longer automatically
     # rather than a silent reopening of the same bug.
     if max_overlap_count == 1 and require_singleton_exact_match and leader_overlap != leader_candidate_words:
         raise AmbiguousReferenceError(f"No real, existing record matches {reference_description!r}.")
-    covers_candidate = 3 * max_overlap_count >= 2 * len(leader_candidate_words)
+    # RESOLVED, a real, disclosed CRITICAL-tier review finding, found by
+    # a second follow-up round verifying the fix above: `covers_candidate`
+    # was left at the tightened `3*overlap >= 2*candidate_words` (2/3) bar
+    # from this session's own FIRST, abandoned "symmetric rule" attempt,
+    # even after that attempt's own deletion of the singleton gate was
+    # reverted -- an undisclosed, untested behavior change from `DEC-
+    # 172`'s own real, five-round-hardened formula, contradicting this
+    # very docstring's own "byte-for-byte identical" claim. Restored,
+    # verbatim, to `DEC-172`'s own real, proven-safe formula (`>= max(1,
+    # candidate_words / 2)`) -- the claim above is now actually true,
+    # not just asserted.
+    covers_candidate = max_overlap_count >= max(1, len(leader_candidate_words) / 2)
     covers_reference = 3 * max_overlap_count >= 2 * len(reference_words)
     if not (covers_candidate or covers_reference):
         raise AmbiguousReferenceError(f"No real, existing record matches {reference_description!r}.")
