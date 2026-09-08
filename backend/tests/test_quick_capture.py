@@ -683,14 +683,17 @@ def test_resolve_single_reference_a_short_correct_candidate_resolves_when_it_is_
     """THE real, dedicated proof that F3 (ordinary short `finance`/
     `career` candidates like a bare payee/company failing to resolve at
     all under the reference-side-only design) stays fixed under the
-    FINAL, comparative design too -- AND the dedicated, permanent record
-    of this function's own real, disclosed, ACCEPTED trade-off (see its
-    own docstring's final section): a real, one-word candidate that is
-    the ONLY real contender (the other real candidate shares zero words
-    at all, so never enters the running at all) still resolves off a
-    single shared word -- there is no OTHER real candidate to be wrongly
-    preferred over, so no wrong-target risk exists, only weaker-than-
-    ideal evidence for the one candidate actually in play."""
+    FINAL, comparative design too: a real, one-word candidate that is
+    the ONLY real contender still resolves off a single shared word --
+    because that one word accounts for the candidate's ENTIRE text
+    (`{"notion"} == {"notion"}`), the real, round-5 singleton-coverage
+    rule this exact case is designed to still pass. RESOLVED, a real,
+    disclosed correction to this test's own prior docstring, which
+    claimed a lone contender carries "no wrong-target risk" -- a fifth-
+    round review found that claim false in general (see the function's
+    own docstring); this SPECIFIC case remains safe not because no
+    other candidate exists, but because the one word IS the whole
+    candidate, not a fragment of a longer, unrelated one."""
     candidates = [("id-notion", "Notion"), ("id-stripe", "Stripe")]
     assert _resolve_single_reference(candidates, "the Notion application") == "id-notion"
 
@@ -716,6 +719,46 @@ def test_resolve_single_reference_filler_word_overlap_never_silently_beats_the_r
     ]
     with pytest.raises(AmbiguousReferenceError):
         _resolve_single_reference(candidates, "gym membership at the new place")
+
+
+def test_resolve_single_reference_a_partial_word_in_a_longer_wrong_candidate_never_silently_wins():
+    """THE real, concrete reproduction of this session's own CONFIRMED
+    fifth-round finding: this docstring's OWN prior claim -- that a lone
+    contender carries "no wrong-target risk" -- was false. The real,
+    correct row ("Amazon") shares ZERO words with a reference paraphrased
+    in the user's own words ("the Prime expense"), so it never becomes a
+    contender at all; a genuinely unrelated row ("Prime Video") shares
+    exactly one word and would have won by default under the pre-round-5
+    rule. The round-5 singleton-coverage requirement (a lone shared word
+    must account for the WHOLE candidate, not a fragment of a longer
+    one) correctly refuses instead of silently deleting the wrong real
+    expense -- `{"prime"} != {"prime", "video"}`."""
+    candidates = [("id-amazon", "Amazon"), ("id-primevideo", "Prime Video")]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "the Prime expense")
+
+
+def test_resolve_single_reference_a_partial_word_in_a_longer_wrong_task_candidate_never_silently_wins():
+    """The same real fifth-round class as the test above, in the
+    `tasks` domain specifically -- a longer, unrelated task title
+    ("Buy gym shoes") sharing one incidental word with the reference
+    must not silently win over the real, intended task ("Renew fitness
+    club subscription"), which shares zero words with the user's own
+    paraphrase and never becomes a contender at all."""
+    candidates = [("id-fitness", "Renew fitness club subscription"), ("id-shoes", "Buy gym shoes")]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "the gym task")
+
+
+def test_resolve_single_reference_a_partial_word_in_a_longer_wrong_career_candidate_never_silently_wins():
+    """The same real fifth-round class, in the `career` domain: a
+    longer, unrelated company name ("Startup Grind") sharing one
+    incidental word with the reference must not silently win over the
+    real, intended application ("Anthropic"), which shares zero words
+    with the user's own paraphrase."""
+    candidates = [("id-anthropic", "Anthropic"), ("id-startupgrind", "Startup Grind")]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "the AI startup one")
 
 
 # --- Real, live-database integration tests: Task update/delete (Session 6) ---

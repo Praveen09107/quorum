@@ -1024,22 +1024,73 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
     by the tie check before dominance is even examined), and the new
     filler-word class of attack is caught by dominance specifically.
 
-    A REAL, DISCLOSED, NOT FULLY CLOSED EDGE CASE, found by the same
-    fourth-round review, left as an intentional, disclosed trade-off
-    rather than a further threshold change (re-tuning a threshold is
-    exactly the move that produced three straight regressions on this
-    same function): a LONE contender (nothing else in the running at
-    all) with only 1-2 significant words can still resolve off a single
-    shared word (`covers_candidate` trivially clears for a 1-2-word
-    candidate). This differs from every broken case above in one
-    structural way that matters: with no other real candidate to be
-    silently preferred OVER, there is no wrong-target risk, only a
-    weaker-evidence-than-ideal risk -- and rejecting it outright would
-    break ordinary short `finance`/`career` matching (a bare payee like
-    `"Notion"` IS meant to resolve off one shared word when it is the
-    only real candidate in play, see F3 above). Accepted as-is; not
-    "never a single incidental shared word" universally, only when a
-    genuinely competing interpretation exists to compare it against."""
+    RESOLVED, a real, disclosed FIFTH-round review finding -- CORRECTING
+    A FALSE SAFETY CLAIM this docstring itself made after round 4, not
+    just another exploit: round 4 reasoned that a LONE contender (no
+    OTHER contender in the running) carries "no wrong-target risk, only
+    a weaker-evidence-than-ideal risk," since there is nothing else to
+    be silently preferred OVER. That reasoning has the wrong quantifier
+    -- it ranges over CONTENDERS (candidates that share a word with the
+    reference), not over the user's real CANDIDATES (every row that
+    exists). The real, correct row is frequently a NON-contender: this
+    module's own `build_extraction_prompt()` deliberately tells the
+    model to write `reference_description` in the USER's own words
+    ("taken directly from how the user described it"), not the
+    database's -- so a correct row with genuinely different vocabulary
+    from the user's own phrasing shares ZERO words with the reference
+    and never enters `contenders` at all, while an unrelated row that
+    happens to share ONE word becomes the sole, lonely "leader" by
+    default and resolves -- a real, silent wrong-target result on a
+    genuinely destructive `S2` branch that auto-executes with no human
+    approval, confirmed live across all three domains this function
+    serves (a task, an expense, and a job application, each with a
+    concrete, real, destructive reproduction).
+
+    THE REAL FIX: a lone overlap word is no longer automatically
+    "enough" -- when the leader's own overlap is exactly one word, that
+    one word must account for the leader's ENTIRE candidate text (`over
+    lap == candidate_words`), not just one word out of several. A
+    single word shared with a short, EXACT identifier (`"Notion"` for
+    "the Notion application" -- F3's own case, still correctly resolves,
+    since `{"notion"} == {"notion"}`) is real, complete evidence; the
+    same single word shared with a LONGER candidate that merely mentions
+    it in passing (`"Prime Video"` for "the Prime expense" -- one of
+    this round's own concrete repros) is not, and now correctly fails
+    loud instead of silently winning by default. This is a coverage
+    requirement, not a further ratio to tune -- verified to preserve
+    every pre-existing test unchanged (none of them resolve on a
+    genuinely partial single-word match) while closing every one of
+    this round's own cross-domain reproductions.
+
+    A REAL, DISCLOSED, GENUINELY NOT FULLY CLOSABLE RESIDUAL, left
+    honestly open rather than chased with a sixth change: (1) if the
+    CORRECT row's own overlap words happen to be a literal SUBSET of an
+    unrelated, wrong row's overlap words (e.g. reference "the card
+    payment", correct candidate "Pay the credit card bill" sharing only
+    `"card"`, an unrelated candidate "Payment card dispute with Dan"
+    sharing both `"card"` and `"payment"`), the dominance guard cannot
+    fire -- every one of the correct candidate's words is already
+    "explained" by the wrong leader's own overlap, by the definition of
+    a subset. No non-semantic, bag-of-words rule can distinguish this
+    from a genuinely safe case; this is an honest limit of word-overlap
+    matching itself, not a bug in this function's own logic, and closing
+    it would require actual semantic understanding -- a second real LLM
+    call, which this module's own top-of-file docstring already
+    explains this design deliberately avoids. (2) A candidate whose text
+    is entirely short/symbolic tokens (filtered to zero significant
+    words by `_significant_words()`'s own `len(word) > 1` guard, e.g. a
+    real payee literally named `"H&M"`) is silently excluded from
+    matching entirely -- a real, narrower, disclosed gap, left open for
+    a dedicated future session rather than folded into this same
+    function's fifth consecutive change under time pressure. (3) THE
+    REAL, RECOMMENDED PRODUCT-LEVEL FIX for both residuals above, logged
+    as a genuine OPEN item (`CLAUDE.md` Rule 3) rather than attempted
+    here: this function can only ever refuse or guess from bag-of-words
+    evidence alone; the honest fix for a genuinely low-confidence
+    resolution (a lone, borderline match) on a destructive, auto-
+    executing `S2` action is to surface the real candidate to the user
+    for explicit confirmation BEFORE executing, not to keep tuning what
+    "confident enough" means in code no human ever sees."""
     if not reference_description or not reference_description.strip():
         raise AmbiguousReferenceError("No real reference was given for which existing record this refers to.")
     reference_words = _significant_words(reference_description)
@@ -1047,7 +1098,7 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
         raise AmbiguousReferenceError(
             f"{reference_description!r} has no real, significant words to match an existing record against."
         )
-    contenders = []  # (candidate_id, candidate_text, overlap_word_set, candidate_word_count)
+    contenders = []  # (candidate_id, candidate_text, overlap_word_set, candidate_word_set)
     for candidate_id, candidate_text in candidates:
         if not candidate_text:
             continue
@@ -1056,7 +1107,7 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
             continue
         overlap = candidate_words & reference_words
         if overlap:
-            contenders.append((candidate_id, candidate_text, overlap, len(candidate_words)))
+            contenders.append((candidate_id, candidate_text, overlap, candidate_words))
     if not contenders:
         raise AmbiguousReferenceError(f"No real, existing record matches {reference_description!r}.")
     max_overlap_count = max(len(overlap) for _, _, overlap, _ in contenders)
@@ -1077,7 +1128,19 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
             f"{reference_description!r} matches {leader_text!r} but also, on genuinely different evidence, "
             f"{conflicting_texts} -- too ambiguous to act on safely."
         )
-    covers_candidate = max_overlap_count >= max(1, leader_candidate_words / 2)
+    # RESOLVED, a real, disclosed FIFTH-round review finding, found
+    # before merge: a lone overlap word (`max_overlap_count == 1`) used
+    # to clear `covers_candidate` for ANY 1-2-word candidate regardless
+    # of whether that one word explains the WHOLE candidate or just a
+    # fragment of a longer, unrelated one -- see this function's own
+    # top-of-file docstring for the real, concrete cross-domain
+    # reproductions this closes (a genuine mainline risk for `finance`/
+    # `career`, not an edge case). A single shared word is only real,
+    # sufficient evidence on its own when it accounts for the ENTIRE
+    # candidate -- a coverage requirement, not a further ratio to tune.
+    if max_overlap_count == 1 and leader_overlap != leader_candidate_words:
+        raise AmbiguousReferenceError(f"No real, existing record matches {reference_description!r}.")
+    covers_candidate = max_overlap_count >= max(1, len(leader_candidate_words) / 2)
     covers_reference = 3 * max_overlap_count >= 2 * len(reference_words)
     if not (covers_candidate or covers_reference):
         raise AmbiguousReferenceError(f"No real, existing record matches {reference_description!r}.")
