@@ -214,9 +214,29 @@ void main() {
       expect(message, isNot(contains('Sent')));
     });
 
-    test('a real email revise gives the same honest, distinct message as every other domain', () {
+    test('a real email revise uses the real "send" verb, not the stale "create" wording', () {
+      // REAL, DISCLOSED SESSION-7 ADDITION: `email`'s own `operation` is
+      // always "create" internally (matching calendar), but "create"
+      // reads oddly for a real email -- this domain gets its own real,
+      // honest "send" verb in every generic fallback message.
       const result = QuickCaptureResultData(executed: false, decision: 'revise', stakes: 'S3', domain: 'email', title: null, findings: []);
-      expect(describeQuickCaptureOutcome(result), contains("couldn't create"));
+      final message = describeQuickCaptureOutcome(result);
+      expect(message, "Quorum couldn't send that as described -- see why below.");
+      expect(message, isNot(contains('create')));
+    });
+
+    test('a real email reject uses the real "send" verb', () {
+      const result = QuickCaptureResultData(executed: false, decision: 'reject', stakes: 'S3', domain: 'email', title: null, findings: []);
+      expect(describeQuickCaptureOutcome(result), 'Quorum declined to send that -- see why below.');
+    });
+
+    test('a real, defensive fallback for email uses the real, irregular past tense "sent", never "sendd"', () {
+      // A real, dedicated regression test for a real bug caught and
+      // fixed during this same session, before merge: "send" does not
+      // form its past tense with the bare `+d` the other three real
+      // operation verbs (create/update/delete) happen to share.
+      const result = QuickCaptureResultData(executed: false, decision: 'some_future_unknown_decision', stakes: 'S3', domain: 'email', title: null, findings: []);
+      expect(describeQuickCaptureOutcome(result), 'That was not sent.');
     });
 
     test('a real, defensive executed=true case (no real path produces this today) names the real recipient, never a task title', () {

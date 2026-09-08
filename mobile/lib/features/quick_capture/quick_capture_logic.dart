@@ -214,11 +214,24 @@ String describeQuickCaptureOutcome(QuickCaptureResultData result) {
   // of "create"/"update"/"delete" happens to form its own past tense
   // by a bare `+d` (all three real English verbs end in "e"), so one
   // real, shared derivation covers all three without a second switch.
-  final verb = switch (result.operation) { 'update' => 'update', 'delete' => 'delete', _ => 'create' };
+  //
+  // REAL, DISCLOSED SESSION-7 ADDITION: `email`'s own `operation` is
+  // always genuinely "create" (matching calendar's own convention), but
+  // "create" reads oddly for a real email ("Quorum couldn't create that
+  // as described") -- checked first, domain-specific, before the
+  // generic operation-based derivation. `"send"` is a real, irregular
+  // English verb (past tense "sent", not the bare `+d` the other three
+  // happen to share) -- given its own real past-tense form below rather
+  // than reusing the shared `${verb}d` derivation, which would have
+  // produced the real, incorrect "sendd".
+  final verb = result.domain == 'email'
+      ? 'send'
+      : switch (result.operation) { 'update' => 'update', 'delete' => 'delete', _ => 'create' };
+  final pastTenseVerb = result.domain == 'email' ? 'sent' : '${verb}d';
   return switch (result.decision) {
     'revise' => "Quorum couldn't $verb that as described -- see why below.",
     'escalate_to_human' => 'This needs your direct approval before Quorum can $verb it.',
     'reject' => 'Quorum declined to $verb that -- see why below.',
-    _ => 'That was not ${verb}d.',
+    _ => 'That was not $pastTenseVerb.',
   };
 }

@@ -1159,7 +1159,9 @@ class AmbiguousReferenceError(DownstreamTranslationError):
     code needed."""
 
 
-def _resolve_single_reference(candidates: list[tuple[str, str]], reference_description: str | None) -> str:
+def _resolve_single_reference(
+    candidates: list[tuple[str, str]], reference_description: str | None, *, require_singleton_exact_match: bool = True
+) -> str:
     """THE real, safety-critical core of this session (see this
     module's own top-of-file docstring for the full account). `candidates`
     is a real, already-fetched, already-`user_id`-scoped list of
@@ -1275,38 +1277,51 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
     serves (a task, an expense, and a job application, each with a
     concrete, real, destructive reproduction).
 
-THE REAL FIX (ROUND 5, ORIGINAL VERSION): a lone overlap word was no
-    longer automatically "enough" -- when the leader's own overlap was
-    exactly one word, that one word had to account for the leader's
-    ENTIRE candidate text (`overlap == candidate_words`), not just one
-    word out of several.
+THE REAL FIX (ROUND 5): a lone overlap word is no longer automatically
+    "enough" -- when the leader's own overlap is exactly one word, that
+    one word must account for the leader's ENTIRE candidate text
+    (`overlap == candidate_words`), not just one word out of several.
+    This is the real, current DEFAULT for every caller in this module
+    except one -- see `require_singleton_exact_match` below.
 
-    RESOLVED, a real, disclosed correction found by this SAME session's
-    own testing, before ever reaching review (`QUORUM_FINAL_COMPLETION_
-    PLAN.md` Session 7, `DEC-173`): the round-5 fix above was correct
-    for the domains it was built against (bare, ~one-word business
-    identifiers -- `"Notion"`, `"Swiggy"`) but wrong in general --
-    requiring a lone overlap word to equal the WHOLE candidate breaks
-    matching a real PERSON's first name against their own full raw "To"
-    header (`"Sarah"` against `"Sarah Jones <sarah@company.com>"` has
-    real overlap `{"sarah"}`, never equal to the real, multi-word whole
-    candidate `{"sarah","jones","company","com"}`), which is exactly
-    Session 7's own new, real, mainline use case. Hand-tabulating every
-    case that matters (F3's `"Notion"`, round-4's `"Prime Video"`, this
-    session's own `"Sarah"`, and the pre-existing single-incidental-word
-    tests) by their real overlap ratio on EACH side revealed the actual
-    discriminator was never "does overlap equal the whole candidate" --
-    it was "is overlap at least 2/3 of EITHER side," the exact same real
-    bar `covers_reference` already used. `covers_candidate` merely used
-    a looser, asymmetric 50% bar instead of that same 2/3 one -- tightening
-    it to match, replacing the whole ad hoc "singleton must equal the
-    whole candidate" special case, resolves every one of round 4/5's own
-    real reproductions AND this session's own new `"Sarah"` case, with a
-    single, simpler, symmetric rule instead of a special-cased one.
-    Hand-verified against every real case both this file's own test
-    suite and Session 7's own new tests cover -- and, unlike every prior
-    round's own hand-verification, also RUN, not just computed by hand,
-    before being treated as a real fix.
+    ATTEMPTED, then FOUND FALSE, during this SAME session's own testing,
+    before ever reaching review (`QUORUM_FINAL_COMPLETION_PLAN.md`
+    Session 7, `DEC-173`): a same-session attempt to replace the
+    singleton-exact-match gate above with one simpler, symmetric rule
+    (tightening `covers_candidate` to the same 2/3 bar `covers_reference`
+    already uses, and deleting the gate entirely) looked, by hand, like
+    it resolved every named case, INCLUDING a real, new, legitimate one
+    this session needed (`"Sarah"` against `"Sarah Jones <sarah@company
+    .com>"`). A CRITICAL-tier review proved, by EXHAUSTIVE enumeration
+    (not sampled cases), that this "simplification" had exactly one real
+    behavioral delta from round 5's own gate: it newly admitted every
+    `overlap == 1, len(reference_words) == 1, len(candidate_words) >= 2`
+    case -- precisely F-F's own signature, reopened for every caller,
+    not a narrow edge case. Worse: the review proved this is NOT fixable
+    by further tuning -- the real, legitimate `"Sarah"` case and a real,
+    wrong-target case (`"Prime"` against `"Prime Video India
+    Subscription"`, correct answer `"Amazon"` at zero overlap) are
+    NUMERICALLY IDENTICAL inputs (`overlap=1, candidate_words=4,
+    reference_words=1`) to any rule defined only over those three
+    numbers -- no such rule can accept one and reject the other. The
+    singleton-exact-match gate is restored here, as the default, for
+    exactly this reason: raw overlap-count arithmetic alone cannot
+    safely distinguish these two cases, so the gate closes off the
+    entire numeric region rather than trying to draw a line through it.
+
+    THE REAL, FINAL DESIGN: `require_singleton_exact_match` (default
+    `True`) makes the round-5 gate an explicit, named parameter rather
+    than unconditional code, so this module's own new email recipient
+    resolution can make a real, disclosed, narrow exception to it (see
+    `resolve_and_build_email_proposal()`'s own docstring for the full
+    reasoning) WITHOUT weakening the guarantee for every other real
+    caller -- task/expense/application resolution all keep calling this
+    function with the default, meaning their own real safety guarantee
+    is byte-for-byte identical to `DEC-172`'s own final, five-round-
+    hardened state. Verified this time by actually RUNNING the full
+    real test suite against every named case from all five of `DEC-172`'s
+    own rounds, not just hand-computing it, before treating this as a
+    real fix.
 
     A REAL, DISCLOSED, GENUINELY NOT FULLY CLOSABLE RESIDUAL, left
     honestly open rather than chased with a sixth change: (1) if the
@@ -1374,13 +1389,35 @@ THE REAL FIX (ROUND 5, ORIGINAL VERSION): a lone overlap word was no
             f"{reference_description!r} matches {leader_text!r} but also, on genuinely different evidence, "
             f"{conflicting_texts} -- too ambiguous to act on safely."
         )
-    # RESOLVED (round 5, then simplified during Session 7's own testing
-    # before merge): `covers_candidate` uses the SAME real 2/3 bar as
-    # `covers_reference` below, not a looser 50% one -- see this
-    # function's own top-of-file docstring for the real, concrete
-    # cross-domain reproductions (round 4/5's `"Prime Video"`, Session
-    # 7's own `"Sarah"`) that this exact symmetry was hand-tabulated
-    # against before landing on it.
+    # RESOLVED, a real, disclosed CRITICAL-tier review BLOCKER, found
+    # before merge (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 7, `DEC-
+    # 173`): a same-session attempt to simplify this into one symmetric
+    # `>= 2/3 either side` rule (deleting round 5's singleton-exact-match
+    # gate entirely) was proven, by exhaustive enumeration, to have
+    # exactly one behavioral delta from round 5's own rule: it newly
+    # ADMITS every `overlap == 1, len(reference_words) == 1, len(
+    # candidate_words) >= 2` case -- precisely F-F's own signature (DEC-
+    # 172), reopening it for every real caller, not a narrow edge case.
+    # Worse, proven NOT fixable by further threshold tuning: a real,
+    # legitimate case (`"Sarah"` vs `"Sarah Jones <sarah@company.com>"`,
+    # `m=1, c=4, r=1`) and a real, wrong-target case (`"Prime"` vs
+    # `"Prime Video India Subscription"`, correct answer `"Amazon"` at
+    # zero overlap, ALSO `m=1, c=4, r=1`) are numerically IDENTICAL
+    # inputs to any rule defined only over `(m, c, r)` -- no predicate
+    # over those three numbers alone can accept one and reject the
+    # other. Round 5's own singleton-exact-match gate is RESTORED here
+    # as the real, safe DEFAULT (`require_singleton_exact_match=True`)
+    # for every existing caller (task/expense/application resolution,
+    # none of which pass the new parameter) -- their own real safety
+    # guarantee is completely unchanged from `DEC-172`'s own final,
+    # five-round-hardened state. `require_singleton_exact_match=False`
+    # is a real, narrow, explicit opt-out used ONLY by this session's
+    # own new email recipient resolution below -- see `resolve_and_
+    # build_email_proposal()`'s own docstring for why relaxing this
+    # ONE gate for THAT one caller is a disclosed, accepted trade-off
+    # rather than a silent reopening of the same bug.
+    if max_overlap_count == 1 and require_singleton_exact_match and leader_overlap != leader_candidate_words:
+        raise AmbiguousReferenceError(f"No real, existing record matches {reference_description!r}.")
     covers_candidate = 3 * max_overlap_count >= 2 * len(leader_candidate_words)
     covers_reference = 3 * max_overlap_count >= 2 * len(reference_words)
     if not (covers_candidate or covers_reference):
@@ -1542,25 +1579,46 @@ _MAX_RECIPIENT_CANDIDATES = 50
 async def _fetch_known_recipients(conn: asyncpg.Connection, *, user_id: str) -> list[tuple[str, str]]:
     """Real, live query, real `user_id`-scoped -- this user's own real,
     distinct recipients from `features/waiting_on.py`'s own real
-    `sent_messages` table, the plan's own named real source. Candidate
-    `id` is the real, clean, lowercased EMAIL ADDRESS (parsed via
-    Python's real, standard-library `email.utils.parseaddr()` -- a
-    real, battle-tested RFC 5322 parser, deliberately not a hand-rolled
-    one, matching this backend's own established "don't reinvent a
-    solved parsing problem under time pressure" discipline); candidate
-    `text` stays the ORIGINAL, raw "To" header (e.g. `"Sarah Jones "
-    "<sarah@company.com>"`) so `_resolve_single_reference()` can match a
-    real display name, not just an email's own local-part.
+    `sent_messages` table, the plan's own named real source, bounded to
+    the `_MAX_RECIPIENT_CANDIDATES` most recently-emailed real real
+    addresses (a real, disclosed truncation, not an oversight -- a
+    correct recipient outside that bound is a real, honest non-match,
+    matching `_MAX_EXPENSE_REFERENCE_CANDIDATES`'s own established
+    trade-off exactly). Candidate `id` is the real, clean, lowercased
+    EMAIL ADDRESS.
+
+    RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM, found
+    before merge: `sent_messages.recipient` is the VERBATIM real Gmail
+    `To` header (`features/email_ingestion.py::_extract_header`), which
+    can genuinely name more than one real recipient (a real group
+    thread). `email.utils.parseaddr()` is single-address-only and
+    silently returns `('', '')` for a multi-address header, which would
+    have dropped the entire real row -- a correct recipient emailed only
+    in a group thread would never become a real candidate at all,
+    exactly the kind of "correct answer never enters the race" gap
+    `DEC-172`'s own F-F finding is about. `email.utils.getaddresses()`
+    (also real, standard-library, RFC 5322-aware) is used instead,
+    correctly splitting every real address out of a real multi-recipient
+    header.
+
+    A REAL, DELIBERATE CHOICE OF MATCHABLE TEXT, NOT THE RAW HEADER:
+    candidate `text` is the real DISPLAY NAME alone when one exists
+    (falling back to the email's own real local-part otherwise) --
+    deliberately NOT the full raw header (`"Sarah Jones <sarah@company
+    .com>"`), which bakes real structural noise (the domain, the TLD,
+    angle brackets) into the matchable text that a person would never
+    actually reference by name. See `resolve_and_build_email_proposal()`
+    's own docstring for why this domain's own matching still carries a
+    real, disclosed residual risk despite this cleanup.
 
     A REAL, DELIBERATE DEDUP-BY-ADDRESS DECISION, NOT AN OVERSIGHT: the
     same real person can appear with slightly different raw text across
-    real messages (`"sarah@company.com"` once, `"Sarah Jones <sarah@
-    company.com>"` another time) -- deduping by the raw STRING instead
-    would create two artificial candidates for the same real recipient,
-    which could produce a spurious tie under `_resolve_single_reference
-    ()`'s own real ambiguity check. Deduping by the real, parsed address
-    instead is what makes "the same real person" actually mean one real
-    candidate. When more than one raw variant exists for the same real
+    real messages -- deduping by the raw STRING instead would create two
+    artificial candidates for the same real recipient, which could
+    produce a spurious tie under `_resolve_single_reference()`'s own
+    real ambiguity check. Deduping by the real, parsed address instead
+    is what makes "the same real person" actually mean one real
+    candidate. When more than one real variant exists for the same real
     address, the one WITH a real, non-empty display name is kept
     (strictly more useful to match a bare name reference against)."""
     rows = await conn.fetch(
@@ -1568,17 +1626,20 @@ async def _fetch_known_recipients(conn: asyncpg.Connection, *, user_id: str) -> 
         "GROUP BY recipient ORDER BY last_sent DESC LIMIT $2",
         uuid.UUID(user_id), _MAX_RECIPIENT_CANDIDATES,
     )
-    best_raw_by_address: dict[str, str] = {}
+    best_by_address: dict[str, tuple[bool, str]] = {}  # address -> (has_real_display_name, identity_text)
     for row in rows:
-        raw = row["recipient"]
-        display_name, address = email.utils.parseaddr(raw)
-        if not address or "@" not in address:
-            continue
-        key = address.lower()
-        existing = best_raw_by_address.get(key)
-        if existing is None or (display_name and not email.utils.parseaddr(existing)[0]):
-            best_raw_by_address[key] = raw
-    return list(best_raw_by_address.items())
+        for display_name, address in email.utils.getaddresses([row["recipient"]]):
+            address = address.strip()
+            if not address or "@" not in address or not _looks_like_a_real_email(address):
+                continue
+            key = address.lower()
+            display_name = display_name.strip()
+            has_display_name = bool(display_name)
+            identity_text = display_name if has_display_name else address.split("@", 1)[0]
+            existing = best_by_address.get(key)
+            if existing is None or (has_display_name and not existing[0]):
+                best_by_address[key] = (has_display_name, identity_text)
+    return [(address, identity_text) for address, (_, identity_text) in best_by_address.items()]
 
 
 async def resolve_and_build_email_proposal(conn: asyncpg.Connection, *, user_id: str, args: dict, draft_call: LlmCall) -> ActionProposal:
@@ -1587,7 +1648,30 @@ async def resolve_and_build_email_proposal(conn: asyncpg.Connection, *, user_id:
     resolution reuses `_resolve_single_reference()` directly rather than
     inventing new ambiguity logic, and why a genuine Gate `approve` for
     the resulting `SEND_EMAIL` proposal still never actually sends
-    anything through this real path today."""
+    anything through this real path today.
+
+    A REAL, DISCLOSED, ACCEPTED TRADE-OFF, NOT AN OVERSIGHT: this is the
+    ONE real caller in this backend that passes `require_singleton_
+    exact_match=False` to `_resolve_single_reference()`. Without it, a
+    bare first name (`"Sarah"`) could never resolve against a real
+    contact whose own real identity text is more than one word (`"Sarah
+    Jones"`) -- the singleton-exact-match gate, correctly, would demand
+    the reference equal the WHOLE identity text. Relaxing it here means
+    this domain keeps a real, disclosed residual version of `DEC-172`'s
+    own F-F risk (a short, wrong candidate could still, in principle,
+    win off one incidental word) that `DELETE_TASK`/`DELETE_EXPENSE`/
+    `UPDATE_APPLICATION_STATUS` do NOT carry. This is accepted
+    specifically because `SEND_EMAIL` is real `Stakes.S3` and this
+    exact function's own top-of-file docstring already establishes that
+    NO real code path can auto-execute one today -- a wrong resolution
+    here produces an honestly-labeled, un-sent draft, never an immediate,
+    unsupervised real write, categorically different exposure from the
+    three S2 domains that keep the strict default. THE REAL, RECOMMENDED
+    FOLLOW-ON, logged as a genuine OPEN item rather than attempted here:
+    once a real human-approval endpoint exists, surface a low-confidence
+    resolution for explicit confirmation before ever sending, rather
+    than relying on this matching function alone to be the only real
+    safeguard."""
     recipient_email = args.get("recipient_email")
     if isinstance(recipient_email, str) and recipient_email.strip():
         candidate_recipient = recipient_email.strip()
@@ -1596,7 +1680,16 @@ async def resolve_and_build_email_proposal(conn: asyncpg.Connection, *, user_id:
         resolved_recipient = candidate_recipient
     else:
         candidates = await _fetch_known_recipients(conn, user_id=user_id)
-        resolved_recipient = _resolve_single_reference(candidates, args.get("recipient_description"))
+        resolved_recipient = _resolve_single_reference(
+            candidates, args.get("recipient_description"), require_singleton_exact_match=False
+        )
+        if not _looks_like_a_real_email(resolved_recipient):
+            # Real, defense-in-depth only -- `_fetch_known_recipients()`
+            # already only ever returns addresses that already passed
+            # this exact check, so this can never genuinely trigger
+            # today; kept anyway, matching this module's own established
+            # "never trust a single check" discipline.
+            raise DownstreamTranslationError(f"Resolved email recipient does not look like a real email address: {resolved_recipient!r}")
 
     user_intent = args.get("user_intent")
     if not isinstance(user_intent, str) or not user_intent.strip():

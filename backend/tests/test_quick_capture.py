@@ -727,6 +727,50 @@ def test_resolve_single_reference_filler_word_overlap_never_silently_beats_the_r
         _resolve_single_reference(candidates, "gym membership at the new place")
 
 
+def test_resolve_single_reference_the_default_singleton_gate_rejects_a_one_word_reference_inside_a_longer_candidate():
+    """THE real, dedicated unit test the CRITICAL-tier review on Session
+    7 (`DEC-173`) explicitly flagged as missing before merge: a direct,
+    permanent proof of this function's own real, default `require_
+    singleton_exact_match=True` behavior at exactly the `(overlap=1,
+    len(reference_words)=1, len(candidate_words)>=2)` boundary -- the
+    precise region a same-session attempt to simplify this function
+    silently reopened (see this function's own top-of-file docstring).
+    A one-word reference must NOT resolve against a longer candidate
+    that merely contains that one word, by default, for every real
+    caller except the one, explicit, documented exception below."""
+    candidates = [("id-wrong", "Prime Video India Subscription")]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "Prime")
+
+
+def test_resolve_single_reference_require_singleton_exact_match_false_is_a_real_narrow_opt_out():
+    """THE real, dedicated, permanent proof of the ONE explicit exception
+    to the test above -- `require_singleton_exact_match=False`, used only
+    by this session's own email recipient resolution -- genuinely relaxes
+    the gate for exactly the case it exists to relax (a bare first name
+    against a real, longer display name)."""
+    candidates = [("id-correct", "Sarah Jones")]
+    assert (
+        _resolve_single_reference(candidates, "Sarah", require_singleton_exact_match=False) == "id-correct"
+    )
+
+
+def test_resolve_single_reference_require_singleton_exact_match_false_still_fails_loud_on_a_genuine_tie():
+    """A REAL, DISCLOSED, ACCEPTED RESIDUAL, not silently glossed over:
+    relaxing `require_singleton_exact_match` for a lone one-word overlap
+    means a genuinely wrong, unrelated candidate CAN silently resolve
+    when it is the SOLE contender (see `resolve_and_build_email_
+    proposal()`'s own docstring for why this specific trade-off is
+    accepted for `SEND_EMAIL` specifically, a real `Stakes.S3` action
+    that can never auto-execute). What the relaxed flag does NOT do is
+    disable the tie/dominance checks that run BEFORE it -- two real,
+    equally-plausible candidates still correctly fail loud, exactly as
+    they would under the strict default."""
+    candidates = [("id-a", "Sarah Jones"), ("id-b", "Sarah Lee")]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "Sarah", require_singleton_exact_match=False)
+
+
 def test_resolve_single_reference_a_partial_word_in_a_longer_wrong_candidate_never_silently_wins():
     """THE real, concrete reproduction of this session's own CONFIRMED
     fifth-round finding: this docstring's OWN prior claim -- that a lone
@@ -1243,9 +1287,25 @@ async def test_fetch_known_recipients_dedups_by_real_email_address_preferring_a_
         candidates = await _fetch_known_recipients(conn, user_id=user_id)
 
     assert len(candidates) == 1
-    address, raw_text = candidates[0]
+    address, identity_text = candidates[0]
     assert address == "sarah@company.com"
-    assert raw_text == "Sarah Jones <sarah@company.com>"  # the real, more descriptive variant was kept
+    assert identity_text == "Sarah Jones"  # the real display name was kept, not the local-part fallback
+
+
+async def test_fetch_known_recipients_correctly_splits_a_real_multi_recipient_header(pool, user_id):
+    """RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM: a real
+    Gmail 'To' header can genuinely name more than one real recipient (a
+    real group thread) -- `email.utils.parseaddr()` is single-address-
+    only and would have silently dropped the whole row, making a correct
+    recipient invisible as a candidate. `email.utils.getaddresses()`
+    correctly splits both real addresses out."""
+    await _seed_sent_message(pool, user_id=user_id, recipient="Sarah Jones <sarah@company.com>, James Lee <james@company.com>")
+
+    async with pool.acquire() as conn:
+        candidates = await _fetch_known_recipients(conn, user_id=user_id)
+
+    addresses = {address for address, _ in candidates}
+    assert addresses == {"sarah@company.com", "james@company.com"}
 
 
 async def test_fetch_known_recipients_never_reaches_a_different_real_users_sent_messages(pool, user_id):
