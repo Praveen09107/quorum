@@ -630,36 +630,37 @@ def test_resolve_single_reference_a_single_shared_incidental_word_is_not_enough(
         _resolve_single_reference(candidates, "meeting notes from yesterday")
 
 
-def test_resolve_single_reference_a_lone_short_candidate_does_not_win_off_a_weak_partial_reference():
+def test_resolve_single_reference_a_lone_multi_word_candidate_still_rejects_a_weak_partial_reference():
     """RESOLVED, a real, disclosed CRITICAL-tier review request (DEC-172):
     the pre-fix suite only ever tested n>=3 candidates. Here, with only
-    ONE real candidate present ("Gym", a single significant word), a
-    reference that shares that one word but is mostly about other real
-    things ("gym membership at the new place downtown") must still be
-    rejected -- the reference's own real significant words are barely
-    covered by this one short candidate."""
-    candidates = [("id-1", "Gym")]
+    ONE real candidate present (a genuine multi-word title), a reference
+    that shares just one incidental word but is mostly about other real
+    things must still be rejected under BOTH of this function's own real
+    rules -- neither a candidate-side nor a reference-side majority."""
+    candidates = [("id-1", "Cancel gym membership card")]
     with pytest.raises(AmbiguousReferenceError):
-        _resolve_single_reference(candidates, "gym membership at the new place downtown")
+        _resolve_single_reference(candidates, "the membership renewal for car insurance")
 
 
-def test_resolve_single_reference_a_short_candidate_no_longer_silently_wins_over_the_real_correct_longer_one():
+def test_resolve_single_reference_a_short_candidate_and_a_longer_one_correctly_fail_loud_together():
     """THE real, concrete reproduction of this session's own CONFIRMED
-    BLOCKER (DEC-172, H1), preserved here as a permanent regression test.
-    Under the original, broken threshold (requiring overlap to cover only
-    HALF of the CANDIDATE's own words), a task titled plainly "Gym" --
-    exactly one significant word -- silently, uniquely matched a
-    reference like "gym membership", even with the real, correct, longer
-    candidate ALSO present, because that longer candidate's own overlap
-    fraction (of ITS OWN word count) fell just under 50%. The fixed,
-    reference-side-only ratio must resolve this to the real, correct
-    longer candidate, and ONLY that one -- "Gym" alone must never again
-    be enough."""
+    BLOCKER (DEC-172, H1) -- AND of the real follow-up finding (F1) the
+    FIRST fix attempt introduced -- both preserved here as one permanent
+    regression test. A task titled plainly "Gym" (one significant word)
+    and a real, longer candidate both plausibly match "gym membership":
+    the ORIGINAL broken rule (candidate-side only) silently, uniquely
+    picked "Gym" alone (H1). The FIRST fix attempt (reference-side only)
+    would have silently, uniquely picked the longer one instead -- the
+    identical class of harm from the opposite direction (F1). Neither
+    silent pick is safe: with both real rules combined, BOTH candidates
+    are correctly recognized as plausible, and the function correctly
+    fails loud instead of silently guessing either way."""
     candidates = [
         ("id-short", "Gym"),
         ("id-correct", "Renew gym membership at the new place downtown"),
     ]
-    assert _resolve_single_reference(candidates, "gym membership") == "id-correct"
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "gym membership")
 
 
 # --- Real, live-database integration tests: Task update/delete (Session 6) ---
@@ -684,17 +685,19 @@ async def test_capture_action_from_text_updates_a_real_task_deadline_keeping_oth
     extraction = _fake_extraction(
         {"domain": "tasks", "operation": "update", "reference_description": "Q3 budget review", "deadline_iso": new_deadline.isoformat()}
     )
-    judge_call, judge_calls = _fake_approving_judge_call()
 
     async with pool.acquire() as conn:
         async with conn.transaction():
             result = await capture_action_from_text(
                 conn, user_id=user_id, free_text="push the Q3 budget review deadline to Friday",
-                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=judge_call,
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
             )
 
-    assert result.stakes == "S2"  # RESOLVED, DEC-172 M2: UPDATE_TASK bumped to S2 -- the real Judge runs, the real Critic never does
-    assert len(judge_calls) == 1
+    # RESOLVED, then RE-RESOLVED (DEC-172, M2 then F2): `UPDATE_TASK` was
+    # briefly bumped to `S2`, then reverted to `S1` after a real, disclosed
+    # follow-up review found the bump exposed a genuine Gate-orchestration
+    # staleness bug -- see `router.py`'s own `STAKES_TABLE` comment.
+    assert result.stakes == "S1"  # Stage B never runs, proven by the unreachable fakes above
     assert result.operation == "update"
     assert result.executed is True
     assert result.title == "Finish the Q3 budget review"  # unchanged, real, current value -- never lost
@@ -720,16 +723,15 @@ async def test_capture_action_from_text_updates_a_real_task_with_a_deadline_with
     deadline = datetime.now(timezone.utc) + timedelta(days=3)
     await _seed_open_task(pool, user_id=user_id, title="Old title", estimated_hours=14.0, deadline=deadline)
     extraction = _fake_extraction({"domain": "tasks", "operation": "update", "reference_description": "Old title", "title": "New title"})
-    judge_call, _judge_calls = _fake_approving_judge_call()
 
     async with pool.acquire() as conn:
         async with conn.transaction():
             result = await capture_action_from_text(
                 conn, user_id=user_id, free_text="rename Old title to New title",
-                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=judge_call,
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
             )
 
-    assert result.stakes == "S2"  # RESOLVED, DEC-172 M2: UPDATE_TASK bumped to S2
+    assert result.stakes == "S1"  # UPDATE_TASK -- see DEC-172's own M2/F2 addendum for why this stays S1
     assert result.executed is True  # would be False under the pre-fix double-counting bug
     assert result.title == "New title"
 

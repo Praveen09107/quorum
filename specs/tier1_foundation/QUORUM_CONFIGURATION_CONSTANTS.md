@@ -14,7 +14,7 @@
 | `create_calendar_event_external` | S3 | Full Gate + mandatory human approval |
 | `create_calendar_event_local` | S2 | Stage A + single-check Stage B |
 | `create_task` | S1 | Stage A only |
-| `update_task` | S2 | Stage A + single-check Stage B |
+| `update_task` | S1 | Stage A only (kept at S1 -- see `router.py`'s own `STAKES_TABLE` comment for the real, disclosed F2 Gate-staleness reason a bump to S2 was reverted) |
 | `delete_task` | S2 | Stage A + single-check Stage B |
 | `log_expense` | S1 | Stage A only |
 | `update_expense` | S2 | Stage A + single-check Stage B |

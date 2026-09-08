@@ -28,10 +28,18 @@ writing a line of code:
     scope boundary, not an oversight; see this docstring's own
     `CREATE_CALENDAR_EVENT_EXTERNAL` section below for why only the
     external case genuinely needs a server-side Google API call at all.
-  - `UPDATE_TASK`/`UPDATE_APPLICATION_STATUS` are never produced by any
-    real code path that reaches this function yet.
   - `CREATE_NOTE` has no real execution target either: no `notes` table
     exists anywhere in this schema.
+
+RESOLVED, a real, disclosed CRITICAL-tier review LOW (`DEC-172`, F4),
+found by a follow-up review after this docstring had gone stale: the
+line above used to say `UPDATE_TASK`/`UPDATE_APPLICATION_STATUS` were
+"never produced by any real code path that reaches this function yet."
+`QUORUM_FINAL_COMPLETION_PLAN.md` Session 6 (`DEC-172`) gave both real
+execution branches below AND a real caller (`features/quick_capture.py`'s
+own edit/delete flow) in the same session that wrote this correction --
+the claim was already false the moment that session's own code shipped.
+Corrected here rather than left to rot a second time.
 
 **A REAL, DISCLOSED GAP FOUND WHILE BUILDING THIS SESSION'S OWN
 `SEND_EMAIL` EXECUTION:** `orchestration.py::review()`'s real Gate

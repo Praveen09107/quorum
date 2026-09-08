@@ -946,7 +946,7 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
     point: this project's own explicit warning is that a wrong guess
     here silently corrupts or destroys the wrong real record.
 
-    RESOLVED, a real, disclosed CRITICAL-tier review BLOCKER, found
+    RESOLVED, a real, disclosed CRITICAL-tier review BLOCKER (H1), found
     before merge (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 6, `DEC-
     172`): the original threshold required overlap to cover at least
     half of the CANDIDATE's own significant words. That let a short
@@ -955,17 +955,37 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
     reference merely containing "gym" (say, "the gym membership task")
     satisfied `1 >= max(1, 1/2)` and matched, even with a real, longer,
     genuinely-correct candidate like "Renew gym membership at the new
-    place downtown" also present but failing ITS OWN 50% bar. The fix
-    drops the candidate-side ratio entirely and requires instead that
-    the REFERENCE's own significant words be substantially covered by
-    the candidate: at least 2/3 of `reference_words` must appear in the
-    candidate (checked as `3 * len(overlap) >= 2 * len(reference_words)`
-    -- plain integer arithmetic, never a float division, so there's no
-    floating-point boundary to get wrong). A short, generic candidate
-    can no longer win off a single incidental word, because the bar now
-    scales with how much of the user's OWN real reference text it
-    actually accounts for, not with how short the candidate happens to
-    be."""
+    place downtown" also present but failing ITS OWN 50% bar.
+
+    RESOLVED, a real, disclosed follow-up CRITICAL-tier review finding
+    (F1/F3) on the FIRST fix attempt, found before merge in the same
+    round: dropping the candidate-side ratio ENTIRELY (matching only on
+    "does the candidate cover 2/3 of the reference") traded H1's bug for
+    its OWN mirror image, and broke ordinary short-candidate matching
+    for `finance`/`career` (a bare payee/company is often one word,
+    which can never cover 2/3 of a two-word reference). Concretely: with
+    candidates `["Gym", "Cancel gym membership card"]` and reference
+    "the gym membership task", the reference-side-only rule EXCLUDED the
+    real, intended "Gym" (1 of 3 reference words covered) and uniquely,
+    SILENTLY resolved to the wrong "Cancel gym membership card" (which
+    covers 2 of 3) -- the exact class of harm H1 exists to prevent,
+    reached from the opposite direction.
+
+    THE REAL, FINAL FIX: a candidate is included if EITHER real rule
+    flags it -- the original candidate-side rule (`>= half of the
+    CANDIDATE's own words`) OR the reference-side rule (`>= 2/3 of the
+    REFERENCE's own words`, `3 * len(overlap) >= 2 * len(reference_
+    words)`, plain integer arithmetic, no float boundary). Each rule
+    alone has exactly one blind spot (favoring short candidates /
+    favoring long candidates, respectively); together, EITHER one
+    flagging a candidate is enough to put it in play. This does NOT
+    reduce safety -- it can only ever ADD a candidate to the "in the
+    running" set, never silently drop the correct one. Where this makes
+    a case that used to auto-resolve now correctly report `Ambiguous
+    ReferenceError` instead (the user must be more specific), that is
+    the deliberately safe outcome this whole function's own docstring
+    already demands: fail loud, NEVER a fallback guess -- a slightly
+    less convenient safe answer beats a wrong one, in either direction."""
     if not reference_description or not reference_description.strip():
         raise AmbiguousReferenceError("No real reference was given for which existing record this refers to.")
     reference_words = _significant_words(reference_description)
@@ -981,7 +1001,9 @@ def _resolve_single_reference(candidates: list[tuple[str, str]], reference_descr
         if not candidate_words:
             continue
         overlap = candidate_words & reference_words
-        if 3 * len(overlap) >= 2 * len(reference_words):
+        covers_candidate = len(overlap) >= max(1, len(candidate_words) / 2)
+        covers_reference = 3 * len(overlap) >= 2 * len(reference_words)
+        if covers_candidate or covers_reference:
             matches.append((candidate_id, candidate_text))
     if len(matches) == 0:
         raise AmbiguousReferenceError(f"No real, existing record matches {reference_description!r}.")

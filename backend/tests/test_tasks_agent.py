@@ -38,20 +38,22 @@ async def test_graph_invocation_produces_a_real_proposal():
     assert result["proposal"].action_type == ActionType.CREATE_TASK
 
 
-def test_task_actions_correctly_route_via_the_real_router():
+def test_both_task_actions_correctly_route_to_s1_via_the_real_router():
     # Real cross-session integration, same pattern as IMPL_14's stakes
-    # proof -- both real task ActionTypes resolve through the actual
+    # proof -- both real task ActionTypes resolve to S1 through the actual
     # router, not just asserted from the schema alone.
     #
-    # RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (DEC-172,
-    # M2): `UPDATE_TASK` was bumped from `S1` to `S2` this session, for
-    # genuine consistency with `UPDATE_BUDGET`'s own already-established
-    # "an update of an existing row sits one stakes level above its
-    # CREATE sibling" precedent -- see `router.py`'s own full reasoning.
+    # RESOLVED, then RE-RESOLVED (DEC-172, M2 then F2): `UPDATE_TASK` was
+    # briefly bumped to `S2` for consistency with `UPDATE_BUDGET`'s own
+    # precedent, then reverted after a real, disclosed follow-up review
+    # found that doing so exposed a genuine, deeper Gate-orchestration
+    # staleness bug (Stage A's deadline-conflict check re-runs against a
+    # Judge revision using frozen, pre-revision closure values) -- see
+    # `router.py`'s own `STAKES_TABLE` comment for the full account.
     create = build_task_proposal("new task", 1.0)
     update = build_task_proposal("existing task", 1.0, existing_task_id="t1")
     assert get_stakes(create.action_type) == Stakes.S1
-    assert get_stakes(update.action_type) == Stakes.S2
+    assert get_stakes(update.action_type) == Stakes.S1
 
 
 def test_tasks_domain_does_not_overlap_with_any_prior_domain():

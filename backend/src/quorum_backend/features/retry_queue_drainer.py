@@ -232,9 +232,15 @@ async def build_stage_a_checks_for_domain(
         deadline_dt = datetime.fromisoformat(deadline) if deadline else None
         if deadline_dt is not None:
             # RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (DEC-172,
-            # M1): `existing_task_id`, present only on a real UPDATE_TASK
-            # payload (absent, so None, on a real CREATE_TASK payload), is
-            # threaded through so this task's own real, currently-committed
+            # M1), corrected once more by a real, disclosed follow-up review
+            # LOW (F5): `existing_task_id` is a real key on EVERY task
+            # payload (`tasks_agent.py::build_task_proposal()` always sets
+            # it), genuinely `None` on a real CREATE_TASK payload and a real
+            # id only on a real UPDATE_TASK one -- `.get()` below reads the
+            # same `None` either way the key is merely absent, so nothing
+            # downstream depends on which of those two is literally true,
+            # but the comment itself should say what the payload actually
+            # is. Threaded through so this task's own real, currently-committed
             # hours are excluded from its own capacity check -- see
             # `fetch_committed_hours_before()`'s own docstring for the full
             # real double-counting bug this fixes.
