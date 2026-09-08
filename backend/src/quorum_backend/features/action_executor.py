@@ -28,10 +28,18 @@ writing a line of code:
     scope boundary, not an oversight; see this docstring's own
     `CREATE_CALENDAR_EVENT_EXTERNAL` section below for why only the
     external case genuinely needs a server-side Google API call at all.
-  - `UPDATE_TASK`/`UPDATE_APPLICATION_STATUS` are never produced by any
-    real code path that reaches this function yet.
   - `CREATE_NOTE` has no real execution target either: no `notes` table
     exists anywhere in this schema.
+
+RESOLVED, a real, disclosed CRITICAL-tier review LOW (`DEC-172`, F4),
+found by a follow-up review after this docstring had gone stale: the
+line above used to say `UPDATE_TASK`/`UPDATE_APPLICATION_STATUS` were
+"never produced by any real code path that reaches this function yet."
+`QUORUM_FINAL_COMPLETION_PLAN.md` Session 6 (`DEC-172`) gave both real
+execution branches below AND a real caller (`features/quick_capture.py`'s
+own edit/delete flow) in the same session that wrote this correction --
+the claim was already false the moment that session's own code shipped.
+Corrected here rather than left to rot a second time.
 
 **A REAL, DISCLOSED GAP FOUND WHILE BUILDING THIS SESSION'S OWN
 `SEND_EMAIL` EXECUTION:** `orchestration.py::review()`'s real Gate
@@ -237,6 +245,11 @@ _UNKNOWN_PAYEE = "Unknown"
 # real, structural backstop for that path, not a duplicate check for
 # the same path.
 _MAX_BUDGET_LIMIT = 99_999_999.99
+# The same real value, matching `expenses.amount NUMERIC(10,2)`'s own
+# real column precision -- the real, independent backstop for
+# `UPDATE_EXPENSE` (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 6), for
+# the identical real reason `_MAX_BUDGET_LIMIT` exists above.
+_MAX_EXPENSE_AMOUNT = 99_999_999.99
 
 # A real, live-confirmed shape for both a real Gmail message id and a
 # real Gmail label id -- neither one this project has ever seen
@@ -510,6 +523,56 @@ async def _execute_approved_action_unsafe(
         )
         return ExecutionResult(executed=True, detail="Real task row created.")
 
+    if action_type == ActionType.UPDATE_TASK:
+        # RESOLVED, `QUORUM_FINAL_COMPLETION_PLAN.md` Session 6 -- the
+        # real, first genuine execution of this real `ActionType`
+        # (confirmed absent by direct search before this session; see
+        # this module's own top-of-file docstring). `existing_task_id`
+        # is the real, resolved target row -- resolution itself already
+        # happened one layer up, in `features/quick_capture.py`, against
+        # this exact real user's own real, open tasks; this branch's own
+        # real job is only the write, plus its own independent, last-
+        # line-of-defense checks (a Judge-authored `revised_payload` can
+        # bypass that upstream resolution entirely, the same real risk
+        # `UPDATE_BUDGET`'s own docstring above already discloses).
+        existing_task_id = payload.get("existing_task_id")
+        title = payload.get("title")
+        estimated_hours = payload.get("estimated_hours")
+        if not existing_task_id or not isinstance(title, str) or not title.strip():
+            raise ValueError(f"real UPDATE_TASK payload must carry a real existing_task_id and a real, non-empty title, got {payload!r}")
+        if (
+            isinstance(estimated_hours, bool)
+            or not isinstance(estimated_hours, (int, float))
+            or not math.isfinite(estimated_hours)
+            or estimated_hours <= 0
+        ):
+            raise ValueError(f"real UPDATE_TASK estimated_hours must be a real, finite, positive number, got {estimated_hours!r}")
+        deadline_iso = payload.get("deadline")
+        status = await conn.execute(
+            "UPDATE tasks SET title = $1, estimated_hours = $2, deadline = $3 WHERE task_id = $4 AND user_id = $5",
+            title,
+            estimated_hours,
+            datetime.fromisoformat(deadline_iso) if deadline_iso else None,
+            uuid.UUID(existing_task_id),
+            uuid.UUID(user_id),
+        )
+        if status != "UPDATE 1":
+            raise ValueError(f"real UPDATE_TASK matched no real task row for existing_task_id={existing_task_id!r}, user_id={user_id!r} ({status!r})")
+        return ExecutionResult(executed=True, detail="Real task row updated.")
+
+    if action_type == ActionType.DELETE_TASK:
+        existing_task_id = payload.get("existing_task_id")
+        if not existing_task_id:
+            raise ValueError(f"real DELETE_TASK payload must carry a real existing_task_id, got {payload!r}")
+        status = await conn.execute(
+            "DELETE FROM tasks WHERE task_id = $1 AND user_id = $2",
+            uuid.UUID(existing_task_id),
+            uuid.UUID(user_id),
+        )
+        if status != "DELETE 1":
+            raise ValueError(f"real DELETE_TASK matched no real task row for existing_task_id={existing_task_id!r}, user_id={user_id!r} ({status!r})")
+        return ExecutionResult(executed=True, detail="Real task row deleted.")
+
     if action_type == ActionType.UPDATE_BUDGET:
         # RESOLVED, `DEC-148`: closes the real gap this module's own
         # top-of-file docstring named -- `users.monthly_budget_limit`
@@ -626,6 +689,75 @@ async def _execute_approved_action_unsafe(
             payload["amount"],
         )
         return ExecutionResult(executed=True, detail="Real expense row created.")
+
+    if action_type == ActionType.UPDATE_EXPENSE:
+        # RESOLVED, `QUORUM_FINAL_COMPLETION_PLAN.md` Session 6. Same
+        # real, independent, last-line-of-defense discipline as
+        # `UPDATE_BUDGET` above: a Judge-authored `revised_payload` can
+        # reach this branch having skipped `quick_capture.py`'s own
+        # pre-Gate resolution/validation entirely.
+        existing_expense_id = payload.get("existing_expense_id")
+        amount = payload.get("amount")
+        if not existing_expense_id:
+            raise ValueError(f"real UPDATE_EXPENSE payload must carry a real existing_expense_id, got {payload!r}")
+        if (
+            isinstance(amount, bool)
+            or not isinstance(amount, (int, float))
+            or not math.isfinite(amount)
+            or amount <= 0
+            or amount > _MAX_EXPENSE_AMOUNT
+        ):
+            raise ValueError(f"real UPDATE_EXPENSE amount must be a real, finite number in (0, {_MAX_EXPENSE_AMOUNT}], got {amount!r}")
+        status = await conn.execute(
+            "UPDATE expenses SET payee = $1, amount = $2 WHERE expense_id = $3 AND user_id = $4",
+            payload.get("payee") or _UNKNOWN_PAYEE,
+            float(amount),
+            uuid.UUID(existing_expense_id),
+            uuid.UUID(user_id),
+        )
+        if status != "UPDATE 1":
+            raise ValueError(f"real UPDATE_EXPENSE matched no real expense row for existing_expense_id={existing_expense_id!r}, user_id={user_id!r} ({status!r})")
+        return ExecutionResult(executed=True, detail="Real expense row updated.")
+
+    if action_type == ActionType.DELETE_EXPENSE:
+        existing_expense_id = payload.get("existing_expense_id")
+        if not existing_expense_id:
+            raise ValueError(f"real DELETE_EXPENSE payload must carry a real existing_expense_id, got {payload!r}")
+        status = await conn.execute(
+            "DELETE FROM expenses WHERE expense_id = $1 AND user_id = $2",
+            uuid.UUID(existing_expense_id),
+            uuid.UUID(user_id),
+        )
+        if status != "DELETE 1":
+            raise ValueError(f"real DELETE_EXPENSE matched no real expense row for existing_expense_id={existing_expense_id!r}, user_id={user_id!r} ({status!r})")
+        return ExecutionResult(executed=True, detail="Real expense row deleted.")
+
+    if action_type == ActionType.UPDATE_APPLICATION_STATUS:
+        # RESOLVED, `QUORUM_FINAL_COMPLETION_PLAN.md` Session 6 -- the
+        # real, first genuine execution of this real `ActionType`
+        # (confirmed absent by direct search before this session; see
+        # this module's own top-of-file docstring). `applications.
+        # status` is a real, deliberately OPEN vocabulary (no database
+        # `CHECK` constraint, confirmed against migration `0001`,
+        # matching `CLAUDE.md`'s own explicit "parse it defensively"
+        # contract for this exact column, `MOBILE_23`) -- this branch
+        # therefore does NOT validate `status` against any closed set;
+        # a non-empty real string is the only real requirement, the same
+        # honest, open-vocabulary discipline every real reader of this
+        # column already has to hold.
+        application_id = payload.get("application_id")
+        new_status = payload.get("status")
+        if not application_id or not isinstance(new_status, str) or not new_status.strip():
+            raise ValueError(f"real UPDATE_APPLICATION_STATUS payload must carry a real application_id and a real, non-empty status, got {payload!r}")
+        status = await conn.execute(
+            "UPDATE applications SET status = $1 WHERE application_id = $2 AND user_id = $3",
+            new_status,
+            uuid.UUID(application_id),
+            uuid.UUID(user_id),
+        )
+        if status != "UPDATE 1":
+            raise ValueError(f"real UPDATE_APPLICATION_STATUS matched no real application row for application_id={application_id!r}, user_id={user_id!r} ({status!r})")
+        return ExecutionResult(executed=True, detail="Real application status updated.")
 
     if action_type == ActionType.SEND_EMAIL:
         if google_access_token is None:

@@ -156,7 +156,9 @@ class PrefetchedCommittedHoursAdapter:
         return self._committed_hours
 
 
-async def fetch_committed_hours_before(conn: asyncpg.Connection, *, user_id: str, deadline: datetime) -> float:
+async def fetch_committed_hours_before(
+    conn: asyncpg.Connection, *, user_id: str, deadline: datetime, exclude_task_id: str | None = None
+) -> float:
     """Real, live query: this user's real, currently-open task hours
     already committed before the given real deadline -- the same real
     `tasks` table `features/today.py::fetch_today_capacity` already
@@ -165,13 +167,38 @@ async def fetch_committed_hours_before(conn: asyncpg.Connection, *, user_id: str
     needs. Public (not `_`-prefixed) so `features/deadline_watch.py`
     (`DEC-13x`) can reuse this exact real query rather than duplicating
     it -- the same anti-duplication discipline this module's own reuse
-    of `today.py`'s `TODAY_WORKING_HOURS_PER_DAY` already established."""
-    row = await conn.fetchrow(
-        "SELECT COALESCE(SUM(estimated_hours), 0) AS committed FROM tasks "
-        "WHERE user_id = $1 AND status = 'open' AND deadline IS NOT NULL AND deadline <= $2",
-        uuid.UUID(user_id),
-        deadline,
-    )
+    of `today.py`'s `TODAY_WORKING_HOURS_PER_DAY` already established.
+
+    RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM, found
+    before merge (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 6, `DEC-
+    172`): `exclude_task_id` is new, real, and optional (defaulting to
+    `None`, preserving this function's own exact, existing behavior for
+    every real caller that predates this session). Without it, a real
+    `UPDATE_TASK` request that only changes a task's own title genuinely
+    double-counted that SAME task's own real `estimated_hours` -- once
+    as its real, current, already-committed value (this query, still
+    summing the row being edited), and once again as the merged
+    payload's own `claimed_commitment_hours` value passed to `deadline_
+    conflict_check()` -- so a plain rename could spuriously fail Stage A
+    with a real, fabricated capacity conflict the task's own edit never
+    actually introduced. `features/quick_capture.py`'s own real
+    `UPDATE_TASK` path now passes the real, resolved `existing_task_id`
+    here specifically to exclude it from its own commitment sum."""
+    if exclude_task_id is None:
+        row = await conn.fetchrow(
+            "SELECT COALESCE(SUM(estimated_hours), 0) AS committed FROM tasks "
+            "WHERE user_id = $1 AND status = 'open' AND deadline IS NOT NULL AND deadline <= $2",
+            uuid.UUID(user_id),
+            deadline,
+        )
+    else:
+        row = await conn.fetchrow(
+            "SELECT COALESCE(SUM(estimated_hours), 0) AS committed FROM tasks "
+            "WHERE user_id = $1 AND status = 'open' AND deadline IS NOT NULL AND deadline <= $2 AND task_id != $3",
+            uuid.UUID(user_id),
+            deadline,
+            uuid.UUID(exclude_task_id),
+        )
     return float(row["committed"])
 
 
@@ -204,7 +231,24 @@ async def build_stage_a_checks_for_domain(
         deadline = proposal.payload.get("deadline")
         deadline_dt = datetime.fromisoformat(deadline) if deadline else None
         if deadline_dt is not None:
-            committed = await fetch_committed_hours_before(conn, user_id=user_id, deadline=deadline_dt)
+            # RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (DEC-172,
+            # M1), corrected once more by a real, disclosed follow-up review
+            # LOW (F5): `existing_task_id` is a real key on EVERY task
+            # payload (`tasks_agent.py::build_task_proposal()` always sets
+            # it), genuinely `None` on a real CREATE_TASK payload and a real
+            # id only on a real UPDATE_TASK one -- `.get()` below reads the
+            # same `None` either way, whether the key is actually present
+            # with a `None` value or genuinely absent, so nothing downstream
+            # depends on which of those two is literally true here, but the
+            # comment itself should say what the payload actually is.
+            # Threaded through so this task's own real, currently-committed
+            # hours are excluded from its own capacity check -- see
+            # `fetch_committed_hours_before()`'s own docstring for the full
+            # real double-counting bug this fixes.
+            existing_task_id = proposal.payload.get("existing_task_id")
+            committed = await fetch_committed_hours_before(
+                conn, user_id=user_id, deadline=deadline_dt, exclude_task_id=existing_task_id
+            )
             adapter = PrefetchedCommittedHoursAdapter(committed)
             available = available_hours_before_deadline(deadline_dt)
             checks.append(
@@ -299,7 +343,16 @@ def validate_and_build_finance_proposal(args: dict) -> ActionProposal:
 _MAX_TASK_TITLE_LENGTH = 500
 
 
-def validate_and_build_task_proposal(args: dict) -> ActionProposal:
+def validate_and_build_task_proposal(args: dict, *, existing_task_id: str | None = None) -> ActionProposal:
+    # RESOLVED, `QUORUM_FINAL_COMPLETION_PLAN.md` Session 6: a real,
+    # backward-compatible widening -- `existing_task_id` defaults to
+    # `None`, preserving this function's own exact, existing behavior
+    # for its one real, pre-existing caller (`process_negotiation_
+    # downstream_job`, which never edits an existing task). `features/
+    # quick_capture.py`'s own new real `UPDATE_TASK` path passes a real,
+    # already-resolved id here instead of re-deriving this function's
+    # own already-reviewed `estimated_hours`/`title` bound checks a
+    # second time.
     # RESOLVED, a real, disclosed CRITICAL-tier review BLOCKER (`DEC-153`
     # B1): this real sibling to `validate_and_build_finance_proposal()`
     # above was missing the identical `math.isfinite()` check that
@@ -347,7 +400,7 @@ def validate_and_build_task_proposal(args: dict) -> ActionProposal:
         raise DownstreamTranslationError(f"Translated title exceeds the real, max plausible length {_MAX_TASK_TITLE_LENGTH}")
     deadline_iso = args.get("deadline_iso")
     deadline = datetime.fromisoformat(deadline_iso) if deadline_iso else None
-    return build_task_proposal(title=args["title"], estimated_hours=estimated_hours, deadline=deadline, existing_task_id=None)
+    return build_task_proposal(title=args["title"], estimated_hours=estimated_hours, deadline=deadline, existing_task_id=existing_task_id)
 
 
 def validate_and_build_calendar_proposal(args: dict) -> ActionProposal:

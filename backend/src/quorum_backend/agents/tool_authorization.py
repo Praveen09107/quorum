@@ -25,8 +25,8 @@ from __future__ import annotations
 DOMAIN_TOOL_MAP: dict[str, set[str]] = {
     "email": {"gmail.send", "gmail.read", "gmail.archive", "gmail.label"},
     "calendar": {"calendar.create_local", "calendar.create_external", "calendar.read"},
-    "tasks": {"tasks.create", "tasks.update", "tasks.read"},
-    "finance": {"finance.log_expense", "finance.write_budget", "finance.read"},
+    "tasks": {"tasks.create", "tasks.update", "tasks.delete", "tasks.read"},
+    "finance": {"finance.log_expense", "finance.update_expense", "finance.delete_expense", "finance.write_budget", "finance.read"},
     "career": {"career.update_application_status", "career.read"},
 }
 # All five domain agents now present -- the DOMAIN_TOOL_MAP is
@@ -36,6 +36,11 @@ DOMAIN_TOOL_MAP: dict[str, set[str]] = {
 # draft of this file once did at IMPL_13.
 # "finance.write_budget" is the real, exact tool name from
 # QUORUM_DATA_CONTRACTS.md Sec 6's own MCP tool call shape example.
+# "tasks.delete"/"finance.update_expense"/"finance.delete_expense"
+# (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 6): real, new, genuinely
+# distinct capabilities from their own domain's existing `.create`/
+# `.update` tools -- deliberately their own allowlist entries, not
+# folded silently into an existing one.
 
 
 class ToolAuthorizationError(Exception):

@@ -16,10 +16,28 @@ The historical stale-closure bug this design structurally avoids: an
 earlier draft (per IMPL_08's own account) pre-bound each Stage A check to
 the original proposal's extracted values as a zero-argument closure, which
 would silently re-check stale values on a revision instead of the actual
-revised payload. This implementation's StageACheck is always a function of
-whatever proposal is passed to run_stage_a() at call time — there is no
-closure capture anywhere, proven by test (see test_gate_orchestration.py's
-stale-closure regression test).
+revised payload. This implementation's own run_stage_a() always passes
+whatever proposal exists at call time into each StageACheck — proven by
+test (see test_gate_orchestration.py's stale-closure regression test).
+
+RESOLVED-AS-CORRECTED, a real, disclosed CRITICAL-tier review LOW (`DEC-
+172`, F-B), found by a third-round follow-up review: this docstring used
+to claim "there is no closure capture anywhere" without qualification.
+That is true of THIS file's own contract — run_stage_a() itself never
+freezes the proposal — but a StageACheck is just a plain callable, and
+this file has no way to stop ITS OWN CALLER from building one that closes
+over something OTHER than the proposal argument. `features/retry_queue_
+drainer.py::build_stage_a_checks_for_domain()` does exactly that for its
+real deadline-conflict check (`deadline`/`available_hours_before_deadline`
+bound as default-argument closures, built once before Stage B ever runs)
+-- a real, disclosed, currently-latent instance of the very bug this
+design set out to avoid, confirmed unreachable in this backend's history
+today only because no action type whose payload carries a `deadline` key
+currently reaches Stage B (see DEC-172's own addendum for the full
+account). The regression test named above proves this file's own
+contract holds; it structurally cannot prove every StageACheck any
+current or future caller builds honors it too -- that discipline has to
+be enforced at each call site, not assumed from this file alone.
 """
 from __future__ import annotations
 

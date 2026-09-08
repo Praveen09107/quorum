@@ -25,9 +25,19 @@ SCHEMA RATHER THAN A NEW TRACKING TABLE:
   Monday-to-Sunday UTC week. Uses the same real `tasks` table every
   other domain feature already reads -- no new schema.
 - **"Correction," a real, grounded proxy** -- this schema has never
-  tracked "was this task's deadline ever pushed" as its own concept
-  (`UPDATE_TASK` has no real execution path, confirmed against `action_
-  executor.py`'s own docstring), so this module does not invent that
+  tracked "was this task's deadline ever pushed" as its own concept: no
+  column or audit-trail row records a deadline CHANGE event, only a
+  task's own current, present-tense state. RESOLVED, a real, disclosed
+  CRITICAL-tier review LOW (`DEC-172`, F4): this line previously
+  justified that gap by claiming `UPDATE_TASK` had no real execution
+  path at all -- true when this module was first built, made false by
+  `QUORUM_FINAL_COMPLETION_PLAN.md` Session 6 (`DEC-172`), which gave
+  `UPDATE_TASK` a real execution branch and a real caller. The real
+  reason this module still doesn't invent deadline-change tracking is
+  unchanged despite that: `UPDATE_TASK` is a full-field overwrite, not
+  an audited "old value -> new value" event, so even now there is
+  genuinely nothing to read that records whether a given past change
+  was a deadline push specifically. This module does not invent that
   tracking. Instead, a real, past task counts as "corrected" if it
   ended in a state that honestly means the original plan didn't hold:
   real `status = 'cancelled'`, or real `status = 'open'` with a real

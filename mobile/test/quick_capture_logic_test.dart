@@ -128,6 +128,76 @@ void main() {
     });
   });
 
+  group('describeQuickCaptureOutcome -- tasks/finance update+delete, career domain (Session 6)', () {
+    test('a genuine task update names the real, updated title with an "Updated" verb', () {
+      const result = QuickCaptureResultData(
+        executed: true, decision: 'approve', stakes: 'S1', domain: 'tasks', operation: 'update',
+        title: 'Finish the Q3 budget review', findings: [],
+      );
+      expect(describeQuickCaptureOutcome(result), 'Updated: Finish the Q3 budget review');
+    });
+
+    test('a genuine task deletion names the real, deleted title with a "Deleted" verb', () {
+      const result = QuickCaptureResultData(
+        executed: true, decision: 'approve', stakes: 'S2', domain: 'tasks', operation: 'delete',
+        title: 'A task to remove', findings: [],
+      );
+      expect(describeQuickCaptureOutcome(result), 'Deleted: A task to remove');
+    });
+
+    test('a real task update revise uses the real "update" verb, not the stale "create" wording', () {
+      const result = QuickCaptureResultData(
+        executed: false, decision: 'revise', stakes: 'S1', domain: 'tasks', operation: 'update', title: null, findings: [],
+      );
+      final message = describeQuickCaptureOutcome(result);
+      expect(message, "Quorum couldn't update that as described -- see why below.");
+      expect(message, isNot(contains('create')));
+    });
+
+    test('a real task deletion reject uses the real "delete" verb', () {
+      const result = QuickCaptureResultData(
+        executed: false, decision: 'reject', stakes: 'S2', domain: 'tasks', operation: 'delete', title: null, findings: [],
+      );
+      expect(describeQuickCaptureOutcome(result), 'Quorum declined to delete that -- see why below.');
+    });
+
+    test('a genuine expense update shows the real, formatted new amount and the real, unchanged payee', () {
+      const result = QuickCaptureResultData(
+        executed: true, decision: 'approve', stakes: 'S2', domain: 'finance', operation: 'update',
+        title: null, amount: 850.0, payee: 'BigBasket', financeAction: 'update_expense', findings: [],
+      );
+      expect(describeQuickCaptureOutcome(result), 'Updated: ₹850 -- BigBasket');
+    });
+
+    test('a genuine expense deletion shows the real, deleted amount and payee', () {
+      const result = QuickCaptureResultData(
+        executed: true, decision: 'approve', stakes: 'S2', domain: 'finance', operation: 'delete',
+        title: null, amount: 42.0, payee: 'Swiggy', financeAction: 'delete_expense', findings: [],
+      );
+      expect(describeQuickCaptureOutcome(result), 'Deleted: ₹42 -- Swiggy');
+    });
+
+    test('a genuine career status update names the real company and the real new status', () {
+      const result = QuickCaptureResultData(
+        executed: true, decision: 'approve', stakes: 'S1', domain: 'career', operation: 'update',
+        title: null, company: 'Notion', newStatus: 'rejected', findings: [],
+      );
+      expect(describeQuickCaptureOutcome(result), 'Updated: Notion -- now rejected');
+    });
+
+    test('a real career revise gives an honest, distinct message, using the real "update" verb', () {
+      const result = QuickCaptureResultData(
+        executed: false, decision: 'revise', stakes: 'S1', domain: 'career', operation: 'update', title: null, findings: [],
+      );
+      expect(describeQuickCaptureOutcome(result), contains("couldn't update"));
+    });
+
+    test('an existing construction with no real operation set still defaults to the original "create" wording (backward compatible)', () {
+      const result = QuickCaptureResultData(executed: false, decision: 'reject', stakes: 'S1', domain: 'tasks', title: null, findings: []);
+      expect(describeQuickCaptureOutcome(result), 'Quorum declined to create that -- see why below.');
+    });
+  });
+
   test('FindingSummary/EvidenceVisualState are genuinely reused, not redefined', () {
     // A real, direct proof this file imports the real gate_reveal_logic.dart
     // types rather than shadowing them with a second, parallel definition.

@@ -52,6 +52,26 @@ def build_task_proposal(
     )
 
 
+def build_task_deletion_proposal(existing_task_id: str, title: str | None = None) -> ActionProposal:
+    """RESOLVED, `QUORUM_FINAL_COMPLETION_PLAN.md` Session 6 -- the real,
+    first genuine `DELETE_TASK` proposal builder. A separate, dedicated
+    function rather than a third branch bolted onto `build_task_
+    proposal()` above: deletion needs no `estimated_hours`/`deadline`
+    at all, and giving it its own real `authorize_tool_call` scope
+    (`"tasks.delete"`) keeps the two-layer authorization matrix honest
+    about a real, genuinely distinct capability, not a variant of
+    `"tasks.update"`. `title` is optional, real DISPLAY-ONLY context
+    (the task's own real, current title at the moment of deletion,
+    fetched by the real caller) -- `action_executor.py`'s own real
+    `DELETE_TASK` branch only ever reads `existing_task_id`; this
+    survives in `action_events.payload` purely so a real, honest "you
+    deleted X" confirmation can be shown, the same real reason
+    `finance`'s own translated `category` already survives a write
+    that doesn't persist it to any real column."""
+    authorize_tool_call("tasks.delete", calling_agent_domain="tasks")
+    return ActionProposal(action_type=ActionType.DELETE_TASK, payload={"existing_task_id": existing_task_id, "title": title})
+
+
 def make_propose_task_node():
     def propose_task_node(state: TasksAgentState) -> dict:
         proposal = build_task_proposal(

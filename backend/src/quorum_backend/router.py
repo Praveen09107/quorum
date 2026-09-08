@@ -29,11 +29,83 @@ STAKES_TABLE: dict[ActionType, Stakes] = {
     ActionType.CREATE_CALENDAR_EVENT_EXTERNAL: Stakes.S3,
     ActionType.CREATE_CALENDAR_EVENT_LOCAL: Stakes.S2,
     ActionType.CREATE_TASK: Stakes.S1,
+    # RESOLVED, then RE-RESOLVED, a real, disclosed two-round CRITICAL-
+    # tier review finding (DEC-172, M2 then F2), both found before merge.
+    #
+    # ROUND 1 (M2): `UPDATE_TASK` was made real for the FIRST TIME this
+    # same session, yet was left at its old, unexamined `Stakes.S1` --
+    # inconsistent with `DELETE_TASK`/`UPDATE_EXPENSE`/`DELETE_EXPENSE`
+    # below, which explicitly invoke `UPDATE_BUDGET`'s own established
+    # "an update of an EXISTING row sits one stakes level above its
+    # CREATE sibling" precedent. Bumped to `S2` for that consistency.
+    #
+    # ROUND 2 (F2), a genuinely deeper, pre-existing Gate architecture
+    # bug that bumping `UPDATE_TASK` to `S2` was the FIRST thing in this
+    # backend's real history to ever expose: `build_stage_a_checks_for_
+    # domain()`'s own deadline-conflict Stage A check is built as a
+    # closure over `deadline`/`available_hours_before_deadline`, computed
+    # ONCE from the proposal that exists before Stage B runs. `gate/
+    # orchestration.py`'s own real `revise` flow re-runs Stage A against
+    # a JUDGE-REVISED proposal using that SAME frozen closure -- so a
+    # revision that changes the real deadline is checked against the
+    # ORIGINAL deadline's own committed-hours/availability numbers, not
+    # the revised one. `UPDATE_TASK` is the only real action type whose
+    # payload carries a `deadline` key AND (once at `S2`) reaches Stage B
+    # at all -- `DELETE_TASK` carries no `deadline` key (no Stage A
+    # deadline check is ever built for it), and `CREATE_TASK` never
+    # reaches Stage B (`S1`). So this real staleness bug was genuinely
+    # unreachable in this backend's history until this exact bump.
+    #
+    # DECIDED: revert `UPDATE_TASK` to `S1` -- fixing the ROOT Gate bug
+    # (re-deriving Stage A checks against a revised proposal, not frozen
+    # closures) is real, cross-cutting Gate-orchestration surgery that
+    # deserves its own dedicated, focused CRITICAL-tier session, not a
+    # rushed addition inside an already-deep review-fix round (`CLAUDE.md`
+    # Rule 6's own "maximum rigor for Gate logic" cuts toward NOT
+    # touching it hastily here). This knowingly reopens M2's own real
+    # inconsistency for `UPDATE_TASK` specifically -- a real, disclosed,
+    # honest trade-off, not smoothed over: `UPDATE_APPLICATION_STATUS`
+    # below stays at the real, safe `S2` M2 arrived at, since its own
+    # domain (`career`) never gets a Stage A deadline check at all
+    # (`build_stage_a_checks_for_domain()` only adds one for `domain ==
+    # "tasks"`) -- F2's exact staleness mechanism cannot reach it.
     ActionType.UPDATE_TASK: Stakes.S1,
+    # RESOLVED, `QUORUM_FINAL_COMPLETION_PLAN.md` Session 6, real,
+    # deliberate stakes assignments for 3 new real action types, each
+    # reasoned explicitly rather than pattern-matched from a sibling:
+    # `DELETE_TASK`/`DELETE_EXPENSE`/`UPDATE_EXPENSE` are all real
+    # mutations of an EXISTING row, not a fresh, additive `CREATE` --
+    # matching `UPDATE_BUDGET`'s own already-established precedent of
+    # sitting one real stakes level above its equivalent `CREATE`
+    # sibling, since a wrong edit/delete corrupts or destroys real,
+    # already-committed data, not just an easily-discarded new one.
+    # A REAL, DISCLOSED TENSION WITH THE GATE SPECIFICATION'S OWN TEXT,
+    # NOT SILENTLY RESOLVED: `QUORUM_GATE_SPECIFICATION.md` describes
+    # real `S2` as fitting "internal-significant, REVERSIBLE actions" --
+    # a genuine deletion is NOT reversible (no undo/trash mechanism
+    # exists anywhere in this schema). `S3` is not the answer either --
+    # `CLAUDE.md`'s own real rule reserves `S3` specifically for
+    # EXTERNAL-irreversible actions, and a user deleting their own,
+    # purely internal task/expense row affects no external party.
+    # `S2` is the closest genuinely correct fit in this project's real,
+    # closed 4-tier model -- it is the only level besides `S3` that
+    # reaches the real Judge at all, and inventing a new, intermediate
+    # stakes level to more precisely capture "internal but irreversible"
+    # would be real, new architecture this session was never asked to
+    # build (`CLAUDE.md` Rule 3). Disclosed here as a real, honest gap
+    # in the existing model, not smoothed over by silence.
+    ActionType.DELETE_TASK: Stakes.S2,
     ActionType.LOG_EXPENSE: Stakes.S1,
+    ActionType.UPDATE_EXPENSE: Stakes.S2,
+    ActionType.DELETE_EXPENSE: Stakes.S2,
     ActionType.UPDATE_BUDGET: Stakes.S2,
     ActionType.CREATE_NOTE: Stakes.S1,
-    ActionType.UPDATE_APPLICATION_STATUS: Stakes.S1,
+    # RESOLVED, the same real DEC-172 M2 review finding as `UPDATE_TASK`
+    # above -- also made real for the first time this session, also a
+    # real update of an existing row, bumped to `S2` for the identical
+    # reason and the identical consistency this project's own review
+    # discipline exists to catch.
+    ActionType.UPDATE_APPLICATION_STATUS: Stakes.S2,
     ActionType.ARCHIVE_EMAIL: Stakes.S1,
     ActionType.LABEL_EMAIL: Stakes.S0,
 }

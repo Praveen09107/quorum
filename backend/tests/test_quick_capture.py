@@ -15,7 +15,10 @@ from quorum_backend.auth.user_provisioning import get_or_create_user
 from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
 from quorum_backend.features.quick_capture import (
+    AmbiguousReferenceError,
     QuickCaptureError,
+    _fetch_open_task_candidates,
+    _resolve_single_reference,
     build_extraction_prompt,
     capture_action_from_text,
     make_gemini_quick_capture_extraction_call,
@@ -45,6 +48,9 @@ async def user_id(pool):
     # own real write (`users.monthly_budget_limit`) needs no separate
     # cleanup: the whole real `users` row is deleted below regardless.
     await pool.execute("DELETE FROM expenses WHERE user_id = $1", uuid.UUID(uid))
+    # REAL, DISCLOSED SESSION-6 ADDITION: this fixture now also backs
+    # real `career`-domain tests, which write real `applications` rows.
+    await pool.execute("DELETE FROM applications WHERE user_id = $1", uuid.UUID(uid))
     # RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-153`
     # M5): this fixture's own real `users` row was never cleaned up --
     # live-confirmed to have already left 24 real, orphaned rows in the
@@ -73,7 +79,7 @@ async def _unreachable_judge_call(proposal, findings, objections):
 
 
 async def test_capture_action_from_text_creates_a_real_task_row_on_a_genuine_approve(pool, user_id):
-    extraction = _fake_extraction({"domain": "tasks", "title": "A real, distinctive quick-captured task", "estimated_hours": 1.5, "deadline_iso": None})
+    extraction = _fake_extraction({"domain": "tasks", "operation": "create", "title": "A real, distinctive quick-captured task", "estimated_hours": 1.5, "deadline_iso": None})
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -103,7 +109,7 @@ async def test_capture_action_from_text_never_invokes_critic_or_judge_for_create
     `AssertionError` if genuinely called -- a passing test here proves
     `Stakes.S1` really does skip Stage B entirely, not just that the
     code happens to not call it in this one run."""
-    extraction = _fake_extraction({"domain": "tasks", "title": "Never reaches Stage B", "estimated_hours": 0.5, "deadline_iso": None})
+    extraction = _fake_extraction({"domain": "tasks", "operation": "create", "title": "Never reaches Stage B", "estimated_hours": 0.5, "deadline_iso": None})
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -126,7 +132,7 @@ async def test_capture_action_from_text_a_real_deadline_conflict_is_caught_by_st
         uuid.uuid4(), uuid.UUID(user_id), "Already-committed real task", 7.5, deadline,
     )
     # 7.5 already committed + 5.0 newly claimed = 12.5, genuinely exceeding the real 8.0 available hours.
-    extraction = _fake_extraction({"domain": "tasks", "title": "A real conflicting task", "estimated_hours": 5.0, "deadline_iso": deadline.isoformat()})
+    extraction = _fake_extraction({"domain": "tasks", "operation": "create", "title": "A real conflicting task", "estimated_hours": 5.0, "deadline_iso": deadline.isoformat()})
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -146,7 +152,7 @@ async def test_capture_action_from_text_a_real_deadline_conflict_is_caught_by_st
 
 
 async def test_capture_action_from_text_raises_quick_capture_error_on_malformed_extraction(pool, user_id):
-    extraction = _fake_extraction({"domain": "tasks", "title": "Missing estimated_hours entirely"})  # no real estimated_hours key at all
+    extraction = _fake_extraction({"domain": "tasks", "operation": "create", "title": "Missing estimated_hours entirely"})  # no real estimated_hours key at all
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -161,7 +167,7 @@ async def test_capture_action_from_text_raises_quick_capture_error_on_a_non_posi
     """Proves the real, already-tested `_MAX_ESTIMATED_HOURS`/positivity
     bound check in `validate_and_build_task_proposal` is genuinely
     reached through this module's own new call path, not bypassed."""
-    extraction = _fake_extraction({"domain": "tasks", "title": "A real, implausible task", "estimated_hours": -3.0, "deadline_iso": None})
+    extraction = _fake_extraction({"domain": "tasks", "operation": "create", "title": "A real, implausible task", "estimated_hours": -3.0, "deadline_iso": None})
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -173,7 +179,7 @@ async def test_capture_action_from_text_raises_quick_capture_error_on_a_non_posi
 
 
 async def test_capture_action_from_text_raises_quick_capture_error_on_an_implausibly_large_estimated_hours(pool, user_id):
-    extraction = _fake_extraction({"domain": "tasks", "title": "A real, hallucinated-scale task", "estimated_hours": 50_000.0, "deadline_iso": None})
+    extraction = _fake_extraction({"domain": "tasks", "operation": "create", "title": "A real, hallucinated-scale task", "estimated_hours": 50_000.0, "deadline_iso": None})
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -428,7 +434,7 @@ async def test_capture_action_from_text_a_local_calendar_event_is_reviewed_corre
     start = datetime.now(timezone.utc) + timedelta(days=1)
     end = start + timedelta(hours=1)
     extraction = _fake_extraction(
-        {"domain": "calendar", "title": "Design review", "start_iso": start.isoformat(), "end_iso": end.isoformat(), "invitee_email": None}
+        {"domain": "calendar", "operation": "create", "title": "Design review", "start_iso": start.isoformat(), "end_iso": end.isoformat(), "invitee_email": None}
     )
     judge_call, judge_calls = _fake_approving_judge_call()
 
@@ -467,7 +473,7 @@ async def test_capture_action_from_text_an_external_invitee_calendar_event_reach
     end = start + timedelta(hours=1)
     extraction = _fake_extraction(
         {
-            "domain": "calendar", "title": "Call with Jane", "start_iso": start.isoformat(), "end_iso": end.isoformat(),
+            "domain": "calendar", "operation": "create", "title": "Call with Jane", "start_iso": start.isoformat(), "end_iso": end.isoformat(),
             "invitee_email": "jane@company.com",
         }
     )
@@ -500,7 +506,7 @@ async def test_capture_action_from_text_never_fabricates_an_invitee_email_for_a_
     start = datetime.now(timezone.utc) + timedelta(days=1)
     end = start + timedelta(hours=1)
     extraction = _fake_extraction(
-        {"domain": "calendar", "title": "Call with Jane", "start_iso": start.isoformat(), "end_iso": end.isoformat(), "invitee_email": None}
+        {"domain": "calendar", "operation": "create", "title": "Call with Jane", "start_iso": start.isoformat(), "end_iso": end.isoformat(), "invitee_email": None}
     )
     judge_call, _judge_calls = _fake_approving_judge_call()
 
@@ -523,7 +529,7 @@ async def test_capture_action_from_text_raises_quick_capture_error_on_a_malforme
     start = datetime.now(timezone.utc) + timedelta(days=1)
     end = start + timedelta(hours=1)
     extraction = _fake_extraction(
-        {"domain": "calendar", "title": "Call", "start_iso": start.isoformat(), "end_iso": end.isoformat(), "invitee_email": "not a real email"}
+        {"domain": "calendar", "operation": "create", "title": "Call", "start_iso": start.isoformat(), "end_iso": end.isoformat(), "invitee_email": "not a real email"}
     )
 
     async with pool.acquire() as conn:
@@ -538,7 +544,7 @@ async def test_capture_action_from_text_raises_quick_capture_error_on_a_malforme
 async def test_capture_action_from_text_raises_quick_capture_error_when_calendar_end_is_not_after_start(pool, user_id):
     start = datetime.now(timezone.utc) + timedelta(days=1)
     extraction = _fake_extraction(
-        {"domain": "calendar", "title": "Backwards event", "start_iso": start.isoformat(), "end_iso": start.isoformat(), "invitee_email": None}
+        {"domain": "calendar", "operation": "create", "title": "Backwards event", "start_iso": start.isoformat(), "end_iso": start.isoformat(), "invitee_email": None}
     )
 
     async with pool.acquire() as conn:
@@ -554,8 +560,544 @@ async def test_capture_action_from_text_raises_quick_capture_error_on_an_implaus
     start = datetime.now(timezone.utc) + timedelta(days=1)
     end = start + timedelta(days=3)  # exceeds the real, max plausible 24h bound
     extraction = _fake_extraction(
-        {"domain": "calendar", "title": "A real, hallucinated-scale event", "start_iso": start.isoformat(), "end_iso": end.isoformat(), "invitee_email": None}
+        {"domain": "calendar", "operation": "create", "title": "A real, hallucinated-scale event", "start_iso": start.isoformat(), "end_iso": end.isoformat(), "invitee_email": None}
     )
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(QuickCaptureError):
+                await capture_action_from_text(
+                    conn, user_id=user_id, free_text="anything",
+                    extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
+                )
+
+
+# --- Reference resolution, pure logic (Session 6) ---
+# THE real, safety-critical core of this session -- see this module's
+# own top-of-file docstring. Tested directly, not only indirectly
+# through the slower, DB-backed integration tests below, since this is
+# this session's own single most important real property.
+
+
+def test_resolve_single_reference_matches_despite_word_order_and_extra_filler_words():
+    """A real reference like 'the Q3 budget review task' should still
+    match a real title like 'Finish the Q3 budget review' -- genuinely
+    different word order, an extra leading word, and a trailing word
+    the title never had."""
+    candidates = [("id-1", "Finish the Q3 budget review")]
+    assert _resolve_single_reference(candidates, "the Q3 budget review task") == "id-1"
+
+
+def test_resolve_single_reference_a_real_exact_match_still_works():
+    candidates = [("id-1", "Notion")]
+    assert _resolve_single_reference(candidates, "Notion") == "id-1"
+
+
+def test_resolve_single_reference_raises_on_zero_real_matches():
+    candidates = [("id-1", "Finish the Q3 budget review")]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "the gym task")
+
+
+def test_resolve_single_reference_raises_on_an_empty_candidate_list():
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference([], "the gym task")
+
+
+def test_resolve_single_reference_raises_on_multiple_real_matches():
+    """THE real, load-bearing safety proof this session's own plan text
+    explicitly demands: a genuinely ambiguous reference must fail loud,
+    never silently guess."""
+    candidates = [("id-1", "Q3 budget review"), ("id-2", "Q3 budget planning")]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "the Q3 budget one")
+
+
+def test_resolve_single_reference_raises_on_an_empty_reference_description():
+    candidates = [("id-1", "Finish the Q3 budget review")]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, None)
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "   ")
+
+
+def test_resolve_single_reference_a_single_shared_incidental_word_is_not_enough():
+    """A real, deliberate proof of this function's own real strictness:
+    a multi-word candidate needs genuine, substantial overlap, not one
+    incidental shared word (e.g. a stop word survivor or a coincidence)."""
+    candidates = [("id-1", "Design review meeting prep")]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "meeting notes from yesterday")
+
+
+def test_resolve_single_reference_a_lone_multi_word_candidate_still_rejects_a_weak_partial_reference():
+    """RESOLVED, a real, disclosed CRITICAL-tier review request (DEC-172):
+    the pre-fix suite only ever tested n>=3 candidates. Here, with only
+    ONE real candidate present (a genuine multi-word title), a reference
+    that shares just one incidental word but is mostly about other real
+    things must still be rejected under BOTH of this function's own real
+    rules -- neither a candidate-side nor a reference-side majority."""
+    candidates = [("id-1", "Cancel gym membership card")]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "the membership renewal for car insurance")
+
+
+def test_resolve_single_reference_the_real_longer_correct_candidate_wins_by_raw_overlap_count():
+    """THE real, concrete reproduction of this session's own CONFIRMED
+    BLOCKER (DEC-172, H1), preserved as a permanent regression test under
+    the FINAL, comparative-ranking design. A task titled plainly "Gym"
+    (one significant word) and a real, longer, genuinely-correct
+    candidate both share a word with "gym membership" -- but the longer
+    one shares TWO real words (`gym`, `membership`) while "Gym" shares
+    only one. Raw overlap COUNT comparison correctly, uniquely resolves
+    to the real, longer candidate (`2 &gt; 1`, a real, unambiguous winner)
+    -- achieving H1's own original safety goal, but via comparison
+    rather than any independent, exploitable threshold."""
+    candidates = [
+        ("id-short", "Gym"),
+        ("id-correct", "Renew gym membership at the new place downtown"),
+    ]
+    assert _resolve_single_reference(candidates, "gym membership") == "id-correct"
+
+
+def test_resolve_single_reference_a_genuine_tie_in_raw_overlap_count_correctly_fails_loud():
+    """THE real, concrete reproduction of this session's own CONFIRMED
+    round-2 regression (DEC-172, F-A): a short candidate and a longer
+    candidate that EACH share only the exact same single word with the
+    reference (the longer one does NOT contain "membership" at all,
+    unlike the test above) -- a genuine 1-1 TIE in raw lexical evidence,
+    which no amount of ratio-juggling can safely break. The comparative
+    design's own tie-detection (checked BEFORE any ratio) correctly
+    fails loud here instead of arbitrarily picking either real
+    candidate, closing the exact hole a plain OR-of-two-thresholds
+    design (this session's own second fix attempt) left open."""
+    candidates = [
+        ("id-a", "Gym shoes"),
+        ("id-b", "Cancel my gym subscription at the new place"),
+    ]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "gym membership")
+
+
+def test_resolve_single_reference_a_short_correct_candidate_resolves_when_it_is_the_sole_contender():
+    """THE real, dedicated proof that F3 (ordinary short `finance`/
+    `career` candidates like a bare payee/company failing to resolve at
+    all under the reference-side-only design) stays fixed under the
+    FINAL, comparative design too: a real, one-word candidate that is
+    the ONLY real contender still resolves off a single shared word --
+    because that one word accounts for the candidate's ENTIRE text
+    (`{"notion"} == {"notion"}`), the real, round-5 singleton-coverage
+    rule this exact case is designed to still pass. RESOLVED, a real,
+    disclosed correction to this test's own prior docstring, which
+    claimed a lone contender carries "no wrong-target risk" -- a fifth-
+    round review found that claim false in general (see the function's
+    own docstring); this SPECIFIC case remains safe not because no
+    other candidate exists, but because the one word IS the whole
+    candidate, not a fragment of a longer, unrelated one."""
+    candidates = [("id-notion", "Notion"), ("id-stripe", "Stripe")]
+    assert _resolve_single_reference(candidates, "the Notion application") == "id-notion"
+
+
+def test_resolve_single_reference_filler_word_overlap_never_silently_beats_the_real_correct_match():
+    """THE real, concrete reproduction of this session's own CONFIRMED
+    fourth-round BLOCKER: a wrong candidate ("Meet Dan at the new
+    place") shares MORE raw words with the reference than the real,
+    correct candidate ("Cancel gym membership") purely because its
+    shared words are generic filler (`at`, `new`, `place`) rather than
+    the reference's actual meaningful anchor words (`gym`,
+    `membership`) -- a genuinely higher raw overlap COUNT (3 vs 2) with
+    NO tie to trigger the ordinary ambiguity check. The evidence-
+    dominance guard catches this specifically: the correct candidate's
+    own overlap (`{gym, membership}`) is NOT a subset of the wrong
+    leader's overlap (`{at, new, place}`) -- genuinely different
+    evidence -- so the function correctly fails loud instead of
+    silently trusting whichever candidate happened to rack up more
+    filler-word hits."""
+    candidates = [
+        ("id-wrong", "Meet Dan at the new place"),
+        ("id-correct", "Cancel gym membership"),
+    ]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "gym membership at the new place")
+
+
+def test_resolve_single_reference_a_partial_word_in_a_longer_wrong_candidate_never_silently_wins():
+    """THE real, concrete reproduction of this session's own CONFIRMED
+    fifth-round finding: this docstring's OWN prior claim -- that a lone
+    contender carries "no wrong-target risk" -- was false. The real,
+    correct row ("Amazon") shares ZERO words with a reference paraphrased
+    in the user's own words ("the Prime expense"), so it never becomes a
+    contender at all; a genuinely unrelated row ("Prime Video") shares
+    exactly one word and would have won by default under the pre-round-5
+    rule. The round-5 singleton-coverage requirement (a lone shared word
+    must account for the WHOLE candidate, not a fragment of a longer
+    one) correctly refuses instead of silently deleting the wrong real
+    expense -- `{"prime"} != {"prime", "video"}`."""
+    candidates = [("id-amazon", "Amazon"), ("id-primevideo", "Prime Video")]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "the Prime expense")
+
+
+def test_resolve_single_reference_a_partial_word_in_a_longer_wrong_task_candidate_never_silently_wins():
+    """The same real fifth-round class as the test above, in the
+    `tasks` domain specifically -- a longer, unrelated task title
+    ("Buy gym shoes") sharing one incidental word with the reference
+    must not silently win over the real, intended task ("Renew fitness
+    club subscription"), which shares zero words with the user's own
+    paraphrase and never becomes a contender at all."""
+    candidates = [("id-fitness", "Renew fitness club subscription"), ("id-shoes", "Buy gym shoes")]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "the gym task")
+
+
+def test_resolve_single_reference_a_partial_word_in_a_longer_wrong_career_candidate_never_silently_wins():
+    """The same real fifth-round class, in the `career` domain: a
+    longer, unrelated company name ("Startup Grind") sharing one
+    incidental word with the reference must not silently win over the
+    real, intended application ("Anthropic"), which shares zero words
+    with the user's own paraphrase."""
+    candidates = [("id-anthropic", "Anthropic"), ("id-startupgrind", "Startup Grind")]
+    with pytest.raises(AmbiguousReferenceError):
+        _resolve_single_reference(candidates, "the AI startup one")
+
+
+# --- Real, live-database integration tests: Task update/delete (Session 6) ---
+
+
+async def _seed_open_task(pool, *, user_id: str, title: str, estimated_hours: float = 2.0, deadline=None) -> str:
+    task_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO tasks (task_id, user_id, title, estimated_hours, deadline, status) VALUES ($1, $2, $3, $4, $5, 'open')",
+        task_id, uuid.UUID(user_id), title, estimated_hours, deadline,
+    )
+    return str(task_id)
+
+
+async def test_capture_action_from_text_updates_a_real_task_deadline_keeping_other_real_fields_unchanged(pool, user_id):
+    """THE real, partial-update proof this session's own top-of-file
+    docstring depends on: only `deadline_iso` is genuinely given by the
+    real extraction; `title`/`estimated_hours` are real, current values
+    fetched and merged in code, never restated or guessed by the model."""
+    await _seed_open_task(pool, user_id=user_id, title="Finish the Q3 budget review", estimated_hours=3.5)
+    new_deadline = datetime.now(timezone.utc) + timedelta(days=5)
+    extraction = _fake_extraction(
+        {"domain": "tasks", "operation": "update", "reference_description": "Q3 budget review", "deadline_iso": new_deadline.isoformat()}
+    )
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await capture_action_from_text(
+                conn, user_id=user_id, free_text="push the Q3 budget review deadline to Friday",
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
+            )
+
+    # RESOLVED, then RE-RESOLVED (DEC-172, M2 then F2): `UPDATE_TASK` was
+    # briefly bumped to `S2`, then reverted to `S1` after a real, disclosed
+    # follow-up review found the bump exposed a genuine Gate-orchestration
+    # staleness bug -- see `router.py`'s own `STAKES_TABLE` comment.
+    assert result.stakes == "S1"  # Stage B never runs, proven by the unreachable fakes above
+    assert result.operation == "update"
+    assert result.executed is True
+    assert result.title == "Finish the Q3 budget review"  # unchanged, real, current value -- never lost
+
+    row = await pool.fetchrow("SELECT title, estimated_hours, deadline FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["title"] == "Finish the Q3 budget review"
+    assert float(row["estimated_hours"]) == 3.5
+    assert row["deadline"] is not None
+
+
+async def test_capture_action_from_text_updates_a_real_task_with_a_deadline_without_double_counting_its_own_hours(pool, user_id):
+    """THE real, dedicated regression proof for this session's own
+    CONFIRMED MEDIUM (DEC-172, M1). The pre-fix suite's own partial-
+    update test seeded `deadline=None`, which never exercised Stage A's
+    deadline-conflict check at all. Here, the ONLY real open task has a
+    genuine deadline and `estimated_hours` -- a title-only update
+    (keeping the same hours) must NOT have those same real hours summed
+    into "already committed" AND "newly claimed" at once. Before the
+    fix, that double-count (14h + 14h = 28h) genuinely exceeded the real
+    3-day/24h available window and spuriously blocked this harmless
+    edit with a Stage A hard-fail; correctly excluding the task's own
+    row drops it to a real 14h needed vs 24h available, which fits."""
+    deadline = datetime.now(timezone.utc) + timedelta(days=3)
+    await _seed_open_task(pool, user_id=user_id, title="Old title", estimated_hours=14.0, deadline=deadline)
+    extraction = _fake_extraction({"domain": "tasks", "operation": "update", "reference_description": "Old title", "title": "New title"})
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await capture_action_from_text(
+                conn, user_id=user_id, free_text="rename Old title to New title",
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
+            )
+
+    assert result.stakes == "S1"  # UPDATE_TASK -- see DEC-172's own M2/F2 addendum for why this stays S1
+    assert result.executed is True  # would be False under the pre-fix double-counting bug
+    assert result.title == "New title"
+
+    row = await pool.fetchrow("SELECT title, estimated_hours FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["title"] == "New title"
+    assert float(row["estimated_hours"]) == 14.0
+
+
+async def test_capture_action_from_text_deletes_a_real_task(pool, user_id):
+    await _seed_open_task(pool, user_id=user_id, title="A task to remove")
+    judge_call, judge_calls = _fake_approving_judge_call()
+    extraction = _fake_extraction({"domain": "tasks", "operation": "delete", "reference_description": "task to remove"})
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await capture_action_from_text(
+                conn, user_id=user_id, free_text="delete the task to remove",
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=judge_call,
+            )
+
+    assert result.stakes == "S2"  # DELETE_TASK -- the real Judge runs, the real Critic never does
+    assert len(judge_calls) == 1
+    assert result.operation == "delete"
+    assert result.executed is True
+    assert result.title == "A task to remove"  # the real, deleted task's own title, for an honest confirmation
+
+    row = await pool.fetchrow("SELECT 1 FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    assert row is None  # genuinely, really gone
+
+
+async def test_capture_action_from_text_raises_quick_capture_error_when_no_real_task_matches_the_reference(pool, user_id):
+    await _seed_open_task(pool, user_id=user_id, title="Finish the Q3 budget review")
+    extraction = _fake_extraction({"domain": "tasks", "operation": "update", "reference_description": "the gym task", "deadline_iso": None})
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(QuickCaptureError):
+                await capture_action_from_text(
+                    conn, user_id=user_id, free_text="anything",
+                    extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
+                )
+
+    row = await pool.fetchrow("SELECT title FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["title"] == "Finish the Q3 budget review"  # genuinely untouched
+
+
+async def test_capture_action_from_text_raises_quick_capture_error_when_multiple_real_tasks_match_the_reference(pool, user_id):
+    """THE real, end-to-end proof of this session's own single biggest
+    real risk: a genuinely ambiguous real reference must never silently
+    modify the wrong real record."""
+    await _seed_open_task(pool, user_id=user_id, title="Q3 budget review")
+    await _seed_open_task(pool, user_id=user_id, title="Q3 budget planning")
+    extraction = _fake_extraction({"domain": "tasks", "operation": "update", "reference_description": "the Q3 budget one", "deadline_iso": None})
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(QuickCaptureError):
+                await capture_action_from_text(
+                    conn, user_id=user_id, free_text="anything",
+                    extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
+                )
+
+    rows = await pool.fetch("SELECT deadline FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    assert all(row["deadline"] is None for row in rows)  # neither real task was touched
+
+
+async def test_capture_action_from_text_task_update_never_reaches_a_different_real_users_task(pool, user_id):
+    """A real, dedicated cross-user-isolation proof, per this session's
+    own explicit verification requirement -- a different real user's
+    own real task, even with an EXACT matching title, is never a real
+    candidate for this user's own request."""
+    other_google_sub = f"test-quick-capture-other-{uuid.uuid4()}"
+    other_user_id = await get_or_create_user(pool, google_sub=other_google_sub, email=None)
+    try:
+        other_task_id = await _seed_open_task(pool, user_id=other_user_id, title="Finish the Q3 budget review")
+        extraction = _fake_extraction(
+            {"domain": "tasks", "operation": "update", "reference_description": "Q3 budget review", "deadline_iso": datetime.now(timezone.utc).isoformat()}
+        )
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                with pytest.raises(QuickCaptureError):
+                    await capture_action_from_text(
+                        conn, user_id=user_id, free_text="push the Q3 budget review deadline",
+                        extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
+                    )
+
+        row = await pool.fetchrow("SELECT deadline FROM tasks WHERE task_id = $1", uuid.UUID(other_task_id))
+        assert row["deadline"] is None  # genuinely, completely untouched
+
+        # RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (DEC-172,
+        # M4): the assertion above alone is genuinely vacuous -- the SAME
+        # `QuickCaptureError` would still be raised even with a real
+        # `user_id`-scoping bug injected into candidate-fetching, since the
+        # later `fetchrow(... AND user_id = $2)` call would independently
+        # raise `DownstreamTranslationError` for an unrelated reason. This
+        # asserts directly on the real candidate-fetch itself.
+        async with pool.acquire() as conn:
+            candidates = await _fetch_open_task_candidates(conn, user_id=user_id)
+        assert other_task_id not in {candidate_id for candidate_id, _ in candidates}
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE user_id = $1", uuid.UUID(other_user_id))
+        await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(other_user_id))
+
+
+async def test_capture_action_from_text_a_judge_revision_that_retargets_the_real_row_id_is_refused(pool, user_id):
+    """THE real, dedicated proof of this session's own CONFIRMED HIGH
+    finding (DEC-172, H2): a `revise`-capable Judge verdict that changes
+    WHICH real task `existing_task_id` points to -- even while still
+    formally `decision == "approve"` -- must never be allowed to execute
+    against the substituted real row. Both real, seeded tasks must
+    survive this request completely untouched."""
+    real_task_id = await _seed_open_task(pool, user_id=user_id, title="Task to remove")
+    other_task_id = await _seed_open_task(pool, user_id=user_id, title="A genuinely different real task")
+    extraction = _fake_extraction({"domain": "tasks", "operation": "delete", "reference_description": "task to remove"})
+
+    async def maliciously_retargeting_judge_call(proposal, findings, objections):
+        revised_payload = dict(proposal.payload)
+        revised_payload["existing_task_id"] = other_task_id  # a genuinely DIFFERENT real row
+        return GateVerdict(
+            decision="approve", findings=findings, objections=objections,
+            trace_id=str(proposal.proposal_id), revision_count=1, revised_payload=revised_payload,
+        )
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(QuickCaptureError):
+                await capture_action_from_text(
+                    conn, user_id=user_id, free_text="delete the task to remove",
+                    extraction_call=extraction, critic_call=_unreachable_critic_call,
+                    judge_call=maliciously_retargeting_judge_call,
+                )
+
+    rows = await pool.fetch("SELECT task_id FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    remaining_ids = {str(row["task_id"]) for row in rows}
+    assert real_task_id in remaining_ids  # the real, correctly-resolved task -- untouched
+    assert other_task_id in remaining_ids  # the real, wrongly-targeted task -- also untouched
+
+
+# --- Real, live-database integration tests: Finance expense update/delete (Session 6) ---
+
+
+async def _seed_expense(pool, *, user_id: str, payee: str, amount: float = 100.0) -> str:
+    expense_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, now(), 'manual')",
+        expense_id, uuid.UUID(user_id), payee, amount,
+    )
+    return str(expense_id)
+
+
+async def test_capture_action_from_text_updates_a_real_expenses_amount_keeping_the_real_payee_unchanged(pool, user_id):
+    await _seed_expense(pool, user_id=user_id, payee="BigBasket", amount=800.0)
+    judge_call, judge_calls = _fake_approving_judge_call()
+    extraction = _fake_extraction(
+        {"domain": "finance", "action": "update_expense", "reference_description": "BigBasket", "amount": 850.0, "payee": None}
+    )
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await capture_action_from_text(
+                conn, user_id=user_id, free_text="actually that BigBasket expense was 850, not 800",
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=judge_call,
+            )
+
+    assert result.stakes == "S2"  # UPDATE_EXPENSE -- the real Judge runs, the real Critic never does
+    assert len(judge_calls) == 1
+    assert result.operation == "update"
+    assert result.executed is True
+    assert result.payee == "BigBasket"  # unchanged, real, current value
+
+    row = await pool.fetchrow("SELECT payee, amount FROM expenses WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["payee"] == "BigBasket"
+    assert float(row["amount"]) == 850.0
+
+
+async def test_capture_action_from_text_deletes_a_real_expense(pool, user_id):
+    await _seed_expense(pool, user_id=user_id, payee="Swiggy", amount=42.0)
+    judge_call, judge_calls = _fake_approving_judge_call()
+    extraction = _fake_extraction({"domain": "finance", "action": "delete_expense", "reference_description": "Swiggy"})
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await capture_action_from_text(
+                conn, user_id=user_id, free_text="delete that Swiggy expense",
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=judge_call,
+            )
+
+    assert len(judge_calls) == 1
+    assert result.operation == "delete"
+    assert result.executed is True
+    assert result.payee == "Swiggy"  # the real, deleted expense's own payee, for an honest confirmation
+
+    row = await pool.fetchrow("SELECT 1 FROM expenses WHERE user_id = $1", uuid.UUID(user_id))
+    assert row is None
+
+
+async def test_capture_action_from_text_raises_quick_capture_error_when_no_real_expense_matches_the_reference(pool, user_id):
+    await _seed_expense(pool, user_id=user_id, payee="BigBasket")
+    extraction = _fake_extraction({"domain": "finance", "action": "delete_expense", "reference_description": "Amazon"})
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(QuickCaptureError):
+                await capture_action_from_text(
+                    conn, user_id=user_id, free_text="anything",
+                    extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
+                )
+
+    row = await pool.fetchrow("SELECT 1 FROM expenses WHERE user_id = $1", uuid.UUID(user_id))
+    assert row is not None  # genuinely untouched
+
+
+# --- Real, live-database integration tests: Career (Session 6, new domain) ---
+
+
+async def _seed_application(pool, *, user_id: str, company: str, status: str = "applied") -> str:
+    application_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company, status) VALUES ($1, $2, $3, $4)",
+        application_id, uuid.UUID(user_id), company, status,
+    )
+    return str(application_id)
+
+
+async def test_capture_action_from_text_updates_a_real_applications_status(pool, user_id):
+    await _seed_application(pool, user_id=user_id, company="Notion")
+    extraction = _fake_extraction({"domain": "career", "operation": "update", "reference_description": "Notion", "new_status": "rejected"})
+    judge_call, judge_calls = _fake_approving_judge_call()
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await capture_action_from_text(
+                conn, user_id=user_id, free_text="mark the Notion application as rejected",
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=judge_call,
+            )
+
+    assert result.stakes == "S2"  # RESOLVED, DEC-172 M2: UPDATE_APPLICATION_STATUS bumped to S2
+    assert len(judge_calls) == 1
+    assert result.domain == "career"
+    assert result.operation == "update"
+    assert result.executed is True
+    assert result.company == "Notion"
+    assert result.new_status == "rejected"
+
+    row = await pool.fetchrow("SELECT status FROM applications WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["status"] == "rejected"
+
+
+async def test_capture_action_from_text_raises_quick_capture_error_when_no_real_application_matches_the_reference(pool, user_id):
+    await _seed_application(pool, user_id=user_id, company="Notion")
+    extraction = _fake_extraction({"domain": "career", "operation": "update", "reference_description": "Stripe", "new_status": "rejected"})
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            with pytest.raises(QuickCaptureError):
+                await capture_action_from_text(
+                    conn, user_id=user_id, free_text="anything",
+                    extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
+                )
+
+    row = await pool.fetchrow("SELECT status FROM applications WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["status"] == "applied"  # genuinely untouched
+
+
+async def test_capture_action_from_text_raises_quick_capture_error_on_an_empty_new_status(pool, user_id):
+    await _seed_application(pool, user_id=user_id, company="Notion")
+    extraction = _fake_extraction({"domain": "career", "operation": "update", "reference_description": "Notion", "new_status": ""})
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -586,9 +1128,9 @@ def test_build_extraction_prompt_includes_a_real_current_utc_time_anchor():
     assert "Current real UTC time:" in prompt
 
 
-def test_build_extraction_prompt_describes_all_three_real_domains():
-    """A real, disclosed Session-4/5 proof: the prompt genuinely
-    instructs the model on all three real domains, not just `tasks` --
+def test_build_extraction_prompt_describes_all_four_real_domains():
+    """A real, disclosed Session-4/5/6 proof: the prompt genuinely
+    instructs the model on all four real domains, not just `tasks` --
     a regression here would silently narrow this module back to fewer
     real domains without any other test catching it (every fake-
     extraction test above supplies its own `domain` directly, never
@@ -597,10 +1139,25 @@ def test_build_extraction_prompt_describes_all_three_real_domains():
     assert '"tasks"' in prompt
     assert '"finance"' in prompt
     assert '"calendar"' in prompt
+    assert '"career"' in prompt
     assert "log_expense" in prompt
     assert "update_budget" in prompt
     assert "start_iso" in prompt
     assert "invitee_email" in prompt
+
+
+def test_build_extraction_prompt_describes_update_and_delete_operations():
+    """A real, disclosed Session-6 proof: the prompt genuinely instructs
+    the model on `operation`/`reference_description`/`update_expense`/
+    `delete_expense`/`new_status`, not just the original `create`-only
+    fields."""
+    prompt = build_extraction_prompt("anything")
+    assert '"update"' in prompt
+    assert '"delete"' in prompt
+    assert "reference_description" in prompt
+    assert "update_expense" in prompt
+    assert "delete_expense" in prompt
+    assert "new_status" in prompt
 
 
 def test_build_extraction_prompt_never_instructs_the_model_to_guess_an_invitee_email():

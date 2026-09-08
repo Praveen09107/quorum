@@ -14,15 +14,20 @@
 | `create_calendar_event_external` | S3 | Full Gate + mandatory human approval |
 | `create_calendar_event_local` | S2 | Stage A + single-check Stage B |
 | `create_task` | S1 | Stage A only |
-| `update_task` | S1 | Stage A only |
+| `update_task` | S1 | Stage A only (kept at S1 -- see `router.py`'s own `STAKES_TABLE` comment for the real, disclosed F2 Gate-staleness reason a bump to S2 was reverted) |
+| `delete_task` | S2 | Stage A + single-check Stage B |
 | `log_expense` | S1 | Stage A only |
+| `update_expense` | S2 | Stage A + single-check Stage B |
+| `delete_expense` | S2 | Stage A + single-check Stage B |
 | `update_budget` | S2 | Stage A + single-check Stage B |
 | `create_note` | S1 | Stage A only |
-| `update_application_status` | S1 | Stage A only |
+| `update_application_status` | S2 | Stage A + single-check Stage B |
 | `archive_email` | S1 | Stage A only |
 | `label_email` | S0 | None |
 
 **Any new `ActionType` added to `gate/schemas.py` requires a corresponding row here in the same change.** This table has no default — an action type with no entry is a bug, not an implicit S0.
+
+**`delete_task`/`update_expense`/`delete_expense`, real, `QUORUM_FINAL_COMPLETION_PLAN.md` Session 6:** each mutates an EXISTING real row rather than creating a fresh, additive one — one real stakes level above the equivalent `create`, matching `update_budget`'s own precedent. **A real, disclosed gap in this table's own 4-tier model, not silently resolved:** `QUORUM_GATE_SPECIFICATION.md` describes `S2` as fitting "internal-significant, reversible" actions — a genuine deletion is NOT reversible (no undo/trash exists anywhere in this schema), but it is also not "external," so `S3` (reserved for external-irreversible actions specifically) is not the correct bucket either. `S2` is the closest genuinely correct fit available in this real, closed model; see `router.py`'s own `STAKES_TABLE` comment for the full account.
 
 ---
 
