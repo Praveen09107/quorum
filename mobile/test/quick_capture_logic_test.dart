@@ -198,6 +198,56 @@ void main() {
     });
   });
 
+  group('describeQuickCaptureOutcome -- email domain (Session 7)', () {
+    test('a genuine approve for a real email asks for real, separate human approval, never auto-implies it was sent', () {
+      // REAL, DISCLOSED, load-bearing safety wording, matching calendar's
+      // own EXTERNAL-invite precedent exactly: `SEND_EMAIL` is real
+      // `Stakes.S3` and can NEVER auto-execute through quick-capture
+      // (`CLAUDE.md`'s own absolute S3 rule) -- this message must never
+      // claim or imply a real email was sent.
+      const result = QuickCaptureResultData(
+        executed: false, decision: 'approve', stakes: 'S3', domain: 'email',
+        title: null, emailAction: 'send_email', findings: [],
+      );
+      final message = describeQuickCaptureOutcome(result);
+      expect(message, 'This needs your direct approval before Quorum can send that email.');
+      expect(message, isNot(contains('Sent')));
+    });
+
+    test('a real email revise uses the real "send" verb, not the stale "create" wording', () {
+      // REAL, DISCLOSED SESSION-7 ADDITION: `email`'s own `operation` is
+      // always "create" internally (matching calendar), but "create"
+      // reads oddly for a real email -- this domain gets its own real,
+      // honest "send" verb in every generic fallback message.
+      const result = QuickCaptureResultData(executed: false, decision: 'revise', stakes: 'S3', domain: 'email', title: null, findings: []);
+      final message = describeQuickCaptureOutcome(result);
+      expect(message, "Quorum couldn't send that as described -- see why below.");
+      expect(message, isNot(contains('create')));
+    });
+
+    test('a real email reject uses the real "send" verb', () {
+      const result = QuickCaptureResultData(executed: false, decision: 'reject', stakes: 'S3', domain: 'email', title: null, findings: []);
+      expect(describeQuickCaptureOutcome(result), 'Quorum declined to send that -- see why below.');
+    });
+
+    test('a real, defensive fallback for email uses the real, irregular past tense "sent", never "sendd"', () {
+      // A real, dedicated regression test for a real bug caught and
+      // fixed during this same session, before merge: "send" does not
+      // form its past tense with the bare `+d` the other three real
+      // operation verbs (create/update/delete) happen to share.
+      const result = QuickCaptureResultData(executed: false, decision: 'some_future_unknown_decision', stakes: 'S3', domain: 'email', title: null, findings: []);
+      expect(describeQuickCaptureOutcome(result), 'That was not sent.');
+    });
+
+    test('a real, defensive executed=true case (no real path produces this today) names the real recipient, never a task title', () {
+      const result = QuickCaptureResultData(
+        executed: true, decision: 'approve', stakes: 'S3', domain: 'email',
+        title: null, emailRecipient: 'sarah@company.com', findings: [],
+      );
+      expect(describeQuickCaptureOutcome(result), 'Sent: sarah@company.com');
+    });
+  });
+
   test('FindingSummary/EvidenceVisualState are genuinely reused, not redefined', () {
     // A real, direct proof this file imports the real gate_reveal_logic.dart
     // types rather than shadowing them with a second, parallel definition.

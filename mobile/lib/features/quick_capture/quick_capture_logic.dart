@@ -33,6 +33,16 @@
 // separate follow-on, not built here) -- this file's own real job is
 // making sure the SAME, already-existing Quick-capture text box
 // renders every one of this session's new real outcomes honestly.
+//
+// REAL, DISCLOSED SESSION-7 EXTENSION: the fifth and final real domain,
+// Email -- `emailRecipient`/`emailAction` follow the exact same real
+// convention `eventStart`/`eventTitle`/`calendarAction` already
+// established for Calendar (`SEND_EMAIL` is real `Stakes.S3` too):
+// `emailAction` populated regardless of `executed`, `emailRecipient`
+// only when genuinely executed. `executed` is always `false` through
+// this real route today, by the same real S3 human-approval backstop
+// -- see `features/quick_capture.py`'s own top-of-file docstring for
+// the full account.
 
 import 'package:quorum_mobile/features/finance/finance_logic.dart' show formatCurrency;
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
@@ -62,6 +72,8 @@ class QuickCaptureResultData {
   final String? calendarAction;
   final String? company;
   final String? newStatus;
+  final String? emailRecipient;
+  final String? emailAction;
   final List<FindingSummary> findings;
 
   const QuickCaptureResultData({
@@ -81,6 +93,8 @@ class QuickCaptureResultData {
     this.calendarAction,
     this.company,
     this.newStatus,
+    this.emailRecipient,
+    this.emailAction,
     required this.findings,
   });
 }
@@ -127,6 +141,14 @@ String describeQuickCaptureOutcome(QuickCaptureResultData result) {
       // `operation` is always genuinely "update" here (Quorum never
       // creates a new application from free text).
       return 'Updated: ${result.company ?? 'that application'} -- now ${result.newStatus ?? 'updated'}';
+    }
+    if (result.domain == 'email') {
+      // Defensive, future-proof (`QUORUM_FINAL_COMPLETION_PLAN.md`
+      // Session 7) -- no real path produces `executed: true` for email
+      // today (see the `decision == 'approve'` branch below for the
+      // real, disclosed S3 reason), but this stays honest if a future
+      // session ever wires up a real human-approval endpoint.
+      return 'Sent: ${result.emailRecipient ?? 'that email'}';
     }
     // REAL, DISCLOSED SESSION-6 ADDITION: `tasks` now genuinely covers
     // update/delete, not just create -- `operation` drives the real
@@ -176,6 +198,13 @@ String describeQuickCaptureOutcome(QuickCaptureResultData result) {
         _ => 'Approved, but nothing was written yet.', // defensive -- never genuinely reached today
       };
     }
+    // REAL, DISCLOSED SESSION-7 ADDITION: the fifth real domain, Email --
+    // `SEND_EMAIL` is real `Stakes.S3` too, and a genuine approve here
+    // NEVER auto-sends, by the identical real S3 backstop mechanism as
+    // calendar's external booking above.
+    if (result.domain == 'email') {
+      return 'This needs your direct approval before Quorum can send that email.';
+    }
     return 'Approved, but nothing was written yet.'; // defensive -- a genuine approve should already have executed for every other real domain today
   }
   // REAL, DISCLOSED SESSION-6 ADDITION: every one of these generic
@@ -185,11 +214,24 @@ String describeQuickCaptureOutcome(QuickCaptureResultData result) {
   // of "create"/"update"/"delete" happens to form its own past tense
   // by a bare `+d` (all three real English verbs end in "e"), so one
   // real, shared derivation covers all three without a second switch.
-  final verb = switch (result.operation) { 'update' => 'update', 'delete' => 'delete', _ => 'create' };
+  //
+  // REAL, DISCLOSED SESSION-7 ADDITION: `email`'s own `operation` is
+  // always genuinely "create" (matching calendar's own convention), but
+  // "create" reads oddly for a real email ("Quorum couldn't create that
+  // as described") -- checked first, domain-specific, before the
+  // generic operation-based derivation. `"send"` is a real, irregular
+  // English verb (past tense "sent", not the bare `+d` the other three
+  // happen to share) -- given its own real past-tense form below rather
+  // than reusing the shared `${verb}d` derivation, which would have
+  // produced the real, incorrect "sendd".
+  final verb = result.domain == 'email'
+      ? 'send'
+      : switch (result.operation) { 'update' => 'update', 'delete' => 'delete', _ => 'create' };
+  final pastTenseVerb = result.domain == 'email' ? 'sent' : '${verb}d';
   return switch (result.decision) {
     'revise' => "Quorum couldn't $verb that as described -- see why below.",
     'escalate_to_human' => 'This needs your direct approval before Quorum can $verb it.',
     'reject' => 'Quorum declined to $verb that -- see why below.',
-    _ => 'That was not ${verb}d.',
+    _ => 'That was not $pastTenseVerb.',
   };
 }
