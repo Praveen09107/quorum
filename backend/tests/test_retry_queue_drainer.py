@@ -136,6 +136,15 @@ def test_validate_and_build_finance_proposal_rejects_an_amount_exceeding_the_rea
         validate_and_build_finance_proposal({"action": "log_expense", "amount": 100_000_000.0, "category": "food", "payee": None})
 
 
+def test_validate_and_build_finance_proposal_rejects_a_real_null_amount_honestly():
+    """The identical real, on-device-found class of bug as this file's
+    own `estimated_hours` regression test above: a genuinely ambiguous
+    real expense phrasing ("spent some money on groceries," no number
+    stated) can equally, honestly return `amount: null`."""
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_finance_proposal({"action": "log_expense", "amount": None, "category": "food", "payee": None})
+
+
 def test_validate_and_build_task_proposal_rejects_non_positive_hours():
     with pytest.raises(DownstreamTranslationError):
         validate_and_build_task_proposal({"title": "x", "estimated_hours": 0, "deadline_iso": None})
@@ -153,6 +162,19 @@ def test_validate_and_build_task_proposal_rejects_estimated_hours_exceeding_the_
 def test_validate_and_build_task_proposal_handles_a_real_null_deadline_honestly():
     proposal = validate_and_build_task_proposal({"title": "Follow up", "estimated_hours": 1.5, "deadline_iso": None})
     assert proposal.payload["deadline"] is None
+
+
+def test_validate_and_build_task_proposal_rejects_a_real_null_estimated_hours_honestly():
+    """THE real, dedicated regression proof for the first real bug a
+    genuine human being ever found by actually using this app on a real
+    phone (`QUORUM_FINAL_COMPLETION_PLAN.md`'s own whole-system-checkpoint
+    on-device session): "finish report by tomorrow" -- an entirely
+    ordinary way to phrase a task, with no duration stated -- honestly
+    produced `estimated_hours: null`, and `float(None)` raised a raw,
+    uncaught `TypeError` instead of this module's own honest
+    `DownstreamTranslationError` contract."""
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_task_proposal({"title": "Finish report", "estimated_hours": None, "deadline_iso": None})
 
 
 def test_validate_and_build_calendar_proposal_rejects_end_before_or_equal_to_start():

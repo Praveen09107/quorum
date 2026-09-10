@@ -285,7 +285,21 @@ _MAX_FINANCE_PAYEE_LENGTH = 200
 
 def validate_and_build_finance_proposal(args: dict) -> ActionProposal:
     action = args["action"]
-    amount = float(args["amount"])
+    # RESOLVED, the identical real, on-device-found class of bug just
+    # fixed for `validate_and_build_task_proposal()`'s own `estimated_
+    # hours` above (found by a real human typing an ordinary, duration-
+    # less task on a real phone) -- a genuinely ambiguous real expense
+    # phrasing ("spent some money on groceries," no number stated) can
+    # equally, honestly return `amount: null`; `float(None)` raised the
+    # identical raw, uncaught `TypeError` instead of this module's own
+    # honest `DownstreamTranslationError` contract. Checked here before
+    # any other caller could hit the same real gap.
+    raw_amount = args["amount"]
+    if not isinstance(raw_amount, (int, float)) or isinstance(raw_amount, bool):
+        raise DownstreamTranslationError(
+            f"Translated finance amount must be a real number, got {raw_amount!r} -- try stating a real amount."
+        )
+    amount = float(raw_amount)
     # `math.isfinite()` -- a real, CRITICAL-tier review finding
     # (`DEC-148`, BLOCKER B1): Python's real `json` module parses the
     # literal, non-standard tokens `NaN`/`Infinity`/`-Infinity` by
@@ -374,7 +388,32 @@ def validate_and_build_task_proposal(args: dict, *, existing_task_id: str | None
     # this: "a different future caller might not route through that
     # same jsonb insert" -- `features/quick_capture.py` is that future
     # caller).
-    estimated_hours = float(args["estimated_hours"])
+    # RESOLVED, a real, live, on-device-found bug -- the FIRST real bug a
+    # genuine human being ever found by actually using this app on a real
+    # phone (`QUORUM_FINAL_COMPLETION_PLAN.md`'s own whole-system-
+    # checkpoint on-device session): a real, live extraction of "finish
+    # report by tomorrow" -- an entirely ordinary way to phrase a task,
+    # with no duration stated -- honestly returned `estimated_hours:
+    # null` (this field is genuinely `nullable` in the real schema, and
+    # the model correctly didn't invent a number the text never gave).
+    # `float(None)` raises a raw, uncaught `TypeError`
+    # ("float() argument must be a string or a real number, not
+    # 'NoneType'") -- surfaced to a real user as this module's own
+    # exact, undifferentiated internal error text, never a genuine `502`
+    # via this module's own established `DownstreamTranslationError`
+    # contract. This is the identical class of gap `DEC-153` H1 already
+    # found and fixed for `title` a few lines below (a non-string/`None`
+    # value reaching a raw operation uncaught) -- never actually
+    # exercised for `estimated_hours` until real, live human phrasing
+    # hit it first. Checked here, the same "reject a malformed real
+    # value with an honest, catchable error" discipline `title`'s own
+    # check already establishes.
+    raw_estimated_hours = args["estimated_hours"]
+    if not isinstance(raw_estimated_hours, (int, float)) or isinstance(raw_estimated_hours, bool):
+        raise DownstreamTranslationError(
+            f"Translated estimated_hours must be a real number, got {raw_estimated_hours!r} -- try stating roughly how long this will take."
+        )
+    estimated_hours = float(raw_estimated_hours)
     if not math.isfinite(estimated_hours) or estimated_hours <= 0:
         raise DownstreamTranslationError(f"Translated estimated_hours must be a real, finite, positive number, got {estimated_hours!r}")
     if estimated_hours > _MAX_ESTIMATED_HOURS:
