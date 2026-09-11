@@ -38,7 +38,12 @@ void main() {
 
       expect(capturedUri.toString(), 'https://example.test/quick_capture');
       expect(capturedAuth, 'Bearer a-real-test-token');
-      expect(capturedBody, {'text': 'finish the report'});
+      // REAL, DISCLOSED SESSION-8 EXTENSION: `on_device_attempted`/
+      // `on_device_failure_reason` are now always present in the real
+      // request body -- `false`/`null` by default for every existing
+      // real caller that never mentions them, matching this fetcher's
+      // own new optional-parameter defaults exactly.
+      expect(capturedBody, {'text': 'finish the report', 'on_device_attempted': false, 'on_device_failure_reason': null});
     });
 
     test('a null access token fails loud with a real 401, before any real request is sent', () async {
@@ -293,6 +298,87 @@ void main() {
         fail('should have thrown');
       } on ApiException catch (e) {
         expect(e.statusCode, isNull);
+      }
+    });
+
+    test('a real fallback attempt sends the real on_device_attempted/reason fields', () async {
+      Map<String, dynamic>? capturedBody;
+      final client = MockClient((request) async {
+        capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({'executed': true, 'decision': 'approve', 'stakes': 'S1', 'domain': 'tasks', 'title': 'A real task', 'findings': [], 'objections': []}),
+          200,
+        );
+      });
+      final capture = createQuickCaptureFetcher(getAccessToken: () async => 'token', client: client);
+
+      await capture('finish the report', onDeviceAttempted: true, onDeviceFailureReason: 'estimated_hours missing');
+
+      expect(capturedBody, {
+        'text': 'finish the report',
+        'on_device_attempted': true,
+        'on_device_failure_reason': 'estimated_hours missing',
+      });
+    });
+  });
+
+  group('createQuickCaptureExtractedFetcher (QUORUM_FINAL_COMPLETION_PLAN.md Session 8)', () {
+    test('a real, trusted extracted submission posts the args verbatim to /quick_capture/extracted', () async {
+      Uri? capturedUri;
+      String? capturedAuth;
+      Map<String, dynamic>? capturedBody;
+      final client = MockClient((request) async {
+        capturedUri = request.url;
+        capturedAuth = request.headers['Authorization'];
+        capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({'executed': true, 'decision': 'approve', 'stakes': 'S1', 'domain': 'tasks', 'title': 'A real task', 'findings': [], 'objections': []}),
+          200,
+        );
+      });
+
+      final submit = createQuickCaptureExtractedFetcher(
+        getAccessToken: () async => 'a-real-test-token',
+        client: client,
+        baseUrl: 'https://example.test',
+      );
+      final args = {'domain': 'tasks', 'operation': 'create', 'title': 'Finish the report', 'estimated_hours': 2.0};
+      final result = await submit(args);
+
+      expect(capturedUri.toString(), 'https://example.test/quick_capture/extracted');
+      expect(capturedAuth, 'Bearer a-real-test-token');
+      expect(capturedBody, args);
+      expect(result.domain, 'tasks');
+      expect(result.executed, isTrue);
+    });
+
+    test('a null access token fails loud with a real 401, before any real request is sent', () async {
+      var requestSent = false;
+      final client = MockClient((request) async {
+        requestSent = true;
+        return http.Response('', 200);
+      });
+      final submit = createQuickCaptureExtractedFetcher(getAccessToken: () async => null, client: client);
+
+      try {
+        await submit({'domain': 'tasks'});
+        fail('should have thrown');
+      } on ApiException catch (e) {
+        expect(e.statusCode, 401);
+      }
+      expect(requestSent, isFalse);
+    });
+
+    test('a real 502 surfaces the real backend detail message', () async {
+      final client = MockClient((request) async => http.Response(jsonEncode({'detail': 'Real extraction produced an unusable task: bad domain'}), 502));
+      final submit = createQuickCaptureExtractedFetcher(getAccessToken: () async => 'token', client: client);
+
+      try {
+        await submit({'domain': 'not_a_real_domain'});
+        fail('should have thrown');
+      } on ApiException catch (e) {
+        expect(e.statusCode, 502);
+        expect(e.message, contains('bad domain'));
       }
     });
   });

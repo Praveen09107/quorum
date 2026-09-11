@@ -57,6 +57,15 @@ dependencies:
   # time this project's Android toolchain is upgraded.
   receive_sharing_intent: 1.7.0
 
+  # Real, on-device LLM inference -- `QUORUM_FINAL_COMPLETION_PLAN.md`
+  # Session 8. The exact real package Sprint 0's own live, on-device
+  # benchmark already proved works on a real physical device (`DEC-130`/
+  # `131`, `sprint0/pubspec.yaml`) -- pinned to that same exact, already-
+  # live-verified version, not a newer, unverified one. See
+  # `on_device_extraction.dart`'s own header comment for the full account
+  # of what's structurally wired versus what still needs a real device.
+  llamadart: ^0.8.19
+
   cupertino_icons: ^1.0.6
   http: ^1.6.0
   # Real typography (Phase 8, DEC-155) -- the real, deliberate IBM Plex

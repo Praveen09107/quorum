@@ -95,6 +95,7 @@ from quorum_backend.features.today import (
 )
 from quorum_backend.features.quick_capture import (
     QuickCaptureError,
+    QuickCaptureResult,
     capture_action_from_extracted_args,
     make_gemini_email_draft_call,
     make_gemini_quick_capture_extraction_call,
@@ -270,9 +271,25 @@ class QuickCaptureRequest(BaseModel):
     genuinely untrusted (see `features/quick_capture.py`'s own top-of-
     file docstring for why this route is CRITICAL-tier, not standard).
     A real, minimum length check refuses an empty/whitespace-only
-    submission before it ever reaches a real, billed Gemini call."""
+    submission before it ever reaches a real, billed Gemini call.
+
+    REAL, DISCLOSED, `QUORUM_FINAL_COMPLETION_PLAN.md` SESSION 8:
+    `on_device_attempted`/`on_device_failure_reason` are new, optional,
+    purely telemetric fields -- the mobile app sets `on_device_attempted
+    =True` and a short, honest reason string whenever this route is
+    reached specifically BECAUSE the real, on-device Llama 3.2 3B
+    extraction attempt (`DEC-130`/`131`) failed its own real,
+    structural correctness bar, per the session's own stated goal that
+    "every fallback is logged, not silent." Neither field is ever
+    trusted for anything beyond a real log line below -- a client that
+    omits or lies about them changes nothing about how this route
+    reviews or executes the resulting action, matching this route's own
+    established "the client's own claims about its input are never a
+    security boundary" discipline."""
 
     text: str = Field(min_length=1, max_length=2000)
+    on_device_attempted: bool = False
+    on_device_failure_reason: str | None = Field(default=None, max_length=200)
 
     @field_validator("text")
     @classmethod
@@ -280,6 +297,55 @@ class QuickCaptureRequest(BaseModel):
         if not value.strip():
             raise ValueError("text must not be blank")
         return value
+
+
+class QuickCaptureExtractedRequest(BaseModel):
+    """REAL, NEW, `QUORUM_FINAL_COMPLETION_PLAN.md` SESSION 8 -- the
+    real request shape for `POST /quick_capture/extracted`, a second,
+    new real entry point into the SAME real `capture_action_from_
+    extracted_args()` pipeline `POST /quick_capture` already uses,
+    skipping this backend's own real Gemini extraction call entirely.
+
+    Mirrors `features/quick_capture.py::_QUICK_CAPTURE_EXTRACTION_
+    SCHEMA` field-for-field, deliberately -- this is the exact real
+    JSON shape a real, on-device Llama 3.2 3B extraction pass (matching
+    `build_extraction_prompt()`'s own instructions, ported to Dart for
+    this session -- no shared prompt module exists between this Python
+    backend and the Dart mobile app anywhere in this project's real
+    history, the same real, accepted platform-duplication precedent
+    `computed_state.dart`'s own hand-verified-parity port already set)
+    must produce before this route will accept it as trustworthy enough
+    to skip the cloud extraction step.
+
+    A REAL, DELIBERATE SAFETY FACT, not an oversight: every field here
+    is exactly as untrusted as the real Gemini extraction call's own
+    JSON output already is -- `capture_action_from_extracted_args()`
+    itself never assumed its `args` came from a well-behaved LLM, and
+    validates every domain's shape from scratch (see that function's
+    own docstring). Routing a real, on-device-produced dict through the
+    identical function means this new route inherits the exact same
+    real Gate review, the exact same real Stage A checks, and the exact
+    same real S3 human-approval backstop as the existing route --
+    letting the client supply already-extracted args changes WHERE the
+    extraction happened, never what's trusted afterward."""
+
+    domain: str
+    operation: str | None = None
+    reference_description: str | None = None
+    title: str | None = None
+    estimated_hours: float | None = None
+    deadline_iso: str | None = None
+    action: str | None = None
+    amount: float | None = None
+    category: str | None = None
+    payee: str | None = None
+    start_iso: str | None = None
+    end_iso: str | None = None
+    invitee_email: str | None = None
+    new_status: str | None = None
+    recipient_description: str | None = None
+    recipient_email: str | None = None
+    user_intent: str | None = None
 
 
 class TokenPairResponse(BaseModel):
@@ -555,6 +621,20 @@ async def quick_capture_endpoint(
         raise HTTPException(status_code=503, detail="Quick capture is not currently available -- the extraction provider isn't configured.")
     internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
 
+    # REAL, DISCLOSED, `QUORUM_FINAL_COMPLETION_PLAN.md` SESSION 8: a
+    # real, honest log line whenever this cloud path was reached because
+    # a real, on-device extraction attempt failed its own correctness
+    # bar first -- the session's own stated "every fallback is logged,
+    # not silent" requirement. `user_id` (not `google_sub`) is logged
+    # deliberately, matching this backend's own established trace-
+    # scrubbing discipline of never putting a real external identifier
+    # in a log line where an internal one already suffices.
+    if body.on_device_attempted:
+        logger.info(
+            "Quick-capture fell back to cloud extraction: user_id=%s reason=%s",
+            internal_user_id, body.on_device_failure_reason,
+        )
+
     extraction_call = make_gemini_quick_capture_extraction_call(api_key=settings.gemini_api_key)
     critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
     judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
@@ -600,6 +680,15 @@ async def quick_capture_endpoint(
         # than a raw, unhandled `500` reaching a real user.
         raise HTTPException(status_code=502, detail="Couldn't turn that into a real action -- please try rephrasing it.") from exc
 
+    return _quick_capture_result_to_dict(result)
+
+
+def _quick_capture_result_to_dict(result: QuickCaptureResult) -> dict:
+    """Real, shared response-shape builder -- extracted this session
+    (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 8) so `POST /quick_capture`
+    and the new `POST /quick_capture/extracted` return byte-for-byte the
+    identical real response shape, rather than two independently
+    hand-written dict literals silently drifting apart over time."""
     return {
         "executed": result.executed,
         "decision": result.decision,
@@ -620,6 +709,84 @@ async def quick_capture_endpoint(
         "findings": [finding.model_dump(mode="json") for finding in result.findings],
         "objections": [objection.model_dump(mode="json") for objection in result.objections],
     }
+
+
+@app.post("/quick_capture/extracted")
+async def quick_capture_extracted_endpoint(
+    body: QuickCaptureExtractedRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """REAL, NEW -- `QUORUM_FINAL_COMPLETION_PLAN.md` Session 8, closing
+    the last of the three original Quick-capture deferrals (`DEC-153`:
+    "Sprint 0's own real, measured result is 67% validity for the
+    winning on-device candidate -- not yet strong enough to be the
+    primary path... on-device extraction/routing is a real, disclosed,
+    deferred follow-on, not silently dropped").
+
+    A second real entry point into the exact same real, DB-touching
+    `capture_action_from_extracted_args()` pipeline `POST /quick_capture`
+    already uses -- the ONLY real difference is that this route never
+    calls this backend's own real Gemini extraction function at all.
+    The real, on-device Llama 3.2 3B extraction pass (mobile-side,
+    `DEC-130`/`131`'s own real, measured winner) is expected to have
+    already produced `body`'s own fields and already checked them
+    against a real, structural correctness bar (a parsed date genuinely
+    in the future, an amount genuinely a positive real number, per this
+    session's own spec text) before ever reaching this route -- a
+    mobile client that doesn't trust its own on-device result is
+    expected to call `POST /quick_capture` instead, with
+    `on_device_attempted=True`, not submit a low-confidence result here.
+
+    REAL, DELIBERATE SAFETY FACT, not a gap this route quietly accepts:
+    nothing above is enforced BY this route -- `body`'s fields are
+    exactly as untrusted here as a real Gemini extraction response
+    already is on the other route, and `capture_action_from_extracted_
+    args()` re-validates every domain's shape from scratch regardless of
+    who produced it. A malicious or simply wrong on-device result cannot
+    reach a different real outcome than an equally wrong cloud
+    extraction would -- the same real Gate review, the same real Stage A
+    checks, and the same real S3 human-approval backstop apply
+    identically either way. See `QuickCaptureExtractedRequest`'s own
+    docstring for the full account.
+
+    No `settings.gemini_api_key is None` guard here, unlike `POST
+    /quick_capture` -- this route never calls Gemini for extraction, so
+    that real precondition genuinely doesn't apply. The real Judge
+    (`make_gemini_judge_call`) and, for `SEND_EMAIL` specifically, the
+    real draft call (`make_gemini_email_draft_call`) still need a real
+    `GEMINI_API_KEY` -- covered by the exact same real, existing
+    `InfrastructureFailure`/`QuickCaptureError` handling below as the
+    other route, not a new failure mode this route introduces."""
+    settings = get_settings()
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+
+    critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
+    judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
+    draft_call = make_gemini_email_draft_call(api_key=settings.gemini_api_key) if settings.gemini_api_key else None
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                result = await capture_action_from_extracted_args(
+                    conn,
+                    user_id=internal_user_id,
+                    args=body.model_dump(),
+                    critic_call=critic_call,
+                    judge_call=judge_call,
+                    draft_call=draft_call,
+                )
+    except QuickCaptureError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except InfrastructureFailure as exc:
+        # Same real reasoning as `POST /quick_capture`'s own identical
+        # handler above -- the real Judge (always) or Critic (S3 only)
+        # being genuinely unreachable after every real retry.
+        raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
+    except asyncpg.PostgresError as exc:
+        raise HTTPException(status_code=502, detail="Couldn't turn that into a real action -- please try rephrasing it.") from exc
+
+    return _quick_capture_result_to_dict(result)
 
 
 @app.get("/predictive_risk")

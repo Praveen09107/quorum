@@ -577,6 +577,200 @@ async def test_quick_capture_endpoint_is_real_and_live_reviews_an_external_calen
         await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
 
 
+# --- POST /quick_capture/extracted (QUORUM_FINAL_COMPLETION_PLAN.md Session 8) ---
+
+
+def test_quick_capture_extracted_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.post("/quick_capture/extracted", json={"domain": "tasks", "operation": "create"})
+    assert response.status_code == 401
+
+
+def test_quick_capture_extracted_rejects_a_missing_domain_field_with_a_real_422():
+    """`domain` is the one real, required field on `QuickCaptureExtractedRequest`
+    -- everything else is nullable, mirroring `_QUICK_CAPTURE_EXTRACTION_
+    SCHEMA`'s own real shape exactly."""
+    with TestClient(app) as client:
+        response = client.post("/quick_capture/extracted", json={"operation": "create"}, headers=_auth_header())
+    assert response.status_code == 422
+
+
+async def test_quick_capture_extracted_rejects_an_unsupported_domain_with_a_real_502_not_a_500(pool, provisioned_users):
+    """Real, defense-in-depth: this route never trusts `body.domain` any
+    more than the real Gemini extraction path already doesn't --
+    `capture_action_from_extracted_args()`'s own real domain-dispatch
+    `else` branch raises `QuickCaptureError` for a genuinely unsupported
+    combination, mapped here to the exact same real `502` the other
+    route already uses, never a raw `500`."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    with TestClient(app) as client:
+        response = client.post(
+            "/quick_capture/extracted",
+            json={"domain": "not_a_real_domain", "operation": "create"},
+            headers=headers,
+        )
+    assert response.status_code == 502
+
+
+async def test_quick_capture_extracted_endpoint_never_calls_the_real_extraction_provider_and_still_creates_a_real_task(monkeypatch, pool, provisioned_users):
+    """THE real, load-bearing proof of this whole session: a pre-
+    extracted `CREATE_TASK` submission succeeds end to end even with
+    `GEMINI_API_KEY` genuinely unset -- direct, live proof that this
+    route really does skip the real extraction call entirely, not just
+    a claim in its own docstring. `CREATE_TASK` is real `Stakes.S1`,
+    so Stage B (and therefore the real Judge too) never runs either --
+    this test needs no real external LLM call of any kind to pass."""
+    from quorum_backend import main as main_module
+
+    fake_settings = get_settings().model_copy(update={"gemini_api_key": None})
+    monkeypatch.setattr(main_module, "get_settings", lambda: fake_settings)
+
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    marker = f"real quick-capture-extracted test {uuid.uuid4()}"
+
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/quick_capture/extracted",
+                json={
+                    "domain": "tasks",
+                    "operation": "create",
+                    "title": marker,
+                    "estimated_hours": 1.0,
+                    "deadline_iso": None,
+                },
+                headers=headers,
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["stakes"] == "S1"
+        assert body["domain"] == "tasks"
+        assert body["executed"] is True
+        assert body["decision"] == "approve"
+        assert body["title"] == marker
+
+        row = await pool.fetchrow(
+            "SELECT title, estimated_hours FROM tasks WHERE user_id = $1 AND title = $2",
+            uuid.UUID(internal_user_id), marker,
+        )
+        assert row is not None
+        assert row["estimated_hours"] == 1.0
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE user_id = $1", uuid.UUID(internal_user_id))
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
+async def test_quick_capture_extracted_endpoint_creates_a_real_expense_end_to_end_with_no_live_llm_call_needed(pool, provisioned_users):
+    """`log_expense` is also real `Stakes.S1` -- the same real "no live
+    LLM call needed at all" property as the tasks test above, proven
+    for a second real domain."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    marker = f"real-quick-capture-extracted-finance-test-{uuid.uuid4()}"
+
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/quick_capture/extracted",
+                json={"domain": "finance", "action": "log_expense", "amount": 42.0, "payee": marker, "category": "test"},
+                headers=headers,
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["stakes"] == "S1"
+        assert body["domain"] == "finance"
+        assert body["executed"] is True
+        assert body["decision"] == "approve"
+        assert body["amount"] == 42.0
+
+        row = await pool.fetchrow("SELECT amount FROM expenses WHERE user_id = $1 AND payee = $2", uuid.UUID(internal_user_id), marker)
+        assert row is not None
+        assert float(row["amount"]) == 42.0
+    finally:
+        await pool.execute("DELETE FROM expenses WHERE user_id = $1", uuid.UUID(internal_user_id))
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
+@pytest.mark.skipif(get_settings().gemini_api_key is None or get_settings().groq_api_key is None, reason="no real GEMINI_API_KEY/GROQ_API_KEY configured in this environment")
+async def test_quick_capture_extracted_endpoint_reviews_a_real_external_calendar_invite_via_the_real_full_stage_b_debate_and_never_executes(pool, provisioned_users):
+    """The real, live proof that a pre-extracted `Stakes.S3` submission
+    through this NEW route gets the exact same real Gate treatment (the
+    real Groq Critic AND the real Gemini Judge, both genuinely invoked)
+    and the exact same real S3 human-approval backstop as the existing
+    `/quick_capture` route's own equivalent test -- proving the safety
+    properties this session's own docstrings claim are identical are
+    genuinely, not just theoretically, identical."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/quick_capture/extracted",
+                json={
+                    "domain": "calendar",
+                    "operation": "create",
+                    "title": "Call with Jane",
+                    "start_iso": "2027-01-01T10:00:00+00:00",
+                    "end_iso": "2027-01-01T10:30:00+00:00",
+                    "invitee_email": "jane@company.com",
+                },
+                headers=headers,
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["domain"] == "calendar"
+        assert body["stakes"] == "S3"
+        assert body["calendar_action"] == "create_calendar_event_external"
+        # The identical real safety proof as the existing route's own
+        # equivalent test: NEVER executed, no matter what the real,
+        # live Gate decided.
+        assert body["executed"] is False
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
+async def test_quick_capture_logs_a_real_fallback_line_when_the_mobile_client_reports_an_on_device_attempt(monkeypatch, caplog, pool, provisioned_users):
+    """Real, minimal proof of this session's own "every fallback is
+    logged, not silent" requirement -- a request through the EXISTING
+    `/quick_capture` route that sets `on_device_attempted=True` produces
+    a real, observable log line naming the real reason, logged right
+    after this real, provisioned user is resolved and before the real
+    extraction call ever runs. The real extraction call itself is
+    monkeypatched to a cheap stub that raises immediately -- this test's
+    own point is proving the log line fires, not re-proving a live
+    Gemini round trip already covered elsewhere, so it stays hermetic
+    and fast rather than needing a real network call."""
+    from quorum_backend import main as main_module
+    import logging as logging_module
+
+    from quorum_backend.features.quick_capture import QuickCaptureError
+
+    async def _stub_extraction_call(_text: str):
+        raise QuickCaptureError("stub extraction failure -- this test never needs a real Gemini call")
+
+    monkeypatch.setattr(main_module, "make_gemini_quick_capture_extraction_call", lambda **_kwargs: _stub_extraction_call)
+
+    headers, _internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+
+    with caplog.at_level(logging_module.INFO, logger="quorum_backend"):
+        with TestClient(app) as client:
+            response = client.post(
+                "/quick_capture",
+                json={
+                    "text": "finish the report",
+                    "on_device_attempted": True,
+                    "on_device_failure_reason": "estimated_hours missing",
+                },
+                headers=headers,
+            )
+
+    assert response.status_code == 502
+    assert "fell back to cloud extraction" in caplog.text
+    assert "estimated_hours missing" in caplog.text
+
+
 # --- GET /predictive_risk (Phase 6, DEC-149) ---
 
 
