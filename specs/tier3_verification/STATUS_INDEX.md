@@ -23,7 +23,9 @@
 
 **Domains real at the data layer:** Tasks, Finance, Career, Email-ingestion-only (4 of 5, unchanged). Calendar still has no real table at all — real *local*-event ground truth remains deliberately on-device.
 
-**Two real, minor, disclosed, unfixed UI/ops gaps, both low-urgency:** Today's "In motion" negotiation card doesn't refresh after returning from choosing an option (`DEC-174`) -- server state is always correct, the card just needs a cold relaunch to catch up; `POST /internal/briefing` is real and tested but not yet scheduled on any real `pg_cron` interval (`DEC-176`), so real push notifications, once a real Firebase project exists, still need that one, separate, real scheduling step.
+**One real, minor, disclosed, unfixed UI gap, low-urgency:** Today's "In motion" negotiation card doesn't refresh after returning from choosing an option (`DEC-174`) -- server state is always correct, the card just needs a cold relaunch to catch up.
+
+**`POST /internal/briefing` is now real, tested, AND scheduled** (`DEC-177`) -- a real, live, daily `pg_cron` job (7:00 AM real IST), the sixth real, autonomous scheduled job in this deployment. A real, live, manual invocation against the deployed service confirms the pipeline itself works correctly against real, current production data (15 real users scanned, honest zero notifications since no real Firebase project exists yet) -- but the first genuinely UNATTENDED autonomous fire has not been directly observed yet (the next real scheduled mark was ~11 hours away when this was written). The moment a real Firebase project exists (Session 9's own remaining gap), real push notifications start flowing on the very next scheduled fire with no further deploy needed.
 
 **On-device model resolution:** resolved for real via a complete head-to-head comparison (`DEC-130`/`131`) — Llama 3.2 3B beats Gemma 4 E4B decisively on real, measured accuracy and speed (67% vs. 17% validity). `resolveModelForTier` correctly resolves to it, but (per the `DEC-175` paragraph above) still has no real caller in the live app.
 
