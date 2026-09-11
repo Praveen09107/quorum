@@ -1800,15 +1800,70 @@ async def briefing_route(
     earlier wording, found by this session's own CRITICAL-tier review).
 
     Not yet scheduled live via `pg_cron` as of this writing -- no real
-    consumer exists yet to make a scheduled run meaningful; see this
-    route's own docstring above."""
-    result = await run_briefing(pool)
+    consumer existed to make a scheduled run meaningful until this
+    session.
+
+    REAL, DISCLOSED, `QUORUM_FINAL_COMPLETION_PLAN.md` SESSION 9
+    (`DEC-176`): this route now has a real consumer -- real push
+    notifications, via `features/fcm.py`. `firebase_project_id`/
+    `firebase_service_account_json` are read here (this route's own
+    real job, matching `career_digest_route`'s own established
+    "the route reads settings, the feature module never does"
+    convention) and passed through; both genuinely `None` in this
+    environment as of this session (no real Firebase project exists
+    yet), so this route continues to compose real data for every real
+    user with real, honest zero notifications sent -- never a `503`,
+    since real briefing composition itself needs no real Firebase
+    configuration at all and stays fully real and useful on its own."""
+    settings = get_settings()
+    result = await run_briefing(
+        pool,
+        firebase_project_id=settings.firebase_project_id,
+        firebase_service_account_json=settings.firebase_service_account_json,
+    )
     return {
         "users_scanned": result.users_scanned,
         "users_failed": result.users_failed,
         "users_with_pending_actions": result.users_with_pending_actions,
         "users_with_active_negotiations": result.users_with_active_negotiations,
+        "users_notified": result.users_notified,
     }
+
+
+class DeviceTokenRequest(BaseModel):
+    """REAL, NEW, `QUORUM_FINAL_COMPLETION_PLAN.md` SESSION 9 (`DEC-176`)
+    -- the real request shape for `POST /device_token`. `fcm_token`'s
+    real, live-documented max length is unbounded by Google's own spec,
+    but a real, generous plausibility bound (matching this backend's
+    own established "never trust an unbounded real string into a
+    database column" discipline) is applied anyway."""
+
+    fcm_token: str = Field(min_length=1, max_length=4096)
+
+
+@app.post("/device_token")
+async def register_device_token_endpoint(
+    body: DeviceTokenRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """REAL, NEW, `QUORUM_FINAL_COMPLETION_PLAN.md` SESSION 9 (`DEC-176`)
+    -- real per-user registration of this user's CURRENT real FCM
+    device token, called on real app launch/sign-in (mobile-side, per
+    this session's own spec text). A real `UPSERT` -- `device_tokens`
+    holds exactly one real row per real user (migration `0018`), so a
+    fresh real sign-in on a second real device correctly overwrites the
+    previous real token rather than accumulating a real, growing
+    multi-device history this schema was never designed to hold. Real
+    per-user scoped from this route's first line, matching every other
+    real, authenticated write route in this backend."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    await pool.execute(
+        "INSERT INTO device_tokens (user_id, fcm_token, updated_at) VALUES ($1, $2, now()) "
+        "ON CONFLICT (user_id) DO UPDATE SET fcm_token = EXCLUDED.fcm_token, updated_at = now()",
+        uuid.UUID(internal_user_id), body.fcm_token,
+    )
+    return {"status": "ok"}
 
 
 @app.post("/internal/follow-up")
