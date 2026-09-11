@@ -4266,4 +4266,8 @@ Verified again after all fixes: YAML re-validated with a real parser; every `dep
 
 ---
 
+**FINAL ADDENDUM -- a real CI failure found and fixed on `main` itself, and a real, live post-deploy confirmation, both worth recording here rather than only in a PR description:** PR #84's own merge-triggered `main` CI run failed for real -- `test_quick_capture_logs_a_real_fallback_line_when_the_mobile_client_reports_an_on_device_attempt` implicitly relied on this developer's own local `GEMINI_API_KEY` being configured; CI's real environment has none, so the route's own `503` short-circuit fired before the monkeypatched extraction call was ever reached, and the test asserted the wrong status code. **`main` was genuinely red for a real, if short, window** -- confirmed the deploy job never ran against that broken commit (gated correctly on the failed backend job), so no bad image ever reached Cloud Run. Fixed by explicitly forcing a real, non-`None` dummy key rather than trusting ambient environment state (PR #85) -- confirmed fixed by watching CI itself pass, on the real, keyless environment that exposed the bug, not just by trusting a local re-run. The resulting deploy succeeded live: `gcloud`-confirmed new revision, `GET /health` → real `200`, and both `POST /quick_capture` and the brand-new `POST /quick_capture/extracted` → real `401` (correctly demanding auth) against the real, live, deployed Cloud Run service -- the first genuine, on-the-actual-production-URL confirmation that this session's own new route exists and behaves correctly outside any test harness.
+
+---
+
 *Next entry: DEC-176*
