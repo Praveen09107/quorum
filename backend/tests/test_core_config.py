@@ -101,3 +101,59 @@ def test_get_settings_returns_a_real_cached_singleton():
     first = get_settings()
     second = get_settings()
     assert first is second
+
+
+# --- __repr__ secret redaction (QUORUM_PRODUCTION_READINESS_AUDIT_PLAN.md
+# §8's own disclosed, real, pre-existing latent risk, closed here) ---
+
+
+def test_repr_redacts_every_real_secret_shaped_field(monkeypatch):
+    _clear_real_env_vars(monkeypatch)
+    monkeypatch.setenv("GEMINI_API_KEY", "a-real-gemini-key-that-must-never-appear-in-a-repr")
+    monkeypatch.setenv("JWT_SIGNING_KEY", "a-real-signing-key-that-must-never-appear-in-a-repr")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "a-real-oauth-secret-that-must-never-appear-in-a-repr")
+    monkeypatch.setenv("UPSTASH_REDIS_REST_TOKEN", "a-real-token-that-must-never-appear-in-a-repr")
+    monkeypatch.setenv("FIREBASE_SERVICE_ACCOUNT_JSON", '{"private_key": "a-real-rsa-key-that-must-never-appear-in-a-repr"}')
+
+    settings = Settings(_env_file=None)
+    rendered = repr(settings)
+
+    assert "a-real-gemini-key-that-must-never-appear-in-a-repr" not in rendered
+    assert "a-real-signing-key-that-must-never-appear-in-a-repr" not in rendered
+    assert "a-real-oauth-secret-that-must-never-appear-in-a-repr" not in rendered
+    assert "a-real-token-that-must-never-appear-in-a-repr" not in rendered
+    assert "a-real-rsa-key-that-must-never-appear-in-a-repr" not in rendered
+    assert rendered.count("***REDACTED***") == 5
+
+
+def test_str_matches_repr_redaction_too(monkeypatch):
+    _clear_real_env_vars(monkeypatch)
+    monkeypatch.setenv("GEMINI_API_KEY", "a-real-gemini-key-that-must-never-appear-in-a-repr")
+    settings = Settings(_env_file=None)
+    assert "a-real-gemini-key-that-must-never-appear-in-a-repr" not in str(settings)
+
+
+def test_repr_leaves_genuinely_non_secret_identifiers_visible(monkeypatch):
+    # A real, deliberate choice: redacting every field would make this
+    # repr useless for real debugging without closing any real exposure
+    # -- a project ref or a client ID is not itself a secret.
+    _clear_real_env_vars(monkeypatch)
+    monkeypatch.setenv("SUPABASE_URL", "postgresql://a-real-visible-project-ref")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "a-real-visible-client-id.apps.googleusercontent.com")
+    monkeypatch.setenv("FIREBASE_PROJECT_ID", "a-real-visible-firebase-project-id")
+
+    rendered = repr(Settings(_env_file=None))
+
+    assert "a-real-visible-project-ref" in rendered
+    assert "a-real-visible-client-id.apps.googleusercontent.com" in rendered
+    assert "a-real-visible-firebase-project-id" in rendered
+
+
+def test_repr_redacts_a_real_default_insecure_jwt_signing_key_too(monkeypatch):
+    # Even the real, disclosed, public default placeholder is redacted
+    # -- this repr's own redaction is name-based, not value-based, and
+    # should never need to distinguish "a real secret" from "a known
+    # public placeholder that happens to live in the same field."
+    _clear_real_env_vars(monkeypatch)
+    settings = Settings(_env_file=None)
+    assert "change-me-in-real-deployment" not in repr(settings)

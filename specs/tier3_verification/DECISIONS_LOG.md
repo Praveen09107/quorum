@@ -4321,4 +4321,32 @@ Verified again after all fixes: YAML re-validated with a real parser; every `dep
 
 ---
 
-*Next entry: DEC-178*
+## DEC-178: the production readiness audit plan -- a real, disclosed correction to this log's own numbering, found while starting the next real entry
+
+**STANDARD tier.** Docs only, no code.
+
+**A real, disclosed correction, found and fixed rather than quietly carried forward:** `specs/tier3_verification/QUORUM_PRODUCTION_READINESS_AUDIT_PLAN.md` was written and merged (PR #89, plus a standard-tier review-fix round, PR still #89) referring to itself as "DEC-178" in its own commit messages and PR title -- but no actual `## DEC-178:` entry was ever added to this log, an omission only noticed when the next real session went to claim the number and found this file's own "Next entry" pointer still honestly, correctly said `178`, contradicting the already-merged commit messages. This entry is that missing record, written after the fact rather than silently left as a permanent gap between what the commit history implies and what this log actually contains.
+
+**What that document is, for the real record:** a new, real, checklist-style audit instrument distinct from this log (which records *why*) and `STATUS_INDEX.md` (which tracks *current state*) -- built at Preethish's own explicit request for a "production grade, rigorous plan to check what's done perfectly and still what's left," on the explicit premise that this log's own entries are the thing to be independently re-checked, never trusted as ground truth on their own. Covers the Gate/Router/Stakes core, all 5 Quick-capture domains, all 6 autonomous `pg_cron` jobs, the negotiation subsystem, every supporting feature module, security/secrets/account lifecycle, every mobile screen, and infra/CI-CD, each with a concrete, re-runnable command rather than a restated claim -- closing with a precise, non-overlapping list of the 11 things genuinely still open (each naming its exact blocker) and a risk register naming three real, previously-unframed risks (the shared Gemini quota as a real production capacity ceiling, `llamadart` never once tested on a real device, and Postgres RLS status never checked on any table).
+
+**A real, fitting first test of the document's own stated premise, already recorded in its own text:** its first fresh-context review caught two real inaccuracies in its own first draft -- an on-device test count restated as 40 when it's genuinely 39, and a secrets inventory that undercounted plain Cloud Run env vars at 4 when there are genuinely 8, omitting two fields (`SUPABASE_SERVICE_KEY`, `LANGFUSE_PUBLIC_KEY`) the document's own cited rotation checklist separately flags as urgent. Both fixed in the same PR, before merge -- not a coincidence the document's own §0 anticipates exactly this failure mode, but a real, live instance of it happening to the document itself on its very first pass.
+
+**Affects:** `specs/tier3_verification/QUORUM_PRODUCTION_READINESS_AUDIT_PLAN.md` (already merged, PR #89), this log (the missing entry, added here).
+
+---
+
+## DEC-179: `Settings.__repr__` secret redaction -- a real, disclosed latent risk closed during the first real production readiness audit run
+
+**STANDARD tier** -- a defensive hardening on existing credential handling, not a new secret type or a new external-action path (Rule 6's own CRITICAL triggers don't apply the way they did for `DEC-176`'s genuinely new `FIREBASE_SERVICE_ACCOUNT_JSON` handling).
+
+**What this closes:** `DEC-176`'s own CRITICAL-tier secrets-handling review found, disclosed, and explicitly deferred a real, pre-existing latent risk -- `Settings` (`core/config.py`) had no custom `__repr__`/`__str__`, so a real, hypothetical future `logger.info(f"{settings}")` would print every real secret this class holds in plain text, `firebase_service_account_json`'s entire real RSA private key included. `QUORUM_PRODUCTION_READINESS_AUDIT_PLAN.md` §8 named this as "a good candidate to just fix on the spot rather than re-log a third time" -- the first real run of that audit plan did exactly that.
+
+**Real, deliberate design choice: name-based redaction, not a per-field allowlist.** `__repr__` redacts any field whose real name contains `"key"`/`"secret"`/`"token"`/`"password"`/`"json"` (case-insensitive) rather than enumerating the current 16 credential-shaped fields one by one -- a future session adding a new credential field (the exact pattern this project has followed every time a new provider was integrated, most recently `firebase_project_id`/`firebase_service_account_json` itself) is redacted by default, with nothing new to remember to update. Genuinely non-secret identifiers (`supabase_url`, `google_oauth_client_id`, `firebase_project_id`) are deliberately left visible, confirmed directly by a dedicated test -- redacting them would make this `repr` useless for real debugging without closing any real exposure.
+
+**Verified live:** `ruff check backend` clean. 5 new tests in `test_core_config.py` (13 total in that file, all passing): every secret-shaped field genuinely absent from a real `repr()`/`str()` call even when set to a real, distinctive value; the real, default, publicly-known-insecure JWT placeholder is redacted too (name-based, not value-based, deliberately); genuinely non-secret fields stay visible.
+
+**Affects:** `backend/src/quorum_backend/core/config.py`, `backend/tests/test_core_config.py`, this log.
+
+---
+
+*Next entry: DEC-180*
