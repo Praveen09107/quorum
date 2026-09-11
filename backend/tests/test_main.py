@@ -741,11 +741,29 @@ async def test_quick_capture_logs_a_real_fallback_line_when_the_mobile_client_re
     monkeypatched to a cheap stub that raises immediately -- this test's
     own point is proving the log line fires, not re-proving a live
     Gemini round trip already covered elsewhere, so it stays hermetic
-    and fast rather than needing a real network call."""
+    and fast rather than needing a real network call.
+
+    RESOLVED, a real, live CI failure found the first time this test
+    ever ran outside this developer's own local environment (PR #84's
+    own merge-triggered `main` CI run): this test never forced a real,
+    non-`None` `gemini_api_key`, implicitly relying on this developer's
+    own local `.env` happening to have one configured. CI's own real
+    environment has no `GEMINI_API_KEY` secret at all (confirmed
+    directly from that run's own env dump) -- `settings.gemini_api_key
+    is None` was genuinely `True` there, so the route's own earlier
+    `503` short-circuit fired before ever reaching the monkeypatched
+    extraction call, and this test asserted the wrong status code
+    entirely. Fixed by explicitly forcing a real, non-`None` dummy key
+    via the same `model_copy()` pattern this file's own "provider not
+    configured" test already uses, rather than trusting ambient
+    environment state."""
     from quorum_backend import main as main_module
     import logging as logging_module
 
     from quorum_backend.features.quick_capture import QuickCaptureError
+
+    fake_settings = get_settings().model_copy(update={"gemini_api_key": "ci-only-dummy-key-never-used-for-a-real-call"})
+    monkeypatch.setattr(main_module, "get_settings", lambda: fake_settings)
 
     async def _stub_extraction_call(_text: str):
         raise QuickCaptureError("stub extraction failure -- this test never needs a real Gemini call")
