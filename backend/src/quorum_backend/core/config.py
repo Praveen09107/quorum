@@ -132,6 +132,38 @@ class Settings(BaseSettings):
         chance to loudly refuse or warn."""
         return self.jwt_signing_key == _INSECURE_DEFAULT_JWT_SIGNING_KEY
 
+    # RESOLVED, `QUORUM_PRODUCTION_READINESS_AUDIT_PLAN.md` §8's own
+    # disclosed, real, pre-existing latent risk, found by `DEC-176`'s
+    # CRITICAL-tier secrets-handling review and closed here rather than
+    # re-logged a third time: this class previously had no custom
+    # `__repr__`/`__str__`, so a real, hypothetical future
+    # `logger.info(f"{settings}")` (none exists anywhere in this backend
+    # today, confirmed by direct search before writing this fix) would
+    # have printed every real secret this class holds in plain text --
+    # `gemini_api_key`, `firebase_service_account_json` (an entire real
+    # RSA private key), all of it. Redacts any field whose real name
+    # contains "key", "secret", "token", "password", or "json" --
+    # deliberately broad rather than an exhaustive per-field allowlist,
+    # so a FUTURE credential field added to this class (the exact
+    # pattern `firebase_project_id`/`firebase_service_account_json`
+    # followed this session) is redacted by default without anyone
+    # having to remember to update this method too. Genuinely
+    # non-secret identifiers (`supabase_url`, `google_oauth_client_id`,
+    # `firebase_project_id`) are deliberately left visible -- redacting
+    # them would make this repr useless for real debugging without
+    # closing any real exposure.
+    def __repr__(self) -> str:
+        redacted_substrings = ("key", "secret", "token", "password", "json")
+        parts = []
+        for name in self.__class__.model_fields:
+            value = getattr(self, name)
+            if value is not None and any(marker in name.lower() for marker in redacted_substrings):
+                value = "***REDACTED***"
+            parts.append(f"{name}={value!r}")
+        return f"Settings({', '.join(parts)})"
+
+    __str__ = __repr__
+
 
 @lru_cache
 def get_settings() -> Settings:
