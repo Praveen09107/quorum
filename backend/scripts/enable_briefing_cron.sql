@@ -15,12 +15,22 @@
 -- (pg_cron's own real, UTC-based schedule) is 7:00 AM real IST
 -- (UTC+5:30) -- this project's own real, confirmed developer/user
 -- timezone (see `DECISIONS_LOG.md`'s own real, disclosed IST
--- references elsewhere). A real, deliberate, minor offset from the
--- exact hour mark, matching this project's own established "never
--- collide with another job's own mark" discipline (`DEC-134`'s real,
--- found three-way collision bug) -- `1:30` avoids the round `1:00`/
--- `2:00` marks other real, hourly-adjacent infra jobs might one day
--- use.
+-- references elsewhere).
+--
+-- REAL, DISCLOSED CORRECTION, found by this session's own standard-
+-- tier review before merge: an earlier version of this comment
+-- claimed `1:30` was chosen to avoid colliding with another real job's
+-- own mark, per `DEC-134`'s own "never collide" discipline. That's
+-- inaccurate -- `deadline-watch`/`spend-alert` already run `*/30 * * *
+-- *`, so they ALREADY fire at every real `:30` mark, `1:30` included;
+-- `briefing` lands squarely on that existing three-way mark, not
+-- beside it. Left this way deliberately, not fixed by re-picking a
+-- time: `DEC-134`'s own fix for that exact collision class
+-- (`timeout_milliseconds := 30000` on all three jobs, confirmed live
+-- via a direct concurrency stress test) already handles this, and a
+-- once-a-day fourth arrival at an already-handled mark adds no new
+-- real risk Cloud Run's own `--max-instances=2` autoscaling doesn't
+-- already absorb.
 --
 -- REAL, DISCLOSED, HONEST CURRENT EFFECT: with no real Firebase
 -- project configured yet (`FIREBASE_PROJECT_ID`/`FIREBASE_SERVICE_
