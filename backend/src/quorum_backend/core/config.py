@@ -67,6 +67,19 @@ class Settings(BaseSettings):
     groq_api_key: str | None = Field(default=None, alias="GROQ_API_KEY")
     tavily_api_key: str | None = Field(default=None, alias="TAVILY_API_KEY")
 
+    # Real push notifications (`QUORUM_FINAL_COMPLETION_PLAN.md` Session
+    # 9, `DEC-176`). Both `None` by default -- the honest, disclosed
+    # value for "no real Firebase project exists in this environment
+    # yet," the same real, deliberate non-fabrication this file's own
+    # header comment already establishes for every other infrastructure
+    # field. `firebase_service_account_json` holds the REAL, raw JSON
+    # text of a real Firebase service account key (never a parsed
+    # dict here -- `features/fcm.py` parses it lazily, at the one real
+    # call site that actually needs its fields, matching this project's
+    # own "don't do work nothing asked for yet" discipline).
+    firebase_project_id: str | None = Field(default=None, alias="FIREBASE_PROJECT_ID")
+    firebase_service_account_json: str | None = Field(default=None, alias="FIREBASE_SERVICE_ACCOUNT_JSON")
+
     # Auth. Defaults to the same real, insecure placeholder
     # backend/.env.example ships — deliberately never breaks a fresh
     # clone or CI run that hasn't set a real secret, but see

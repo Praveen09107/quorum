@@ -789,6 +789,46 @@ async def test_quick_capture_logs_a_real_fallback_line_when_the_mobile_client_re
     assert "estimated_hours missing" in caplog.text
 
 
+# --- POST /device_token (QUORUM_FINAL_COMPLETION_PLAN.md Session 9, DEC-176) ---
+
+
+def test_device_token_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.post("/device_token", json={"fcm_token": "a-real-fake-token"})
+    assert response.status_code == 401
+
+
+def test_device_token_rejects_a_blank_token_with_a_real_422():
+    with TestClient(app) as client:
+        response = client.post("/device_token", json={"fcm_token": ""}, headers=_auth_header())
+    assert response.status_code == 422
+
+
+async def test_device_token_registers_a_real_row_for_a_real_provisioned_user(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+
+    with TestClient(app) as client:
+        response = client.post("/device_token", json={"fcm_token": "a-real-fake-fcm-token"}, headers=headers)
+
+    assert response.status_code == 200
+    row = await pool.fetchrow("SELECT fcm_token FROM device_tokens WHERE user_id = $1", uuid.UUID(internal_user_id))
+    assert row is not None
+    assert row["fcm_token"] == "a-real-fake-fcm-token"
+
+
+async def test_device_token_a_second_real_registration_overwrites_the_first_never_duplicates(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+
+    with TestClient(app) as client:
+        client.post("/device_token", json={"fcm_token": "first-real-device-token"}, headers=headers)
+        response = client.post("/device_token", json={"fcm_token": "second-real-device-token"}, headers=headers)
+
+    assert response.status_code == 200
+    rows = await pool.fetch("SELECT fcm_token FROM device_tokens WHERE user_id = $1", uuid.UUID(internal_user_id))
+    assert len(rows) == 1
+    assert rows[0]["fcm_token"] == "second-real-device-token"
+
+
 # --- GET /predictive_risk (Phase 6, DEC-149) ---
 
 
@@ -2856,9 +2896,16 @@ def test_briefing_route_real_secret_and_matching_header_reaches_the_real_route_w
     py`, scoped to real, test-owned user_ids only."""
     from quorum_backend.features.briefing import BriefingResult
 
-    async def _fake_run_briefing(pool):
+    # REAL, DISCLOSED, `QUORUM_FINAL_COMPLETION_PLAN.md` SESSION 9
+    # (`DEC-176`): `_fake_run_briefing` now accepts (and ignores) the
+    # real `firebase_project_id`/`firebase_service_account_json` kwargs
+    # `main.py`'s own real route now passes through -- this test's own
+    # real point is the route's auth/response-mapping wiring, never a
+    # real assertion about what it passes to `run_briefing()` itself
+    # (that real wiring is covered directly in `test_briefing.py`).
+    async def _fake_run_briefing(pool, **_kwargs):
         return BriefingResult(
-            users_scanned=3, users_failed=0, users_with_pending_actions=1, users_with_active_negotiations=1,
+            users_scanned=3, users_failed=0, users_with_pending_actions=1, users_with_active_negotiations=1, users_notified=0,
         )
 
     monkeypatch.setattr("quorum_backend.main.run_briefing", _fake_run_briefing)
@@ -2873,6 +2920,7 @@ def test_briefing_route_real_secret_and_matching_header_reaches_the_real_route_w
             "users_failed": 0,
             "users_with_pending_actions": 1,
             "users_with_active_negotiations": 1,
+            "users_notified": 0,
         }
     finally:
         get_settings.cache_clear()

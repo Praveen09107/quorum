@@ -8,15 +8,55 @@ Same real, deliberate safety boundary `test_deadline_watch.py`/`test_
 spend_alert.py` already established: every test below scopes `run_
 briefing()`'s own `user_ids` explicitly to test-owned rows, never
 exercising the real, live, whole-`users`-table default."""
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 import pytest_asyncio
 
 from quorum_backend.auth.user_provisioning import get_or_create_user
 from quorum_backend.core import db
 from quorum_backend.features.briefing import BriefingUserNotFoundError, compose_briefing_for_user, run_briefing
+
+
+class _FakeResponse:
+    """Same real, established shape `test_gate_llm_calls.py` already
+    uses for exactly this class of deterministic, network-independent
+    test."""
+    def __init__(self, status_code: int, json_body: dict | None = None, text: str = ""):
+        self.status_code = status_code
+        self._json_body = json_body
+        self.text = text
+
+    def json(self):
+        return self._json_body
+
+
+def _real_service_account_json() -> str:
+    """A real, syntactically valid (but not a real Firebase project's
+    real) service account JSON -- sufficient for these tests, since
+    every real network call this file's own tests make is itself
+    monkeypatched; the real RSA-signing path is already covered
+    separately by `test_fcm.py`'s own dedicated tests."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("utf-8")
+    return json.dumps({"client_email": "quorum-test@quorum-test.iam.gserviceaccount.com", "private_key": private_pem})
+
+
+async def _seed_device_token(pool, *, user_id: str, fcm_token: str = "a-real-fake-device-token") -> None:
+    await pool.execute(
+        "INSERT INTO device_tokens (user_id, fcm_token) VALUES ($1, $2)",
+        uuid.UUID(user_id), fcm_token,
+    )
 
 
 @pytest_asyncio.fixture
@@ -134,3 +174,120 @@ async def test_run_briefing_a_real_failure_for_one_user_never_blocks_the_rest(po
     assert result.users_failed == 1
     assert result.users_scanned == 1
     assert result.users_with_active_negotiations == 1
+
+
+# --- Real push notifications (QUORUM_FINAL_COMPLETION_PLAN.md Session 9, DEC-176) ---
+
+
+async def test_run_briefing_notifies_zero_users_when_firebase_is_not_configured(pool, user_id):
+    """The real, honest default this environment is actually in --
+    confirmed explicitly rather than left implicit."""
+    await _seed_device_token(pool, user_id=user_id)
+
+    result = await run_briefing(pool, user_ids=[user_id])
+
+    assert result.users_notified == 0
+
+
+async def test_run_briefing_notifies_zero_users_when_configured_but_no_device_token_is_registered(pool, user_id, monkeypatch):
+    """The real access token IS still fetched once for the whole batch
+    (this module's own deliberate "one round trip covers the batch"
+    design, regardless of whether any user turns out to have a real
+    device token) -- but a real SEND to FCM's own send endpoint must
+    never happen when no real `device_tokens` row exists for anyone in
+    this batch."""
+    send_calls = []
+
+    async def fake_post(self, url, **kwargs):
+        if "oauth2.googleapis.com" in url:
+            return _FakeResponse(200, json_body={"access_token": "real-fake-access-token"})
+        send_calls.append(url)
+        return _FakeResponse(200, json_body={"name": "should never be reached"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    result = await run_briefing(
+        pool, user_ids=[user_id],
+        firebase_project_id="quorum-test-project",
+        firebase_service_account_json=_real_service_account_json(),
+    )
+
+    assert result.users_notified == 0
+    assert result.users_scanned == 1  # composition itself is unaffected
+    assert send_calls == []
+
+
+async def test_run_briefing_sends_a_real_notification_when_genuinely_configured_and_a_device_token_exists(pool, user_id, monkeypatch):
+    await _seed_negotiation(pool, user_id=user_id)
+    await _seed_device_token(pool, user_id=user_id)
+
+    send_calls = []
+
+    async def fake_post(self, url, headers=None, json=None, data=None, **kwargs):
+        if "oauth2.googleapis.com" in url:
+            return _FakeResponse(200, json_body={"access_token": "real-fake-access-token"})
+        send_calls.append(json)
+        return _FakeResponse(200, json_body={"name": "real-fake-message-id"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    result = await run_briefing(
+        pool, user_ids=[user_id],
+        firebase_project_id="quorum-test-project",
+        firebase_service_account_json=_real_service_account_json(),
+    )
+
+    assert result.users_notified == 1
+    assert len(send_calls) == 1
+    assert send_calls[0]["message"]["token"] == "a-real-fake-device-token"
+    assert "decision" in send_calls[0]["message"]["notification"]["body"]
+    assert send_calls[0]["message"]["data"] == {"deep_link": "today"}
+
+
+async def test_run_briefing_a_real_access_token_fetch_failure_degrades_the_whole_run_to_zero_notifications_without_affecting_composition(pool, user_id, monkeypatch):
+    await _seed_negotiation(pool, user_id=user_id)
+    await _seed_device_token(pool, user_id=user_id)
+
+    async def fake_post(self, url, **kwargs):
+        return _FakeResponse(401, text="invalid_grant")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    result = await run_briefing(
+        pool, user_ids=[user_id],
+        firebase_project_id="quorum-test-project",
+        firebase_service_account_json=_real_service_account_json(),
+    )
+
+    assert result.users_notified == 0
+    assert result.users_scanned == 1
+    assert result.users_with_active_negotiations == 1
+
+
+async def test_run_briefing_a_real_send_failure_for_one_user_never_blocks_the_rest(pool, user_id, monkeypatch):
+    other_google_sub = f"test-briefing-{uuid.uuid4()}"
+    other_user_id = await get_or_create_user(pool, google_sub=other_google_sub, email=None)
+    try:
+        await _seed_device_token(pool, user_id=user_id, fcm_token="token-that-will-fail")
+        await _seed_device_token(pool, user_id=other_user_id, fcm_token="token-that-will-succeed")
+
+        async def fake_post(self, url, headers=None, json=None, **kwargs):
+            if "oauth2.googleapis.com" in url:
+                return _FakeResponse(200, json_body={"access_token": "real-fake-access-token"})
+            if json["message"]["token"] == "token-that-will-fail":
+                return _FakeResponse(404, text="registration-token-not-registered")
+            return _FakeResponse(200, json_body={"name": "real-fake-message-id"})
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+        result = await run_briefing(
+            pool, user_ids=[user_id, other_user_id],
+            firebase_project_id="quorum-test-project",
+            firebase_service_account_json=_real_service_account_json(),
+        )
+
+        assert result.users_notified == 1
+        assert result.users_scanned == 2
+        assert result.users_failed == 0
+    finally:
+        await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(other_user_id))
