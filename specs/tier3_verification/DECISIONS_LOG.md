@@ -4305,4 +4305,18 @@ Verified again after all fixes: YAML re-validated with a real parser; every `dep
 
 ---
 
-*Next entry: DEC-177*
+## DEC-177: real `briefing` scheduling -- the sixth real, live, autonomous `pg_cron` job
+
+**STANDARD tier.** Infra-only, no application code change -- one new real, ready-to-run SQL script, one real, live `cron.schedule()` call against the already-enabled (since `DEC-134`) real `pg_cron`/`pg_net` extensions.
+
+**What this closes:** `DEC-176`'s own "genuinely still open" item -- `POST /internal/briefing` was real and tested but not yet scheduled on any real interval, the last of Session 9's own disclosed gaps that didn't need a real Firebase project or a real device to close. `backend/scripts/enable_briefing_cron.sql` (new, mirrors `enable_spend_alert_cron.sql`'s established shape exactly) schedules it for real, once a real day (`30 1 * * *` UTC = 7:00 AM real IST, this project's own confirmed developer/user timezone, a deliberate real-world "morning briefing" cadence, genuinely different from every other real job's 5/30-minute interval) -- `briefing` is a once-daily summary by its own spec, never a frequent poll.
+
+**Real, live, direct proof the schedule is correct and the underlying pipeline still works end to end against real, current production data**, not just a script that looks right: `cron.schedule()` run live against the real Supabase database (jobid `9`, confirmed via a direct `SELECT * FROM cron.job WHERE jobname = 'briefing'` -- `active = true`). A real, live, manual `POST /internal/briefing` call (the identical real request the schedule will make) against the real, deployed Cloud Run service returned real, current data: `{"users_scanned": 15, "users_failed": 0, "users_with_pending_actions": 3, "users_with_active_negotiations": 3, "users_notified": 0}` -- correctly, honestly zero notifications, since no real Firebase project is configured, exactly as `DEC-176`'s own design intends.
+
+**Genuinely still open, not silently claimed done:** the first real, genuinely UNATTENDED autonomous fire has not been directly observed yet -- the next real scheduled mark (`30 1 * * *` UTC) was still roughly 11 real hours away at the time this entry was written, matching this project's own established "mechanically proven correct, not yet witnessed firing on its own" disclosure (`DEC-141`'s own real precedent for a newly-scheduled job). The real, live manual invocation above proves the exact same code path the schedule will trigger, not a different one -- but a future session or checkpoint should still confirm a real, unattended `net._http_response` row appears after the schedule's own first natural fire, the same real verification standard every other one of this project's five prior scheduled jobs already met.
+
+**Affects:** `backend/scripts/enable_briefing_cron.sql` (new). Live infra only: Supabase `cron.job` row `jobid=9` (new, `jobname='briefing'`), no application code, no redeploy needed. This log.
+
+---
+
+*Next entry: DEC-178*
