@@ -163,6 +163,31 @@ void main() {
       final args = validCreate()..['start_iso'] = 'next tuesday at 3pm';
       expect(checkOnDeviceExtraction(args).passed, isFalse);
     });
+
+    test('fails a title over the real max length', () {
+      final args = validCreate()..['title'] = 'x' * 501;
+      expect(checkOnDeviceExtraction(args).passed, isFalse);
+    });
+
+    test('fails an event exceeding the real max duration', () {
+      final args = validCreate()..['end_iso'] = '2099-01-02T10:31:00+00:00'; // > 24h
+      expect(checkOnDeviceExtraction(args).passed, isFalse);
+    });
+
+    test('fails an invitee_email that does not look like a real email', () {
+      final args = validCreate()..['invitee_email'] = 'jane';
+      expect(checkOnDeviceExtraction(args).passed, isFalse);
+    });
+
+    test('passes with a real null invitee_email', () {
+      final args = validCreate()..['invitee_email'] = null;
+      expect(checkOnDeviceExtraction(args).passed, isTrue);
+    });
+
+    test('fails an unrecognized operation -- calendar only ever supports create', () {
+      final args = validCreate()..['operation'] = 'update';
+      expect(checkOnDeviceExtraction(args).passed, isFalse);
+    });
   });
 
   group('checkOnDeviceExtraction -- career', () {
@@ -173,6 +198,11 @@ void main() {
 
     test('fails a missing new_status', () {
       final args = {'domain': 'career', 'operation': 'update', 'reference_description': 'Notion', 'new_status': null};
+      expect(checkOnDeviceExtraction(args).passed, isFalse);
+    });
+
+    test('fails an unrecognized operation -- career only ever supports update', () {
+      final args = {'domain': 'career', 'operation': 'create', 'reference_description': 'Notion', 'new_status': 'rejected'};
       expect(checkOnDeviceExtraction(args).passed, isFalse);
     });
   });
@@ -218,6 +248,17 @@ void main() {
         'recipient_description': 'Sarah',
         'recipient_email': null,
         'user_intent': null,
+      };
+      expect(checkOnDeviceExtraction(args).passed, isFalse);
+    });
+
+    test('fails an unrecognized operation -- email only ever supports create', () {
+      final args = {
+        'domain': 'email',
+        'operation': 'update',
+        'recipient_description': 'Sarah',
+        'recipient_email': null,
+        'user_intent': 'tell Sarah the proposal looks good',
       };
       expect(checkOnDeviceExtraction(args).passed, isFalse);
     });

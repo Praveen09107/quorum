@@ -17,6 +17,24 @@
 // (`_maxEstimatedHours`, `_maxFinanceAmount`, `_maxTaskTitleLength`) are
 // copied verbatim from that module's own real constants.
 //
+// RESOLVED, a real, disclosed standard-tier review finding (PR #84):
+// this file's own calendar checks were initially missing the real
+// `_MAX_EVENT_DURATION_HOURS`/`_MAX_CALENDAR_TITLE_LENGTH`/invitee-email-
+// format checks `validate_and_build_calendar_proposal()` already
+// enforces, and no domain here checked `operation` against the real,
+// closed set `capture_action_from_extracted_args()`'s own dispatch
+// actually supports (calendar/email always "create", career always
+// "update") -- found by direct comparison against that live dispatch
+// function, not assumed correct from this file's own prior comment.
+// Fixed: all four gaps closed below. One real, deliberate, remaining
+// asymmetry, not a gap: `update`/`delete` reference-based operations
+// (tasks/finance) only check that `reference_description` is a real,
+// non-empty string, never attempting to replicate the backend's own
+// `_resolve_single_reference()` matching -- that function needs this
+// exact user's own live database rows, which this client-side bar
+// structurally cannot see before submitting, so a real match/no-match
+// decision is correctly left to the real backend either way.
+//
 // A REAL, DELIBERATE SAFETY FACT, stated plainly rather than assumed:
 // passing this check is a real, honest PREDICTION that the real backend
 // validator will also accept the same args -- it is never itself a
@@ -42,6 +60,10 @@ const double _maxFinanceAmount = 99999999.99;
 const int _maxTaskTitleLength = 500;
 const int _maxFinanceCategoryLength = 200;
 const int _maxFinancePayeeLength = 200;
+
+/// Verbatim from `quick_capture.py`'s own real calendar constants.
+const int _maxCalendarTitleLength = 500;
+const double _maxEventDurationHours = 24.0;
 
 /// Real result of a real structural check -- [passed] decides whether the
 /// caller should trust the on-device extraction; [reason] is always a
@@ -177,9 +199,18 @@ OnDeviceCorrectnessResult _checkFinance(Map<String, dynamic> args) {
 }
 
 OnDeviceCorrectnessResult _checkCalendar(Map<String, dynamic> args) {
+  // Mirrors the real dispatch: `domain == "calendar"` is only ever
+  // supported with `operation == "create"` -- editing or cancelling an
+  // existing calendar event is not supported.
+  if (args['operation'] != 'create') {
+    return OnDeviceCorrectnessResult.fail('unrecognized calendar operation: ${args['operation']}');
+  }
   final title = args['title'];
   if (title is! String || title.trim().isEmpty) {
     return const OnDeviceCorrectnessResult.fail('title is missing or empty');
+  }
+  if (title.length > _maxCalendarTitleLength) {
+    return const OnDeviceCorrectnessResult.fail('title exceeds $_maxCalendarTitleLength characters');
   }
 
   final startIso = args['start_iso'];
@@ -215,8 +246,29 @@ OnDeviceCorrectnessResult _checkCalendar(Map<String, dynamic> args) {
   if (!start.isAfter(DateTime.now())) {
     return OnDeviceCorrectnessResult.fail('start ($start) is not genuinely in the future');
   }
+  if (end.difference(start).inSeconds > _maxEventDurationHours * 3600) {
+    return OnDeviceCorrectnessResult.fail('event spans ${end.difference(start)}, exceeding $_maxEventDurationHours hours');
+  }
+
+  final inviteeEmail = args['invitee_email'];
+  if (inviteeEmail != null) {
+    if (inviteeEmail is! String || !_looksLikeARealEmail(inviteeEmail)) {
+      return OnDeviceCorrectnessResult.fail('invitee_email is present but not a real, plausible email address: $inviteeEmail');
+    }
+  }
 
   return const OnDeviceCorrectnessResult.pass();
+}
+
+/// A real, deliberately minimal port of `_looks_like_a_real_email()`
+/// (`quick_capture.py`) -- same real shape requirement (`local@domain.tld`),
+/// same reasoning for staying simple rather than a full RFC 5322 regex.
+bool _looksLikeARealEmail(String value) {
+  if (value.isEmpty || value.contains(RegExp(r'\s'))) return false;
+  final atIndex = value.lastIndexOf('@');
+  if (atIndex <= 0 || atIndex == value.length - 1) return false;
+  final domain = value.substring(atIndex + 1);
+  return domain.contains('.') && !domain.startsWith('.') && !domain.endsWith('.');
 }
 
 bool _hasExplicitOffset(String iso) {
@@ -228,12 +280,24 @@ bool _hasExplicitOffset(String iso) {
 }
 
 OnDeviceCorrectnessResult _checkCareer(Map<String, dynamic> args) {
+  // Mirrors `capture_action_from_extracted_args()`'s own real dispatch:
+  // `domain == "career"` is only ever supported with `operation ==
+  // "update"` -- Quorum never creates a new application from free text.
+  if (args['operation'] != 'update') {
+    return OnDeviceCorrectnessResult.fail('unrecognized career operation: ${args['operation']}');
+  }
   final reference = _checkNonEmptyString(args['reference_description'], 'reference_description');
   if (!reference.passed) return reference;
   return _checkNonEmptyString(args['new_status'], 'new_status');
 }
 
 OnDeviceCorrectnessResult _checkEmail(Map<String, dynamic> args) {
+  // Mirrors the real dispatch: `domain == "email"` is only ever
+  // supported with `operation == "create"` -- editing or cancelling an
+  // already-sent email is not supported.
+  if (args['operation'] != 'create') {
+    return OnDeviceCorrectnessResult.fail('unrecognized email operation: ${args['operation']}');
+  }
   final recipientDescription = args['recipient_description'];
   final recipientEmail = args['recipient_email'];
   final hasRecipient = (recipientDescription is String && recipientDescription.trim().isNotEmpty) ||
