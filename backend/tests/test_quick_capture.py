@@ -19,6 +19,7 @@ from quorum_backend.features.quick_capture import (
     QuickCaptureError,
     _fetch_known_recipients,
     _fetch_open_task_candidates,
+    _normalize_application_status,
     _resolve_single_reference,
     build_extraction_prompt,
     capture_action_from_text,
@@ -1146,6 +1147,35 @@ async def test_capture_action_from_text_updates_a_real_applications_status(pool,
     assert row["status"] == "rejected"
 
 
+async def test_capture_action_from_text_normalizes_a_real_free_text_status_to_this_projects_own_canonical_snake_case_form(pool, user_id):
+    # REAL, DISCLOSED FIX (`DEC-183`), found live during a real on-device
+    # confirmation pass: a real Gemini extraction returning "interview
+    # scheduled" (a space, not this schema's own established
+    # `interview_scheduled` snake_case convention) previously stored
+    # verbatim -- confirmed live to silently fragment one real status
+    # into two identically-displayed, duplicate-looking Career Pipeline
+    # groups (`career_pipeline_logic.dart::groupByStatus` groups by
+    # EXACT raw string equality). This proves the real fix end-to-end:
+    # a free-text phrase with mixed case and a space collapses onto the
+    # exact same stored string this schema's other real rows already use.
+    await _seed_application(pool, user_id=user_id, company="Stripe")
+    extraction = _fake_extraction(
+        {"domain": "career", "operation": "update", "reference_description": "Stripe", "new_status": "Interview Scheduled"}
+    )
+    judge_call, judge_calls = _fake_approving_judge_call()
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await capture_action_from_text(
+                conn, user_id=user_id, free_text="mark the Stripe application as interview scheduled",
+                extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=judge_call,
+            )
+
+    assert result.new_status == "interview_scheduled"
+    row = await pool.fetchrow("SELECT status FROM applications WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["status"] == "interview_scheduled"
+
+
 async def test_capture_action_from_text_raises_quick_capture_error_when_no_real_application_matches_the_reference(pool, user_id):
     await _seed_application(pool, user_id=user_id, company="Notion")
     extraction = _fake_extraction({"domain": "career", "operation": "update", "reference_description": "Stripe", "new_status": "rejected"})
@@ -1173,6 +1203,25 @@ async def test_capture_action_from_text_raises_quick_capture_error_on_an_empty_n
                     conn, user_id=user_id, free_text="anything",
                     extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
                 )
+
+
+# --- Real, pure-logic tests: `_normalize_application_status` (`DEC-183`) ---
+
+
+def test_normalize_application_status_replaces_spaces_and_lowercases():
+    assert _normalize_application_status("Interview Scheduled") == "interview_scheduled"
+
+
+def test_normalize_application_status_collapses_hyphens_and_repeated_whitespace_too():
+    assert _normalize_application_status("Phone -  Screen") == "phone_screen"
+
+
+def test_normalize_application_status_leaves_an_already_canonical_value_unchanged():
+    assert _normalize_application_status("interview_scheduled") == "interview_scheduled"
+
+
+def test_normalize_application_status_strips_leading_and_trailing_whitespace():
+    assert _normalize_application_status("  rejected  ") == "rejected"
 
 
 # --- Prompt construction, pure logic ---

@@ -399,6 +399,7 @@ import asyncio
 import email.utils
 import logging
 import math
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
@@ -1564,6 +1565,41 @@ async def resolve_and_build_expense_deletion_proposal(conn: asyncpg.Connection, 
 _MAX_APPLICATION_STATUS_LENGTH = 100
 
 
+def _normalize_application_status(raw: str) -> str:
+    """REAL, DISCLOSED FIX (`DEC-183`), found live during `QUORUM_
+    PRODUCTION_READINESS_AUDIT_PLAN.md`'s own on-device confirmation
+    pass, not a hypothetical: a real quick-capture update ("Mark the
+    Stripe application as interview scheduled") had a real Gemini
+    extraction return `new_status = "interview scheduled"` (a space) --
+    a real, genuinely different string from this project's own
+    established canonical snake_case convention (`interview_scheduled`,
+    the value the real seed dataset and `career_pipeline_logic.dart`'s
+    own `knownStatusOrder` both use). Stored verbatim, that produced a
+    real, live, confirmed bug: `career_pipeline_logic.dart::groupByStatus`
+    groups by EXACT raw status-string equality, so the real Career
+    Pipeline screen silently split one real status into two identically-
+    displayed, duplicate-looking "Interview scheduled" groups of one
+    application each, confirmed directly against the real, live
+    Supabase row (`Notion` stored `'interview_scheduled'`, `Stripe`
+    stored `'interview scheduled'`) rather than assumed from the
+    screenshot alone.
+
+    `applications.status` remains genuinely, deliberately open-
+    vocabulary (`CLAUDE.md`'s own architecture fact -- no database
+    `CHECK` constraint, parsed defensively everywhere) -- this function
+    does NOT reject or invent a status, it only makes different real
+    phrasings of the SAME real status collapse onto one consistent
+    stored form: lowercased, with any run of whitespace or hyphens
+    collapsed to a single underscore, matching the exact convention
+    every existing real status value in this schema already uses. A
+    genuinely novel status the model extracts (e.g. "phone screen") is
+    still preserved, just canonicalized (`phone_screen`), never dropped
+    or rewritten into a hardcoded enum. A pure, deterministic code
+    transform, not a second LLM call -- `CLAUDE.md`'s own drift pattern
+    #1 (never reach for a model to do something checkable in code)."""
+    return re.sub(r"[\s-]+", "_", raw.strip().lower())
+
+
 async def resolve_and_build_application_status_proposal(conn: asyncpg.Connection, *, user_id: str, args: dict) -> ActionProposal:
     new_status = args.get("new_status")
     if not isinstance(new_status, str) or not new_status.strip():
@@ -1578,7 +1614,9 @@ async def resolve_and_build_application_status_proposal(conn: asyncpg.Connection
     )
     if row is None:
         raise DownstreamTranslationError(f"Resolved application {existing_application_id!r} no longer exists.")
-    return build_status_update_proposal(existing_application_id, new_status.strip(), company=row["company"])
+    return build_status_update_proposal(
+        existing_application_id, _normalize_application_status(new_status), company=row["company"]
+    )
 
 
 # A real, deliberate bound, matching `_MAX_EXPENSE_REFERENCE_CANDIDATES`'s
