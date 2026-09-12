@@ -21,6 +21,7 @@ to set a real secret" failure mode.
 """
 import logging
 import secrets
+import sys
 import uuid
 from urllib.parse import urlencode
 from contextlib import asynccontextmanager
@@ -108,6 +109,52 @@ from quorum_backend.security.account_deletion import delete_account
 from quorum_backend.security.supabase_deletion_store import SupabaseDeletionStore
 
 logger = logging.getLogger("quorum_backend")
+
+# REAL, DISCLOSED FIX (`DEC-184`), found live: EVERY module in this
+# backend shares this exact logger name (confirmed directly -- 14 real
+# `logging.getLogger("quorum_backend")` call sites, `main.py` included),
+# but until now nothing anywhere ever attached a handler or set a level
+# on it. Python's own default behavior for an unconfigured logger with
+# no handler anywhere up its chain (`logging.lastResort`) only emits
+# WARNING and above to stderr -- every real `logger.warning()`/`.error()`
+# call in this codebase has therefore always worked by accident, while
+# every real `logger.info()` call (confirmed live: `features/
+# interview_detection.py` and this module's own Session 8 "on-device
+# fallback" observability line, `DEC-175`'s own stated "every fallback
+# is logged, not silent" guarantee) has been silently going nowhere in
+# every real deployment since it was written -- confirmed live during a
+# real on-device Quick-capture confirmation pass, when the fallback line
+# genuinely should have appeared in Cloud Logging for two real, live
+# fallback requests and did not.
+#
+# Fixed narrowly, not with a blanket `logging.basicConfig()` -- a real,
+# deliberate choice matching `core/embeddings.py`'s own already-disclosed
+# caution (its own docstring on `embed_text()`): a blanket root-level
+# `basicConfig(level=INFO)` would also start emitting `httpx`'s own
+# request-logging at INFO across this entire backend's many real `httpx`
+# call sites, a real, live risk that module's own comment already named
+# explicitly. Configuring a handler on this one, exact, shared
+# `"quorum_backend"` logger by name -- never the root logger, never
+# `httpx`'s own -- gets every real application log line working without
+# touching any third-party logger's own behavior at all. Deliberately
+# left `propagate` at its real default (`True`), not set to `False` --
+# a real, live test run caught this exact tradeoff directly: `pytest`'s
+# own `caplog.at_level(..., logger="quorum_backend")` fixture (used by
+# `test_main.py`'s real, existing tests for both this logger's real
+# warning and this session's own new fallback-observability line)
+# installs its actual capturing handler at the ROOT logger, reached only
+# via propagation -- `propagate=False` silently broke both of those
+# already-passing tests (confirmed live: `caplog.text` came back empty
+# even though this handler's own stdout output, captured in the same
+# test run, proved the real fix itself works). A real, live duplicate
+# log line IF the root logger is ever separately configured later is a
+# smaller, cosmetic, hypothetical cost against a concrete, immediate
+# test breakage today -- not a close call.
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s: %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
 
 
 @asynccontextmanager
