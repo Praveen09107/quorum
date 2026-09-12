@@ -21,6 +21,7 @@ to set a real secret" failure mode.
 """
 import logging
 import secrets
+import sys
 import uuid
 from urllib.parse import urlencode
 from contextlib import asynccontextmanager
@@ -108,6 +109,79 @@ from quorum_backend.security.account_deletion import delete_account
 from quorum_backend.security.supabase_deletion_store import SupabaseDeletionStore
 
 logger = logging.getLogger("quorum_backend")
+
+# REAL, DISCLOSED FIX (`DEC-184`), found live: EVERY module in this
+# backend shares this exact logger name (confirmed directly -- 14 real
+# `logging.getLogger("quorum_backend")` call sites, `main.py` included),
+# but until now nothing anywhere ever attached a handler or set a level
+# on it. Python's own default behavior for an unconfigured logger with
+# no handler anywhere up its chain (`logging.lastResort`) only emits
+# WARNING and above to stderr -- every real `logger.warning()`/`.error()`
+# call in this codebase has therefore always worked by accident, while
+# every real `logger.info()` call (confirmed live: `features/
+# interview_detection.py` and this module's own Session 8 "on-device
+# fallback" observability line, `DEC-175`'s own stated "every fallback
+# is logged, not silent" guarantee) has been silently going nowhere in
+# every real deployment since it was written -- confirmed live during a
+# real on-device Quick-capture confirmation pass, when the fallback line
+# genuinely should have appeared in Cloud Logging for two real, live
+# fallback requests and did not.
+#
+# Fixed narrowly, not with a blanket `logging.basicConfig()` -- a real,
+# deliberate choice matching `core/embeddings.py`'s own already-disclosed
+# caution (its own docstring on `embed_text()`): a blanket root-level
+# `basicConfig(level=INFO)` would also start emitting `httpx`'s own
+# request-logging at INFO across this entire backend's many real `httpx`
+# call sites, a real, live risk that module's own comment already named
+# explicitly. Configuring a handler on this one, exact, shared
+# `"quorum_backend"` logger by name -- never the root logger, never
+# `httpx`'s own -- gets every real application log line working without
+# touching any third-party logger's own behavior at all. Deliberately
+# left `propagate` at its real default (`True`), not set to `False` --
+# a real, live test run caught this exact tradeoff directly: `pytest`'s
+# own `caplog.at_level(..., logger="quorum_backend")` fixture (used by
+# `test_main.py`'s real, existing tests for both this logger's real
+# warning and this session's own new fallback-observability line)
+# installs its actual capturing handler at the ROOT logger, reached only
+# via propagation -- `propagate=False` silently broke both of those
+# already-passing tests (confirmed live: `caplog.text` came back empty
+# even though this handler's own stdout output, captured in the same
+# test run, proved the real fix itself works). A real, live duplicate
+# log line IF the root logger is ever separately configured later is a
+# smaller, cosmetic, hypothetical cost against a concrete, immediate
+# test breakage today -- not a close call.
+#
+# REAL, DISCLOSED FIX to this fix's own first version, found by this
+# PR's own standard-tier review: a single `StreamHandler(sys.stdout)`
+# with no level-based split would have moved every real `WARNING`/
+# `ERROR` call -- including the security-relevant insecure-JWT-key
+# startup check just above -- off the real `run.googleapis.com/stderr`
+# Cloud Logging stream those calls have always landed on (confirmed
+# directly, live, against this project's own real deployed logs: the
+# JSON `logName` field on an existing real warning entry reads exactly
+# `.../logs/run.googleapis.com%2Fstderr`) and onto `.../stdout` instead
+# -- a genuine, disclosable behavior change for anything that might ever
+# alert or filter on that real log stream, even though Cloud Run's own
+# plain-text (non-structured-JSON) ingestion does NOT auto-assign a
+# `severity` field by stream the way the review's first draft claimed
+# (checked directly against the real, raw JSON log entry -- no
+# `severity` key present on either stream for this project's actual,
+# unstructured log format). Split by level instead: INFO/DEBUG keep
+# going to the real, newly-working `stdout` handler; `WARNING` and above
+# keep landing on `stderr`, preserving the exact real behavior every
+# existing `logger.warning()`/`.error()` call already had.
+if not logger.handlers:
+    _stdout_handler = logging.StreamHandler(sys.stdout)
+    _stdout_handler.addFilter(lambda record: record.levelno < logging.WARNING)
+    _stdout_handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s: %(message)s"))
+    logger.addHandler(_stdout_handler)
+
+    _stderr_handler = logging.StreamHandler(sys.stderr)
+    _stderr_handler.setLevel(logging.WARNING)
+    _stderr_handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s: %(message)s"))
+    logger.addHandler(_stderr_handler)
+
+    logger.setLevel(logging.INFO)
 
 
 @asynccontextmanager
