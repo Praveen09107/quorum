@@ -4398,4 +4398,16 @@ Verified again after all fixes: YAML re-validated with a real parser; every `dep
 
 ---
 
-*Next entry: DEC-182*
+## DEC-182: hotfix -- a second real, live CI failure in `test_core_config.py`'s own env isolation, the same class as `DEC-175`'s
+
+**STANDARD tier, mechanical fix.** `main` was genuinely red for a real, if short, window after `DEC-181`'s own merge -- `test_repr_redacts_every_real_secret_shaped_field` (`DEC-179`) failed in CI with `assert 6 == 5`: this developer's own local shell doesn't happen to have `GOOGLE_TOKEN_ENCRYPTION_KEY` set, but CI's own real job environment does (a real, live value, confirmed directly from that run's own env dump), so `Settings(_env_file=None)` picked up a genuine sixth ambient secret this test's own `_clear_real_env_vars()` helper never cleared. The identical class of bug `DEC-175`'s own hotfix already found and fixed once tonight for a different test, in a different file -- confirmed independently, not assumed from the pattern alone: reproduced locally by explicitly exporting the exact same real value CI sets before re-running the suite, watched it fail, then confirmed the fix holds under that exact condition, not just "probably fixed."
+
+**Fixed:** `_clear_real_env_vars()` now clears all 16 of `Settings`' real credential-shaped fields (added the four it was missing: `GOOGLE_TOKEN_ENCRYPTION_KEY`, `INTERNAL_DRAIN_SECRET`, `FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_JSON`), matching `QUORUM_PRODUCTION_READINESS_AUDIT_PLAN.md` §8's own current, corrected inventory exactly rather than whatever subset happened to matter before Firebase's fields existed.
+
+**Verified live:** `ruff check backend` clean. `pytest tests/test_core_config.py -q`: 13/13 passing locally, AND re-run with `GOOGLE_TOKEN_ENCRYPTION_KEY`/`INTERNAL_DRAIN_SECRET` explicitly exported as real, live ambient values first -- the exact condition that broke CI -- still 13/13. Letting CI's own next real run be the final, independent confirmation, the same discipline `DEC-175`'s hotfix already established.
+
+**Affects:** `backend/tests/test_core_config.py`, this log.
+
+---
+
+*Next entry: DEC-183*
