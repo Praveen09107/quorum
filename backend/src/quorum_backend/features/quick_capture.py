@@ -1578,6 +1578,16 @@ async def resolve_and_build_application_status_proposal(conn: asyncpg.Connection
     )
     if row is None:
         raise DownstreamTranslationError(f"Resolved application {existing_application_id!r} no longer exists.")
+    # REAL, DISCLOSED FIX (`DEC-183`): normalization itself now lives
+    # inside `build_status_update_proposal()` -- the one real, shared
+    # funnel every real (and future) caller of a Career status update
+    # goes through, not just this quick-capture call site. See that
+    # function's own docstring in `agents/career_agent.py` for the full
+    # account of the real, live bug this closes, and why a standard-
+    # tier review found the original, quick-capture-only placement to
+    # be a real, structural gap (`career_agent.py::make_update_status_
+    # node` -- currently uncalled in production, but a real bypass
+    # nonetheless) rather than a caller-discipline guarantee.
     return build_status_update_proposal(existing_application_id, new_status.strip(), company=row["company"])
 
 
