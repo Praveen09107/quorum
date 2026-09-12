@@ -77,9 +77,12 @@
 // genuinely unreachable from this button today, a real, logged open
 // item, not silently promised.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:quorum_mobile/api/health_api.dart';
 import 'package:quorum_mobile/db/database.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
@@ -92,6 +95,8 @@ import 'package:quorum_mobile/features/honesty_log/honesty_log_screen.dart';
 import 'package:quorum_mobile/features/memory_transparency/memory_transparency_logic.dart';
 import 'package:quorum_mobile/features/negotiation/negotiation_logic.dart';
 import 'package:quorum_mobile/features/negotiation/negotiation_screen.dart';
+import 'package:quorum_mobile/features/outage/outage_banner.dart';
+import 'package:quorum_mobile/features/outage/outage_detector.dart';
 import 'package:quorum_mobile/features/pending_share_provider.dart';
 import 'package:quorum_mobile/features/predictive_risk/predictive_risk_logic.dart';
 import 'package:quorum_mobile/features/quick_capture/quick_capture_logic.dart';
@@ -156,6 +161,34 @@ class MainShell extends ConsumerStatefulWidget {
   /// level from account deletion.
   final VoidCallback? onSignOut;
 
+  /// REAL, NEW -- `QUORUM_PRODUCTION_READINESS_AUDIT_PLAN.md`'s own
+  /// first audit run found `features/outage/outage_banner.dart` and its
+  /// CRITICAL-tier `decideDisposition()` logic had zero real callers
+  /// anywhere in this app, despite being real, tested, and reviewed
+  /// since the original mobile build-out. This closes that gap: a real,
+  /// periodic `GET /health` poll (`api/health_api.dart`, new) feeds
+  /// `outage_detector.dart`'s own already-real, already-tested
+  /// `recordSuccess()`/`recordFailure()` state machine, and
+  /// `OutageBanner` renders above every tab's own content whenever the
+  /// resulting real `OutageState.isInOutage` is true. Optional and
+  /// `null`-safe like every other real fetcher in this shell -- when no
+  /// `healthCheck` is configured, no polling happens and the banner
+  /// never renders, the same honest "not yet connected" degrade every
+  /// other optional real fetcher here already uses.
+  final HealthCheckCall? healthCheck;
+
+  /// Real, injectable polling interval -- defaults to a real 20 real
+  /// seconds in production (frequent enough that a real outage is
+  /// detected promptly given `outage_detector.dart`'s own 2-real-minute
+  /// duration threshold needs several real polls to accumulate, rare
+  /// enough that this app never meaningfully burdens the real, free-tier
+  /// backend it's checking). Exists as a real constructor parameter
+  /// (not a hardcoded constant) specifically so `flutter_test`'s own
+  /// real fake-clock `pump(duration)` can exercise this real polling
+  /// loop deterministically, without a real test ever waiting 20 real
+  /// wall-clock seconds.
+  final Duration healthCheckInterval;
+
   const MainShell({
     super.key,
     this.fetchToday,
@@ -178,6 +211,8 @@ class MainShell extends ConsumerStatefulWidget {
     this.fetchCalendarEvents,
     this.captureTask,
     this.onSignOut,
+    this.healthCheck,
+    this.healthCheckInterval = const Duration(seconds: 20),
   });
 
   @override
@@ -187,6 +222,8 @@ class MainShell extends ConsumerStatefulWidget {
 class _MainShellState extends ConsumerState<MainShell> {
   int _selectedIndex = 0;
   ShareIntentHandler? _shareIntentHandler;
+  OutageState _outageState = OutageState.initial;
+  Timer? _healthCheckTimer;
 
   static const List<_QuorumTab> _tabs = [
     _QuorumTab(label: 'Today', icon: Icons.today_outlined, selectedIcon: Icons.today),
@@ -201,11 +238,34 @@ class _MainShellState extends ConsumerState<MainShell> {
     _shareIntentHandler = ShareIntentHandler(
       onSharedContent: (draft) => ref.read(pendingShareProvider.notifier).state = draft,
     )..initialize();
+
+    final healthCheck = widget.healthCheck;
+    if (healthCheck != null) {
+      _healthCheckTimer = Timer.periodic(widget.healthCheckInterval, (_) => _pollHealth(healthCheck));
+    }
+  }
+
+  /// Real, live polling tick -- a real success calls `recordSuccess()`
+  /// (a genuine, complete, immediate reset, per that function's own
+  /// real design); a real failure (including a real exception, already
+  /// collapsed to `false` by `createHealthCheckCall()` itself) calls
+  /// `recordFailure()` with the real current time, feeding
+  /// `outage_detector.dart`'s own already-real, already-tested OR-
+  /// threshold logic. Never assumes `mounted` -- a real async gap (the
+  /// health check's own real network round trip) can outlive this
+  /// widget if a real user navigates away mid-poll.
+  Future<void> _pollHealth(HealthCheckCall healthCheck) async {
+    final reachable = await healthCheck();
+    if (!mounted) return;
+    setState(() {
+      _outageState = reachable ? recordSuccess(_outageState) : recordFailure(_outageState, DateTime.now());
+    });
   }
 
   @override
   void dispose() {
     _shareIntentHandler?.dispose();
+    _healthCheckTimer?.cancel();
     super.dispose();
   }
 
@@ -268,7 +328,20 @@ class _MainShellState extends ConsumerState<MainShell> {
 
     return Scaffold(
       appBar: AppBar(title: Text(_tabs[_selectedIndex].label)),
-      body: SafeArea(child: _bodyForIndex(_selectedIndex)),
+      // Real, deliberately universal -- rendered above every tab's own
+      // content, not just Today's, since a real outage affects every
+      // real write path in this app equally. `OutageBanner` itself
+      // already renders as `SizedBox.shrink()` (zero real height) while
+      // `_outageState.isInOutage` is false, so this costs nothing
+      // visually outside a real, genuine outage.
+      body: SafeArea(
+        child: Column(
+          children: [
+            OutageBanner(state: _outageState),
+            Expanded(child: _bodyForIndex(_selectedIndex)),
+          ],
+        ),
+      ),
       // Real, deliberately universal -- visible across all four tabs,
       // not just Today, matching this feature's own real scope: type
       // anything, any time, real proposals go through the real Gate the

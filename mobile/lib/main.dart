@@ -103,6 +103,7 @@ import 'package:quorum_mobile/api/career_digest_api.dart';
 import 'package:quorum_mobile/api/career_pipeline_api.dart';
 import 'package:quorum_mobile/api/finance_api.dart';
 import 'package:quorum_mobile/api/gate_reveal_api.dart';
+import 'package:quorum_mobile/api/health_api.dart';
 import 'package:quorum_mobile/api/honesty_log_api.dart';
 import 'package:quorum_mobile/api/negotiation_api.dart';
 import 'package:quorum_mobile/api/predictive_risk_api.dart';
@@ -302,6 +303,12 @@ class _QuorumAppState extends State<QuorumApp> {
             ),
             confirmDelete: _handleAccountDeletion,
             onSignOut: _handleSignOut,
+            // Real, deliberately unauthenticated -- `GET /health` needs
+            // no real access token (confirmed live before wiring this),
+            // so this real health-check keeps working even through a
+            // real session-refresh failure, the exact real scenario an
+            // outage banner most needs to stay honest through.
+            healthCheck: createHealthCheckCall(client: _httpClient),
           ),
       },
     );
