@@ -150,10 +150,37 @@ logger = logging.getLogger("quorum_backend")
 # log line IF the root logger is ever separately configured later is a
 # smaller, cosmetic, hypothetical cost against a concrete, immediate
 # test breakage today -- not a close call.
+#
+# REAL, DISCLOSED FIX to this fix's own first version, found by this
+# PR's own standard-tier review: a single `StreamHandler(sys.stdout)`
+# with no level-based split would have moved every real `WARNING`/
+# `ERROR` call -- including the security-relevant insecure-JWT-key
+# startup check just above -- off the real `run.googleapis.com/stderr`
+# Cloud Logging stream those calls have always landed on (confirmed
+# directly, live, against this project's own real deployed logs: the
+# JSON `logName` field on an existing real warning entry reads exactly
+# `.../logs/run.googleapis.com%2Fstderr`) and onto `.../stdout` instead
+# -- a genuine, disclosable behavior change for anything that might ever
+# alert or filter on that real log stream, even though Cloud Run's own
+# plain-text (non-structured-JSON) ingestion does NOT auto-assign a
+# `severity` field by stream the way the review's first draft claimed
+# (checked directly against the real, raw JSON log entry -- no
+# `severity` key present on either stream for this project's actual,
+# unstructured log format). Split by level instead: INFO/DEBUG keep
+# going to the real, newly-working `stdout` handler; `WARNING` and above
+# keep landing on `stderr`, preserving the exact real behavior every
+# existing `logger.warning()`/`.error()` call already had.
 if not logger.handlers:
-    _handler = logging.StreamHandler(sys.stdout)
-    _handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s: %(message)s"))
-    logger.addHandler(_handler)
+    _stdout_handler = logging.StreamHandler(sys.stdout)
+    _stdout_handler.addFilter(lambda record: record.levelno < logging.WARNING)
+    _stdout_handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s: %(message)s"))
+    logger.addHandler(_stdout_handler)
+
+    _stderr_handler = logging.StreamHandler(sys.stderr)
+    _stderr_handler.setLevel(logging.WARNING)
+    _stderr_handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s: %(message)s"))
+    logger.addHandler(_stderr_handler)
+
     logger.setLevel(logging.INFO)
 
 

@@ -320,6 +320,18 @@ class _QuorumAppState extends State<QuorumApp> {
             captureTask: (String text) => routeQuickCapture(
               text,
               onDeviceExtract: extractWithOnDeviceModel,
+              // A real, disclosed, deliberately-accepted trivial cost,
+              // named by this PR's own review rather than silently left
+              // unexplained: unlike every sibling fetcher above, these
+              // two are (re)constructed on every real Quick-capture
+              // attempt, not once per `build()` -- both factories are
+              // pure and side-effect-free until their own returned
+              // closure is actually invoked, so this has no real
+              // behavioral cost, and hoisting it out would need
+              // restructuring this switch expression's signed-in arm
+              // into its own method purely for this one cosmetic gain,
+              // judged not worth the added surface on an already-
+              // reviewed block.
               submitExtracted: createQuickCaptureExtractedFetcher(
                 getAccessToken: _authController.getValidAccessToken,
                 client: _httpClient,
