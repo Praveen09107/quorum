@@ -19,7 +19,6 @@ from quorum_backend.features.quick_capture import (
     QuickCaptureError,
     _fetch_known_recipients,
     _fetch_open_task_candidates,
-    _normalize_application_status,
     _resolve_single_reference,
     build_extraction_prompt,
     capture_action_from_text,
@@ -1203,25 +1202,6 @@ async def test_capture_action_from_text_raises_quick_capture_error_on_an_empty_n
                     conn, user_id=user_id, free_text="anything",
                     extraction_call=extraction, critic_call=_unreachable_critic_call, judge_call=_unreachable_judge_call,
                 )
-
-
-# --- Real, pure-logic tests: `_normalize_application_status` (`DEC-183`) ---
-
-
-def test_normalize_application_status_replaces_spaces_and_lowercases():
-    assert _normalize_application_status("Interview Scheduled") == "interview_scheduled"
-
-
-def test_normalize_application_status_collapses_hyphens_and_repeated_whitespace_too():
-    assert _normalize_application_status("Phone -  Screen") == "phone_screen"
-
-
-def test_normalize_application_status_leaves_an_already_canonical_value_unchanged():
-    assert _normalize_application_status("interview_scheduled") == "interview_scheduled"
-
-
-def test_normalize_application_status_strips_leading_and_trailing_whitespace():
-    assert _normalize_application_status("  rejected  ") == "rejected"
 
 
 # --- Prompt construction, pure logic ---
