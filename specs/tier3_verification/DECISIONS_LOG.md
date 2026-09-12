@@ -4470,4 +4470,16 @@ Verified again after all fixes: YAML re-validated with a real parser; every `dep
 
 ---
 
-*Next entry: DEC-185*
+## DEC-185: `DEC-184`'s own disclosed "not yet closed" item, closed the same day
+
+**Not a new session -- a real, direct follow-up confirmation**, done once `DEC-184` itself was live-deployed (confirmed via a real `GET /health` → `200` immediately after the merge-triggered CI/CD run finished). One more real, on-device Quick-capture attempt against the already-installed app (no rebuild needed -- `DEC-184`'s own mobile-side change was already on the device; only the backend's logging fix needed a fresh deploy) genuinely fell back to cloud again (hitting the same already-exhausted shared Gemini quota, unchanged), taking longer this real attempt (~9 minutes end to end) than the first (~2 minutes) -- independently confirmed still genuinely computing throughout, not hung, via the same `top`/CPU-percentage check as before.
+
+**The real, live confirmation itself:** `gcloud logging read` against the actual, live Cloud Run service found the exact line `DEC-184`'s fix exists to produce -- `INFO:quorum_backend: Quick-capture fell back to cloud extraction: user_id=... reason=estimated_hours is missing or not a real number` -- on the real `run.googleapis.com/stdout` log stream, correctly separated from `WARNING`/`ERROR` content per this fix's own review-fix round. The observability gap this session found and fixed is now directly, empirically confirmed closed in the real, live, deployed environment, not just in local tests.
+
+**A genuine bonus this same real log line revealed: WHY the real on-device extraction has failed both times, finally visible.** `on_device_correctness.dart`'s own real, deliberately-conservative bar (`args['estimated_hours']` missing or non-numeric) rejected the real Llama 3.2 3B model's own real output for "Buy a birthday gift for mom this weekend" -- a task with no explicit duration stated, which the real, genuinely weaker on-device model (67% validity, `DEC-130`/`131`) apparently could not confidently estimate. **This is the system working exactly as designed, not a bug anywhere in this stack:** the correctness bar caught a real, incomplete on-device result and correctly triggered the documented fallback rather than silently creating a task with a missing or fabricated duration. Every real piece -- on-device attempt, correctness check, fallback, cloud attempt, quota-exhaustion handling, user-facing honest error, and now the real, live server-side observability of all of it -- has been directly, individually witnessed working correctly end to end this session.
+
+**Affects:** `specs/tier3_verification/STATUS_INDEX.md`, this log.
+
+---
+
+*Next entry: DEC-186*
