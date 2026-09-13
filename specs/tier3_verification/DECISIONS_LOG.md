@@ -4482,4 +4482,18 @@ Verified again after all fixes: YAML re-validated with a real parser; every `dep
 
 ---
 
-*Next entry: DEC-186*
+## DEC-186: the last disclosed "beyond Email" remainder on the two flagship animations, closed for real -- no code, no new quota spent
+
+**Not a session -- a real, direct, on-device confirmation**, done with the device already connected and zero further Gemini calls needed (this used content already created earlier the same day, during `DEC-183`'s own Finance/Calendar/Career confirmation pass). `STATUS_INDEX.md` had carried "both flagship animations' underlying domains beyond Email remain genuinely unverified on a real screen" as a small, disclosed, non-blocking remainder since `DEC-174`. Checked fresh rather than left standing: Today's real "Add a calendar event / Needs review" card (still present from this session's own earlier Calendar Quick-capture) was tapped into.
+
+**A real, live discrepancy chased down rather than assumed away:** the resulting `GateRevealScreen` showed "Stage A -- `ProvenanceCheck` pass" and "Stage B -- Critic review: Reviewed -- no objections," but a direct query against the live `action_events` table found something unexpected -- the only row with `action_type = 'create_calendar_event_external'` was a stale, pre-existing demo-seed row from 2026-08-14 (`trace_id = 'demo-seed-...'`, `title: "Vercel offer call"`, real `findings`/`objections` both `NULL`), not this session's own real "Meeting with the design team" capture. Broadened the query rather than trusting the first result: the real row this session actually created was found under a genuinely different, correct `action_type` -- `create_calendar_event_local`, **`stakes = S2`**, not S3 (no `invitee_email` was given, so `calendar_agent.py`'s own real branching correctly classified it as a local, not external, event) -- with real, non-null `findings` (`ProvenanceCheck`, `verified_true`) and a real, empty `objections: []`.
+
+**Confirmed directly against the real code, not assumed, that this was NOT a UI bug:** `gate_reveal_screen.dart`'s "Stage B -- Critic review" heading is a real, deliberate, fixed label covering BOTH the S3 Critic-then-Judge path and the S2 Judge-only path -- `gate_reveal_logic.dart`'s own header comment confirms exactly this: "an S2 action reaches the Judge directly with a real, empty `objections` list, and the Judge never fabricates" one just to have something to show. The on-screen "Reviewed -- no objections" for a real S2 action is therefore the correct, honest rendering of a real, empty `objections: []` under Stage B's own generic heading, not a mislabeled Critic run that never happened.
+
+**What this genuinely closes:** the Gate Reveal Stage A→B staged reveal has now been directly witnessed for a second, real, non-Email domain (Calendar, S2, no objection) in addition to Email (S3, WITH a real objection, `DEC-174`) -- two genuinely different real stakes tiers, two genuinely different real Stage B outcomes, both rendering correctly with live, non-fabricated content. Combined with the negotiation-choice cross-fade's own already-real Finance/Tasks confirmation (`DEC-174`, predating this entry), both flagship Phase 8 animations are now genuinely confirmed across multiple real domains, not just Email -- this section's own long-standing disclosed remainder is closed.
+
+**Affects:** `specs/tier3_verification/STATUS_INDEX.md`, this log. No code changed.
+
+---
+
+*Next entry: DEC-187*
