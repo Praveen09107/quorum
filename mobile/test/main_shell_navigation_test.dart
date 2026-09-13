@@ -48,6 +48,26 @@ Future<TodayScreenData> _fakeFetchToday() async {
   );
 }
 
+// REAL, DISCLOSED FIX (`DEC-187`): a real, mutable-response fetcher
+// proving Today genuinely re-fetches after a real negotiation-detail
+// push returns -- the second real call's own negotiations list is
+// deliberately different (empty, simulating the negotiation now being
+// resolved server-side) from the first, so a stale, cached first
+// response could never accidentally pass this test.
+int fetchTodayCallCountForReloadTest = 0;
+
+Future<TodayScreenData> _fakeFetchTodayTrackingReload() async {
+  fetchTodayCallCountForReloadTest++;
+  return TodayScreenData(
+    pendingActions: const [],
+    capacity: const CapacityState(hoursRemainingToday: 3.5, remainingFraction: 0.44, source: DataSource.liveBackend),
+    budget: const BudgetState(amountRemaining: 4200, remainingFraction: 0.6, source: DataSource.liveBackend),
+    negotiations: fetchTodayCallCountForReloadTest == 1
+        ? [ActiveNegotiationSummary(negotiationId: 'n1', conflictedDomains: const ['calendar', 'finance'], startedAt: DateTime(2026, 8, 9))]
+        : const [],
+  );
+}
+
 Future<GateRevealBundle> _fakeFetchGateReveal(String proposalId) async {
   return const GateRevealBundle(
     stakes: 'S3',
@@ -159,11 +179,14 @@ Future<RiskAssessmentData> _fakeFetchPredictiveRisk() async {
   );
 }
 
-Widget _harness({Future<List<CalendarMirrorData>> Function()? fetchCalendarEvents}) {
+Widget _harness({
+  Future<List<CalendarMirrorData>> Function()? fetchCalendarEvents,
+  Future<TodayScreenData> Function()? fetchToday,
+}) {
   return ProviderScope(
     child: MaterialApp(
       home: MainShell(
-        fetchToday: _fakeFetchToday,
+        fetchToday: fetchToday ?? _fakeFetchToday,
         fetchTasks: _fakeFetchTasks,
         fetchPredictiveRisk: _fakeFetchPredictiveRisk,
         fetchGateReveal: _fakeFetchGateReveal,
@@ -298,6 +321,75 @@ void main() {
     expect(find.textContaining('already resolved'), findsOneWidget);
     expect(find.textContaining('A real option'), findsOneWidget);  // names what was genuinely chosen
     expect(find.text('Choose this option'), findsNothing);  // never presented as if a choice were still possible
+  });
+
+  testWidgets('returning from a real negotiation detail screen triggers a real Today refetch, not a stale cached view', (tester) async {
+    // RESOLVED, a real, disclosed gap found on-device (`DEC-174`) and
+    // fixed here (`DEC-187`): before this fix, Today's own "In Motion"
+    // card kept showing a just-resolved negotiation until a full, cold
+    // app relaunch -- the real, live server state was always correct,
+    // Today just never asked again. `_fakeFetchTodayTrackingReload`'s
+    // own SECOND real response deliberately returns a genuinely
+    // different (empty) negotiations list, so this test can only pass
+    // if Today's real fetcher was actually called a second time, not
+    // merely re-rendered from the first call's stale cached data.
+    fetchTodayCallCountForReloadTest = 0;
+    negotiationAlreadyResolvedForTest = false;
+    addTearDown(() => fetchTodayCallCountForReloadTest = 0);
+    await tester.pumpWidget(_harness(fetchToday: _fakeFetchTodayTrackingReload));
+    await tester.pumpAndSettle();
+    expect(fetchTodayCallCountForReloadTest, 1);
+
+    await tester.drag(find.byType(ListView).first, const Offset(0, -1000));
+    await tester.pumpAndSettle();
+    expect(find.text('Calendar vs. Finance'), findsOneWidget);
+
+    await tester.tap(find.text('Calendar vs. Finance'));
+    await tester.pumpAndSettle();
+    expect(find.text('What each domain is saying'), findsOneWidget);
+
+    // A real user simply backing out having only viewed it -- no
+    // choice submitted -- is exactly the case the old code silently
+    // mishandled worst (there was no server-side change to even
+    // coincidentally trigger a correct-looking re-render).
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(fetchTodayCallCountForReloadTest, 2);
+    expect(find.text('Calendar vs. Finance'), findsNothing);
+  });
+
+  testWidgets('choosing a real option and THEN backing out also triggers a real Today refetch', (tester) async {
+    // A real, disclosed gap this PR's own standard-tier review found:
+    // the test above only exercises "viewed, then backed out with no
+    // choice" -- choosing an option doesn't itself pop the route
+    // (`_NegotiationLoaderState` shows its own real "Choice accepted"
+    // state in place first), so the reload line only actually runs on
+    // the SUBSEQUENT back-out, a genuinely different, previously-
+    // untested real path through the exact same code.
+    fetchTodayCallCountForReloadTest = 0;
+    chosenNegotiationCalls.clear();
+    negotiationAlreadyResolvedForTest = false;
+    addTearDown(() => fetchTodayCallCountForReloadTest = 0);
+    await tester.pumpWidget(_harness(fetchToday: _fakeFetchTodayTrackingReload));
+    await tester.pumpAndSettle();
+    expect(fetchTodayCallCountForReloadTest, 1);
+
+    await tester.drag(find.byType(ListView).first, const Offset(0, -1000));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Calendar vs. Finance'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Choose this option'));
+    await tester.pumpAndSettle();
+    expect(chosenNegotiationCalls, [('n1', 'opt1')]);
+    expect(find.text('Choice accepted -- this action is now queued.'), findsOneWidget);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(fetchTodayCallCountForReloadTest, 2);
+    expect(find.text('Calendar vs. Finance'), findsNothing);
   });
 
   testWidgets('the You tab genuinely reaches Career Pipeline, and tapping an application opens its real Company Digest', (tester) async {

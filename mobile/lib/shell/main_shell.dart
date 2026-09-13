@@ -409,7 +409,7 @@ class _NotConnectedState extends StatelessWidget {
   }
 }
 
-class _TodayTab extends StatelessWidget {
+class _TodayTab extends StatefulWidget {
   final TodayDataFetcher? fetch;
   final TaskListFetcher? fetchTasks;
   final PredictiveRiskFetcher? fetchPredictiveRisk;
@@ -427,46 +427,153 @@ class _TodayTab extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final fetcher = fetch;
-    if (fetcher == null) return const _NotConnectedState(label: 'Today');
+  State<_TodayTab> createState() => _TodayTabState();
+}
 
-    return FutureBuilder<TodayScreenData>(
-      future: fetcher(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError) {
-          return Center(child: Text("Couldn't load Today: ${snapshot.error}"));
-        }
-        final gateReveal = fetchGateReveal;
-        final negotiation = fetchNegotiation;
-        return TodayScreen(
-          data: snapshot.data!,
-          now: DateTime.now(),
-          fetchTasks: fetchTasks,
-          fetchPredictiveRisk: fetchPredictiveRisk,
-          onTapAction: gateReveal == null
-              ? null
-              : (action) => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => _GateRevealLoader(fetch: () => gateReveal(action.proposalId)),
-                    ),
-                  ),
-          onTapNegotiation: negotiation == null
-              ? null
-              : (negotiationId) => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => _NegotiationLoader(
-                        negotiationId: negotiationId,
-                        fetch: () => negotiation(negotiationId),
-                        chooseNegotiation: chooseNegotiation,
+/// REAL, DISCLOSED FIX (`DEC-187`): a real, minor, disclosed gap found
+/// live on-device (`DEC-174`) -- returning from a real negotiation
+/// detail screen left this tab showing its own stale, already-resolved
+/// "Awaiting your choice" card until a full, cold app relaunch, even
+/// though the real, live server-side state (`negotiations.resolved_at`)
+/// was always correct the whole time. The root cause, confirmed
+/// directly rather than guessed: this was a plain `StatelessWidget`
+/// calling `fetch()` fresh inside its own `build()` -- the only thing
+/// that ever re-triggers a fetch is THIS widget's own `build()` running
+/// again, and nothing about `Navigator.pop()` returning from a pushed
+/// route causes that on its own. Converted to a real `StatefulWidget`,
+/// refetched explicitly the moment a real negotiation-detail push
+/// returns -- not just implicitly hoped for.
+///
+/// REAL, DISCLOSED FIX FROM THIS PR'S OWN REVIEW ROUND: an earlier
+/// version held a bare `Future<TodayScreenData>?` and rebuilt the whole
+/// tab from a `FutureBuilder` on every reload -- a real, live UX
+/// regression the review caught directly: returning from EVEN A
+/// no-op "just looked, backed out" negotiation view blanked the ENTIRE
+/// Today tab (Needs You Now, capacity, budget, everything) to a full-
+/// screen spinner while refetching, not just the one negotiation card
+/// that actually needed refreshing. Rewritten to a real, deliberate
+/// stale-while-revalidate shape instead: the last real, successfully-
+/// fetched `TodayScreenData` stays rendered through a reload, replaced
+/// only once the new fetch genuinely resolves -- a real reload looks
+/// like nothing happened at all when nothing did, and updates in place
+/// the moment it genuinely does.
+class _TodayTabState extends State<_TodayTab> {
+  TodayScreenData? _data;
+  Object? _error;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  @override
+  void didUpdateWidget(_TodayTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A real, disclosed defensive fix from this PR's own review round:
+    // this app's own real fetchers are freshly re-constructed closures
+    // on every ancestor rebuild (confirmed directly against
+    // `main.dart`), currently always behaviorally identical each time
+    // -- but relying on that silently would mean a genuinely new real
+    // fetcher (a different signed-in account, say) could otherwise be
+    // ignored, still serving the OLD account's already-cached data.
+    if (widget.fetch != oldWidget.fetch) _reload();
+  }
+
+  Future<void> _reload() async {
+    final fetcher = widget.fetch;
+    if (fetcher == null) {
+      setState(() {
+        _data = null;
+        _error = null;
+        _loading = false;
+      });
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      final data = await fetcher();
+      if (!mounted) return;
+      setState(() {
+        _data = data;
+        _error = null;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      // A real, deliberate stale-while-revalidate choice: a genuine
+      // reload failure (a dropped connection mid-refresh, say) keeps
+      // showing the last real, successfully-fetched data rather than
+      // discarding it for an error screen -- only a genuine FIRST load
+      // failure (no real data ever successfully fetched yet) shows the
+      // honest error state below.
+      setState(() {
+        _error = e;
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.fetch == null) return const _NotConnectedState(label: 'Today');
+
+    final data = _data;
+    if (data == null) {
+      if (_error != null) {
+        return Center(child: Text("Couldn't load Today: $_error"));
+      }
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final gateReveal = widget.fetchGateReveal;
+    final negotiation = widget.fetchNegotiation;
+    return Column(
+      children: [
+        // A real, thin, deliberately unobtrusive affordance for the
+        // stale-while-revalidate reload above: real, already-fetched
+        // data keeps rendering underneath while a real reload is in
+        // flight -- this is the one, small, honest signal that a
+        // refresh is genuinely happening, not silent.
+        if (_loading) const LinearProgressIndicator(minHeight: 2),
+        Expanded(
+          child: TodayScreen(
+            data: data,
+            now: DateTime.now(),
+            fetchTasks: widget.fetchTasks,
+            fetchPredictiveRisk: widget.fetchPredictiveRisk,
+            onTapAction: gateReveal == null
+                ? null
+                : (action) => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => _GateRevealLoader(fetch: () => gateReveal(action.proposalId)),
                       ),
                     ),
-                  ),
-        );
-      },
+            onTapNegotiation: negotiation == null
+                ? null
+                : (negotiationId) async {
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => _NegotiationLoader(
+                          negotiationId: negotiationId,
+                          fetch: () => negotiation(negotiationId),
+                          chooseNegotiation: widget.chooseNegotiation,
+                        ),
+                      ),
+                    );
+                    // A real, deliberate reload regardless of HOW the
+                    // pushed route was left -- a genuine choice
+                    // submitted, or the user simply backing out having
+                    // only viewed it. The real, live server-side state
+                    // is always the source of truth either way, and
+                    // re-fetching an unresolved negotiation is a real,
+                    // cheap no-op, not a wasted call.
+                    if (context.mounted) _reload();
+                  },
+          ),
+        ),
+      ],
     );
   }
 }
