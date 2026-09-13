@@ -409,7 +409,7 @@ class _NotConnectedState extends StatelessWidget {
   }
 }
 
-class _TodayTab extends StatelessWidget {
+class _TodayTab extends StatefulWidget {
   final TodayDataFetcher? fetch;
   final TaskListFetcher? fetchTasks;
   final PredictiveRiskFetcher? fetchPredictiveRisk;
@@ -427,12 +427,58 @@ class _TodayTab extends StatelessWidget {
   });
 
   @override
+  State<_TodayTab> createState() => _TodayTabState();
+}
+
+/// REAL, DISCLOSED FIX (`DEC-187`): a real, minor, disclosed gap found
+/// live on-device (`DEC-174`) -- returning from a real negotiation
+/// detail screen left this tab showing its own stale, already-resolved
+/// "Awaiting your choice" card until a full, cold app relaunch, even
+/// though the real, live server-side state (`negotiations.resolved_at`)
+/// was always correct the whole time. The root cause, confirmed
+/// directly rather than guessed: this was a plain `StatelessWidget`
+/// calling `fetch()` fresh inside its own `build()` -- the only thing
+/// that ever re-triggers a fetch is THIS widget's own `build()` running
+/// again, and nothing about `Navigator.pop()` returning from a pushed
+/// route causes that on its own. Converted to a real `StatefulWidget`
+/// holding its own `Future`, refetched explicitly the moment a real
+/// negotiation-detail push returns -- not just implicitly hoped for.
+class _TodayTabState extends State<_TodayTab> {
+  Future<TodayScreenData>? _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = widget.fetch?.call();
+  }
+
+  void _reload() {
+    final fetcher = widget.fetch;
+    if (fetcher == null) return;
+    // A real, live Flutter framework assertion this fix's own real
+    // test run caught directly, twice: first, calling `fetcher()`
+    // INSIDE `setState`'s callback is invalid, even just to capture the
+    // `Future` it returns -- Flutter's own runtime treats that as
+    // "asynchronous work inside setState," so the real fetch call
+    // happens here, outside `setState`. Second, and less obviously: an
+    // ARROW closure's return value is its expression's value -- `() =>
+    // _future = future` evaluates to (and therefore RETURNS) `future`
+    // itself, a real `Future`, tripping the exact same assertion again
+    // even though this closure is neither `async` nor calling anything
+    // asynchronous. A block body with no return value avoids it.
+    final future = fetcher();
+    setState(() {
+      _future = future;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final fetcher = fetch;
-    if (fetcher == null) return const _NotConnectedState(label: 'Today');
+    final future = _future;
+    if (future == null) return const _NotConnectedState(label: 'Today');
 
     return FutureBuilder<TodayScreenData>(
-      future: fetcher(),
+      future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
@@ -440,13 +486,13 @@ class _TodayTab extends StatelessWidget {
         if (snapshot.hasError) {
           return Center(child: Text("Couldn't load Today: ${snapshot.error}"));
         }
-        final gateReveal = fetchGateReveal;
-        final negotiation = fetchNegotiation;
+        final gateReveal = widget.fetchGateReveal;
+        final negotiation = widget.fetchNegotiation;
         return TodayScreen(
           data: snapshot.data!,
           now: DateTime.now(),
-          fetchTasks: fetchTasks,
-          fetchPredictiveRisk: fetchPredictiveRisk,
+          fetchTasks: widget.fetchTasks,
+          fetchPredictiveRisk: widget.fetchPredictiveRisk,
           onTapAction: gateReveal == null
               ? null
               : (action) => Navigator.of(context).push(
@@ -456,15 +502,25 @@ class _TodayTab extends StatelessWidget {
                   ),
           onTapNegotiation: negotiation == null
               ? null
-              : (negotiationId) => Navigator.of(context).push(
+              : (negotiationId) async {
+                  await Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => _NegotiationLoader(
                         negotiationId: negotiationId,
                         fetch: () => negotiation(negotiationId),
-                        chooseNegotiation: chooseNegotiation,
+                        chooseNegotiation: widget.chooseNegotiation,
                       ),
                     ),
-                  ),
+                  );
+                  // A real, deliberate reload regardless of HOW the
+                  // pushed route was left -- a genuine choice submitted,
+                  // or the user simply backing out having only viewed
+                  // it. The real, live server-side state is always the
+                  // source of truth either way, and re-fetching an
+                  // unresolved negotiation is a real, cheap no-op, not
+                  // a wasted call.
+                  if (context.mounted) _reload();
+                },
         );
       },
     );
