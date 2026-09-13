@@ -335,6 +335,7 @@ void main() {
     // merely re-rendered from the first call's stale cached data.
     fetchTodayCallCountForReloadTest = 0;
     negotiationAlreadyResolvedForTest = false;
+    addTearDown(() => fetchTodayCallCountForReloadTest = 0);
     await tester.pumpWidget(_harness(fetchToday: _fakeFetchTodayTrackingReload));
     await tester.pumpAndSettle();
     expect(fetchTodayCallCountForReloadTest, 1);
@@ -351,6 +352,39 @@ void main() {
     // choice submitted -- is exactly the case the old code silently
     // mishandled worst (there was no server-side change to even
     // coincidentally trigger a correct-looking re-render).
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(fetchTodayCallCountForReloadTest, 2);
+    expect(find.text('Calendar vs. Finance'), findsNothing);
+  });
+
+  testWidgets('choosing a real option and THEN backing out also triggers a real Today refetch', (tester) async {
+    // A real, disclosed gap this PR's own standard-tier review found:
+    // the test above only exercises "viewed, then backed out with no
+    // choice" -- choosing an option doesn't itself pop the route
+    // (`_NegotiationLoaderState` shows its own real "Choice accepted"
+    // state in place first), so the reload line only actually runs on
+    // the SUBSEQUENT back-out, a genuinely different, previously-
+    // untested real path through the exact same code.
+    fetchTodayCallCountForReloadTest = 0;
+    chosenNegotiationCalls.clear();
+    negotiationAlreadyResolvedForTest = false;
+    addTearDown(() => fetchTodayCallCountForReloadTest = 0);
+    await tester.pumpWidget(_harness(fetchToday: _fakeFetchTodayTrackingReload));
+    await tester.pumpAndSettle();
+    expect(fetchTodayCallCountForReloadTest, 1);
+
+    await tester.drag(find.byType(ListView).first, const Offset(0, -1000));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Calendar vs. Finance'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Choose this option'));
+    await tester.pumpAndSettle();
+    expect(chosenNegotiationCalls, [('n1', 'opt1')]);
+    expect(find.text('Choice accepted -- this action is now queued.'), findsOneWidget);
+
     await tester.pageBack();
     await tester.pumpAndSettle();
 

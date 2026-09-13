@@ -440,89 +440,140 @@ class _TodayTab extends StatefulWidget {
 /// calling `fetch()` fresh inside its own `build()` -- the only thing
 /// that ever re-triggers a fetch is THIS widget's own `build()` running
 /// again, and nothing about `Navigator.pop()` returning from a pushed
-/// route causes that on its own. Converted to a real `StatefulWidget`
-/// holding its own `Future`, refetched explicitly the moment a real
-/// negotiation-detail push returns -- not just implicitly hoped for.
+/// route causes that on its own. Converted to a real `StatefulWidget`,
+/// refetched explicitly the moment a real negotiation-detail push
+/// returns -- not just implicitly hoped for.
+///
+/// REAL, DISCLOSED FIX FROM THIS PR'S OWN REVIEW ROUND: an earlier
+/// version held a bare `Future<TodayScreenData>?` and rebuilt the whole
+/// tab from a `FutureBuilder` on every reload -- a real, live UX
+/// regression the review caught directly: returning from EVEN A
+/// no-op "just looked, backed out" negotiation view blanked the ENTIRE
+/// Today tab (Needs You Now, capacity, budget, everything) to a full-
+/// screen spinner while refetching, not just the one negotiation card
+/// that actually needed refreshing. Rewritten to a real, deliberate
+/// stale-while-revalidate shape instead: the last real, successfully-
+/// fetched `TodayScreenData` stays rendered through a reload, replaced
+/// only once the new fetch genuinely resolves -- a real reload looks
+/// like nothing happened at all when nothing did, and updates in place
+/// the moment it genuinely does.
 class _TodayTabState extends State<_TodayTab> {
-  Future<TodayScreenData>? _future;
+  TodayScreenData? _data;
+  Object? _error;
+  bool _loading = false;
 
   @override
   void initState() {
     super.initState();
-    _future = widget.fetch?.call();
+    _reload();
   }
 
-  void _reload() {
+  @override
+  void didUpdateWidget(_TodayTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A real, disclosed defensive fix from this PR's own review round:
+    // this app's own real fetchers are freshly re-constructed closures
+    // on every ancestor rebuild (confirmed directly against
+    // `main.dart`), currently always behaviorally identical each time
+    // -- but relying on that silently would mean a genuinely new real
+    // fetcher (a different signed-in account, say) could otherwise be
+    // ignored, still serving the OLD account's already-cached data.
+    if (widget.fetch != oldWidget.fetch) _reload();
+  }
+
+  Future<void> _reload() async {
     final fetcher = widget.fetch;
-    if (fetcher == null) return;
-    // A real, live Flutter framework assertion this fix's own real
-    // test run caught directly, twice: first, calling `fetcher()`
-    // INSIDE `setState`'s callback is invalid, even just to capture the
-    // `Future` it returns -- Flutter's own runtime treats that as
-    // "asynchronous work inside setState," so the real fetch call
-    // happens here, outside `setState`. Second, and less obviously: an
-    // ARROW closure's return value is its expression's value -- `() =>
-    // _future = future` evaluates to (and therefore RETURNS) `future`
-    // itself, a real `Future`, tripping the exact same assertion again
-    // even though this closure is neither `async` nor calling anything
-    // asynchronous. A block body with no return value avoids it.
-    final future = fetcher();
-    setState(() {
-      _future = future;
-    });
+    if (fetcher == null) {
+      setState(() {
+        _data = null;
+        _error = null;
+        _loading = false;
+      });
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      final data = await fetcher();
+      if (!mounted) return;
+      setState(() {
+        _data = data;
+        _error = null;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      // A real, deliberate stale-while-revalidate choice: a genuine
+      // reload failure (a dropped connection mid-refresh, say) keeps
+      // showing the last real, successfully-fetched data rather than
+      // discarding it for an error screen -- only a genuine FIRST load
+      // failure (no real data ever successfully fetched yet) shows the
+      // honest error state below.
+      setState(() {
+        _error = e;
+        _loading = false;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final future = _future;
-    if (future == null) return const _NotConnectedState(label: 'Today');
+    if (widget.fetch == null) return const _NotConnectedState(label: 'Today');
 
-    return FutureBuilder<TodayScreenData>(
-      future: future,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError) {
-          return Center(child: Text("Couldn't load Today: ${snapshot.error}"));
-        }
-        final gateReveal = widget.fetchGateReveal;
-        final negotiation = widget.fetchNegotiation;
-        return TodayScreen(
-          data: snapshot.data!,
-          now: DateTime.now(),
-          fetchTasks: widget.fetchTasks,
-          fetchPredictiveRisk: widget.fetchPredictiveRisk,
-          onTapAction: gateReveal == null
-              ? null
-              : (action) => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => _GateRevealLoader(fetch: () => gateReveal(action.proposalId)),
-                    ),
-                  ),
-          onTapNegotiation: negotiation == null
-              ? null
-              : (negotiationId) async {
-                  await Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => _NegotiationLoader(
-                        negotiationId: negotiationId,
-                        fetch: () => negotiation(negotiationId),
-                        chooseNegotiation: widget.chooseNegotiation,
+    final data = _data;
+    if (data == null) {
+      if (_error != null) {
+        return Center(child: Text("Couldn't load Today: $_error"));
+      }
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final gateReveal = widget.fetchGateReveal;
+    final negotiation = widget.fetchNegotiation;
+    return Column(
+      children: [
+        // A real, thin, deliberately unobtrusive affordance for the
+        // stale-while-revalidate reload above: real, already-fetched
+        // data keeps rendering underneath while a real reload is in
+        // flight -- this is the one, small, honest signal that a
+        // refresh is genuinely happening, not silent.
+        if (_loading) const LinearProgressIndicator(minHeight: 2),
+        Expanded(
+          child: TodayScreen(
+            data: data,
+            now: DateTime.now(),
+            fetchTasks: widget.fetchTasks,
+            fetchPredictiveRisk: widget.fetchPredictiveRisk,
+            onTapAction: gateReveal == null
+                ? null
+                : (action) => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => _GateRevealLoader(fetch: () => gateReveal(action.proposalId)),
                       ),
                     ),
-                  );
-                  // A real, deliberate reload regardless of HOW the
-                  // pushed route was left -- a genuine choice submitted,
-                  // or the user simply backing out having only viewed
-                  // it. The real, live server-side state is always the
-                  // source of truth either way, and re-fetching an
-                  // unresolved negotiation is a real, cheap no-op, not
-                  // a wasted call.
-                  if (context.mounted) _reload();
-                },
-        );
-      },
+            onTapNegotiation: negotiation == null
+                ? null
+                : (negotiationId) async {
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => _NegotiationLoader(
+                          negotiationId: negotiationId,
+                          fetch: () => negotiation(negotiationId),
+                          chooseNegotiation: widget.chooseNegotiation,
+                        ),
+                      ),
+                    );
+                    // A real, deliberate reload regardless of HOW the
+                    // pushed route was left -- a genuine choice
+                    // submitted, or the user simply backing out having
+                    // only viewed it. The real, live server-side state
+                    // is always the source of truth either way, and
+                    // re-fetching an unresolved negotiation is a real,
+                    // cheap no-op, not a wasted call.
+                    if (context.mounted) _reload();
+                  },
+          ),
+        ),
+      ],
     );
   }
 }
