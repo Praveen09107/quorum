@@ -94,6 +94,76 @@ void main() {
     });
   });
 
+  group('summarizeForNeedsYouNow -- real per-card detail (the redesign\'s own real bug-fix work)', () {
+    test('a real send_email with a subject shows recipient and subject -- two real cards never look identical again', () {
+      final action = PendingActionSummary(
+        proposalId: 'A', actionType: 'send_email', stakes: 'S3',
+        payload: const {'to': 'sarah.chen@notion.so', 'subject': 'Interview availability'},
+        createdAt: _day(1),
+      );
+      expect(summarizeForNeedsYouNow(action).detail, 'To sarah.chen@notion.so — Interview availability');
+    });
+
+    test('a real send_email with no subject still shows the real recipient alone', () {
+      final action = PendingActionSummary(
+        proposalId: 'A', actionType: 'send_email', stakes: 'S3',
+        payload: const {'to': 'sarah.chen@notion.so'},
+        createdAt: _day(1),
+      );
+      expect(summarizeForNeedsYouNow(action).detail, 'To sarah.chen@notion.so');
+    });
+
+    test('a real send_email with no recipient at all honestly returns null, never a fabricated detail', () {
+      final action = PendingActionSummary(proposalId: 'A', actionType: 'send_email', stakes: 'S3', payload: const {}, createdAt: _day(1));
+      expect(summarizeForNeedsYouNow(action).detail, isNull);
+    });
+
+    test('a real external calendar invite shows the real title and invitee together', () {
+      final action = PendingActionSummary(
+        proposalId: 'A', actionType: 'create_calendar_event_external', stakes: 'S3',
+        payload: const {'title': 'Call with Jane', 'invitee_email': 'jane@company.com'},
+        createdAt: _day(1),
+      );
+      expect(summarizeForNeedsYouNow(action).detail, 'Call with Jane — with jane@company.com');
+    });
+
+    test('a real create_task shows the real task title', () {
+      final action = PendingActionSummary(
+        proposalId: 'A', actionType: 'create_task', stakes: 'S1',
+        payload: const {'title': 'Buy groceries'},
+        createdAt: _day(1),
+      );
+      expect(summarizeForNeedsYouNow(action).detail, 'Buy groceries');
+    });
+
+    test('a real log_expense shows the real payee and amount', () {
+      final action = PendingActionSummary(
+        proposalId: 'A', actionType: 'log_expense', stakes: 'S1',
+        payload: const {'payee': 'Coffee shop', 'amount': 4.5},
+        createdAt: _day(1),
+      );
+      expect(summarizeForNeedsYouNow(action).detail, 'Coffee shop (₹4.5)');
+    });
+
+    test('a real update_application_status shows the real company and new status', () {
+      final action = PendingActionSummary(
+        proposalId: 'A', actionType: 'update_application_status', stakes: 'S1',
+        payload: const {'company': 'Notion', 'new_status': 'interview_scheduled'},
+        createdAt: _day(1),
+      );
+      expect(summarizeForNeedsYouNow(action).detail, 'Notion → interview_scheduled');
+    });
+
+    test('a genuinely unrecognized action_type honestly returns a null detail, never a guess', () {
+      final action = PendingActionSummary(
+        proposalId: 'A', actionType: 'some_future_action_type', stakes: 'S1',
+        payload: const {'whatever': 'value'},
+        createdAt: _day(1),
+      );
+      expect(summarizeForNeedsYouNow(action).detail, isNull);
+    });
+  });
+
   group('readableActionType -- all 11 real ActionType values, cross-checked against the backend', () {
     test('covers every real backend ActionType with a genuinely readable label', () {
       const realTypes = [

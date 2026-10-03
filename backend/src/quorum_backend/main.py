@@ -58,6 +58,12 @@ from quorum_backend.auth.user_provisioning import get_or_create_user, resolve_in
 from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
 from quorum_backend.core.embeddings import EmbeddingError
+from quorum_backend.features.action_approval import (
+    PendingActionNotApprovable,
+    PendingActionNotFound,
+    approve_pending_action,
+    reject_pending_action,
+)
 from quorum_backend.features.career_digest import (
     fetch_company_digest,
     make_groq_compile_digest_call,
@@ -85,9 +91,17 @@ from quorum_backend.features.retry_queue_drainer import drain_due_jobs
 from quorum_backend.features.search import search as run_search
 from quorum_backend.features.self_test_harness import ScenarioResult, run_self_test, summarize
 from quorum_backend.features.spend_alert import run_spend_alert
+from quorum_backend.features.expenses import fetch_recent_expenses
 from quorum_backend.features.subscription_detective import fetch_detected_subscriptions
+from quorum_backend.features.task_status import (
+    TaskNotFound,
+    TaskNotUpdatable,
+    cancel_task,
+    complete_task,
+)
 from quorum_backend.features.tasks import fetch_tasks
 from quorum_backend.features.waiting_on import fetch_stale_waiting_on
+from quorum_backend.features.week_summary import fetch_week_summary
 from quorum_backend.features.today import (
     fetch_active_negotiations,
     fetch_pending_actions,
@@ -528,6 +542,60 @@ async def tasks(
     ]
 
 
+_TASK_NOT_FOUND_DETAIL = "No task with this id exists for your account."
+
+
+@app.post("/tasks/{task_id}/complete")
+async def complete_task_endpoint(
+    task_id: str,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live task completion -- closes a real, previously-
+    undiscovered gap: `tasks_screen.dart`'s own trailing status `Chip`
+    has looked like a button since it was written, but no real backend
+    route anywhere has ever let a real, signed-in user actually mark a
+    task done. See `features/task_status.py`'s own top-of-file docstring
+    for the full real account of why this is a direct route (skipping
+    the Gate entirely), not a new quick-capture natural-language path.
+    Real per-user scoped from this route's first line."""
+    try:
+        task_uuid = uuid.UUID(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND_DETAIL) from exc
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    try:
+        await complete_task(pool, user_id=internal_user_id, task_id=str(task_uuid))
+    except TaskNotFound as exc:
+        raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND_DETAIL) from exc
+    except TaskNotUpdatable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "done"}
+
+
+@app.post("/tasks/{task_id}/cancel")
+async def cancel_task_endpoint(
+    task_id: str,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live task cancellation -- the real, one other closed
+    transition `features/task_status.py` supports. Real per-user scoped
+    from this route's first line."""
+    try:
+        task_uuid = uuid.UUID(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND_DETAIL) from exc
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    try:
+        await cancel_task(pool, user_id=internal_user_id, task_id=str(task_uuid))
+    except TaskNotFound as exc:
+        raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND_DETAIL) from exc
+    except TaskNotUpdatable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "cancelled"}
+
+
 @app.post("/quick_capture")
 async def quick_capture_endpoint(
     body: QuickCaptureRequest,
@@ -945,6 +1013,27 @@ async def today(
     }
 
 
+@app.get("/today/summary")
+async def today_summary_endpoint(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live -- the redesign's own new "This week across your
+    agents" cross-domain strip (see `features/week_summary.py`'s own
+    top-of-file docstring for the full real reasoning). Real per-user
+    scoped from this route's first line, matching every other real
+    domain route in this backend."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    summary = await fetch_week_summary(pool, user_id=internal_user_id)
+    return {
+        "tasks_due_this_week": summary.tasks_due_this_week,
+        "month_to_date_spend": summary.month_to_date_spend,
+        "monthly_budget_limit": summary.monthly_budget_limit,
+        "applications_in_progress": summary.applications_in_progress,
+        "waiting_on_count": summary.waiting_on_count,
+    }
+
+
 @app.get("/negotiations/{negotiation_id}")
 async def negotiation_detail_endpoint(
     negotiation_id: str,
@@ -1017,7 +1106,15 @@ async def gate_reveal_endpoint(
     bundle = await fetch_gate_reveal(pool, user_id=internal_user_id, proposal_id=str(proposal_uuid))
     if bundle is None:
         raise HTTPException(status_code=404, detail=_GATE_REVEAL_NOT_FOUND_DETAIL)
-    return {"stakes": bundle.stakes, "findings": bundle.findings, "objections": bundle.objections}
+    return {
+        "stakes": bundle.stakes,
+        "findings": bundle.findings,
+        "objections": bundle.objections,
+        "action_type": bundle.action_type,
+        "gate_decision": bundle.gate_decision,
+        "resolved_at": bundle.resolved_at,
+        "payload": bundle.payload,
+    }
 
 
 @app.post("/negotiations/{negotiation_id}/choose", status_code=202)
@@ -1059,6 +1156,88 @@ async def choose_negotiation_option_endpoint(
     except InvalidChosenOption as exc:
         raise HTTPException(status_code=400, detail=f"'{body.chosen_option}' is not one of this negotiation's real options.") from exc
     return {"status": "accepted"}
+
+
+_PENDING_ACTION_NOT_FOUND_DETAIL = "No pending action with this id exists for your account."
+
+
+@app.post("/actions/{proposal_id}/approve")
+async def approve_action_endpoint(
+    proposal_id: str,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live human approval of a pending S3 action -- closes a
+    real, previously-undiscovered gap: `action_executor.py`'s own S3
+    human-approval backstop (`approved_by_user_id == user_id`) has
+    existed since it was written, but no real caller anywhere has ever
+    supplied it, so a genuine Gate `approve` on `SEND_EMAIL`/`CREATE_
+    CALENDAR_EVENT_EXTERNAL` has never once been able to actually
+    execute. Real per-user scoped from this route's first line, the
+    same discipline `GET /gate_reveal`/`POST /negotiations/.../choose`
+    already established. See `features/action_approval.py`'s own
+    top-of-file docstring for the full real scope boundary (exactly
+    which action types this can execute, and why)."""
+    try:
+        proposal_uuid = uuid.UUID(proposal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=_PENDING_ACTION_NOT_FOUND_DETAIL) from exc
+    # REAL, DISCLOSED FIX (found live by this session's own CI run, not
+    # hypothetical): this route used to reject EVERY approve attempt
+    # with a real 503 the moment Google OAuth wasn't configured --
+    # before ever checking whether the real row even exists, or whether
+    # the Gate actually approved it. That's wrong for the real 404/409
+    # cases, which never need a real Google credential at all (confirmed
+    # directly: `approve_pending_action()`'s own not-found/not-approvable
+    # checks all run before it ever touches `client_id`/`client_secret`/
+    # `encryption_key`). Real Google OAuth settings are now passed
+    # through as-is (possibly `None`) -- `approve_pending_action()`
+    # itself owns the honest "Google OAuth isn't configured" failure,
+    # and only produces it once execution has genuinely reached the
+    # point of needing a real Google credential.
+    settings = get_settings()
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    try:
+        result = await approve_pending_action(
+            pool,
+            user_id=internal_user_id,
+            proposal_id=str(proposal_uuid),
+            client_id=settings.google_oauth_client_id,
+            client_secret=settings.google_oauth_client_secret,
+            encryption_key=settings.google_token_encryption_key,
+        )
+    except PendingActionNotFound as exc:
+        raise HTTPException(status_code=404, detail=_PENDING_ACTION_NOT_FOUND_DETAIL) from exc
+    except PendingActionNotApprovable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not result.executed:
+        raise HTTPException(status_code=502, detail=result.detail)
+    return {"status": "approved", "detail": result.detail}
+
+
+@app.post("/actions/{proposal_id}/reject")
+async def reject_action_endpoint(
+    proposal_id: str,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live dismissal of any pending action this user owns --
+    deliberately broader than approval (works regardless of
+    `gate_decision`/`action_type`; see `features/action_approval.py`'s
+    own top-of-file docstring for why). Never executes anything. Real
+    per-user scoped from this route's first line."""
+    try:
+        proposal_uuid = uuid.UUID(proposal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=_PENDING_ACTION_NOT_FOUND_DETAIL) from exc
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    try:
+        await reject_pending_action(pool, user_id=internal_user_id, proposal_id=str(proposal_uuid))
+    except PendingActionNotFound as exc:
+        raise HTTPException(status_code=404, detail=_PENDING_ACTION_NOT_FOUND_DETAIL) from exc
+    except PendingActionNotApprovable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "rejected"}
 
 
 @app.get("/search")
@@ -1270,6 +1449,29 @@ async def finance_subscriptions(
             "average_amount": record.average_amount,
             "occurrences": record.occurrences,
             "average_interval_days": record.average_interval_days,
+        }
+        for record in records
+    ]
+
+
+@app.get("/finance/expenses")
+async def finance_expenses(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> list[dict]:
+    """Real, live -- the redesign's own new "Finance hub" work: a
+    person's actual real expense rows, most recent first, backing the
+    new recent-expenses list above the existing subscriptions section.
+    See `features/expenses.py`'s own top-of-file docstring for the real
+    gap this closes. Real per-user scoped from this route's first line."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    records = await fetch_recent_expenses(pool, user_id=internal_user_id)
+    return [
+        {
+            "expense_id": record.expense_id,
+            "payee": record.payee,
+            "amount": record.amount,
+            "occurred_at": record.occurred_at,
         }
         for record in records
     ]

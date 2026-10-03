@@ -82,7 +82,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:quorum_mobile/api/action_approval_api.dart';
+import 'package:quorum_mobile/api/expenses_api.dart';
 import 'package:quorum_mobile/api/health_api.dart';
+import 'package:quorum_mobile/api/task_status_api.dart';
+import 'package:quorum_mobile/api/week_summary_api.dart';
 import 'package:quorum_mobile/db/database.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
@@ -143,12 +147,36 @@ class MainShell extends ConsumerStatefulWidget {
   final DeletionConfirmer? confirmDelete;
   final TaskListFetcher? fetchTasks;
   final PredictiveRiskFetcher? fetchPredictiveRisk;
+
+  /// REAL, NEW -- closes the real, confirmed-live bug `features/task_
+  /// status.py`/`task_status_api.dart` exist to fix: the Tasks screen's
+  /// own trailing status `Chip` has looked like a button since it was
+  /// written but never did anything. Both independently `null`-safe.
+  final CompleteTaskCall? completeTask;
+  final CancelTaskCall? cancelTask;
+
+  /// REAL, NEW -- the redesign's own real "This week across your
+  /// agents" cross-domain strip. See `WeekSummaryStrip`'s own docstring
+  /// for the full real reasoning.
+  final WeekSummaryFetcher? fetchWeekSummary;
   final GateRevealFetcher? fetchGateReveal;
+
+  /// REAL, NEW -- closes the real gap `action_approval.py`/`action_
+  /// approval_api.dart` exist to fix: `GateRevealScreen` has always
+  /// been read-only. Both independently `null`-safe like every other
+  /// optional fetcher in this shell -- when unset, Gate Reveal still
+  /// renders, just with no real way to act (the same honest "not yet
+  /// connected" degrade used everywhere else here).
+  final ApproveActionCall? approveAction;
+  final RejectActionCall? rejectAction;
   final NegotiationFetcher? fetchNegotiation;
   final ChooseNegotiationOption? chooseNegotiation;
   final CareerFetcher? fetchCareerApplications;
   final CareerDigestFetcher? fetchCareerDigest;
   final FinanceFetcher? fetchFinance;
+
+  /// REAL, NEW -- the redesign's own real "Finance hub" work.
+  final ExpensesFetcher? fetchExpenses;
   final WaitingOnFetcher? fetchWaitingOn;
   final SearchFetcher? fetchSearch;
   final CalendarSyncTrigger? syncCalendar;
@@ -199,12 +227,18 @@ class MainShell extends ConsumerStatefulWidget {
     this.confirmDelete,
     this.fetchTasks,
     this.fetchPredictiveRisk,
+    this.completeTask,
+    this.cancelTask,
+    this.fetchWeekSummary,
     this.fetchGateReveal,
+    this.approveAction,
+    this.rejectAction,
     this.fetchNegotiation,
     this.chooseNegotiation,
     this.fetchCareerApplications,
     this.fetchCareerDigest,
     this.fetchFinance,
+    this.fetchExpenses,
     this.fetchWaitingOn,
     this.fetchSearch,
     this.syncCalendar,
@@ -286,7 +320,12 @@ class _MainShellState extends ConsumerState<MainShell> {
           fetch: widget.fetchToday,
           fetchTasks: widget.fetchTasks,
           fetchPredictiveRisk: widget.fetchPredictiveRisk,
+          completeTask: widget.completeTask,
+          cancelTask: widget.cancelTask,
+          fetchWeekSummary: widget.fetchWeekSummary,
           fetchGateReveal: widget.fetchGateReveal,
+          approveAction: widget.approveAction,
+          rejectAction: widget.rejectAction,
           fetchNegotiation: widget.fetchNegotiation,
           chooseNegotiation: widget.chooseNegotiation,
         );
@@ -301,10 +340,12 @@ class _MainShellState extends ConsumerState<MainShell> {
           fetchCareerApplications: widget.fetchCareerApplications,
           fetchCareerDigest: widget.fetchCareerDigest,
           fetchFinance: widget.fetchFinance,
+          fetchExpenses: widget.fetchExpenses,
           fetchWaitingOn: widget.fetchWaitingOn,
           fetchSearch: widget.fetchSearch,
           syncCalendar: widget.syncCalendar,
           fetchCalendarEvents: widget.fetchCalendarEvents,
+          fetchWeekSummary: widget.fetchWeekSummary,
           onSignOut: widget.onSignOut,
         );
       default:
@@ -413,7 +454,12 @@ class _TodayTab extends StatefulWidget {
   final TodayDataFetcher? fetch;
   final TaskListFetcher? fetchTasks;
   final PredictiveRiskFetcher? fetchPredictiveRisk;
+  final CompleteTaskCall? completeTask;
+  final CancelTaskCall? cancelTask;
+  final WeekSummaryFetcher? fetchWeekSummary;
   final GateRevealFetcher? fetchGateReveal;
+  final ApproveActionCall? approveAction;
+  final RejectActionCall? rejectAction;
   final NegotiationFetcher? fetchNegotiation;
   final ChooseNegotiationOption? chooseNegotiation;
 
@@ -421,7 +467,12 @@ class _TodayTab extends StatefulWidget {
     this.fetch,
     this.fetchTasks,
     this.fetchPredictiveRisk,
+    this.completeTask,
+    this.cancelTask,
+    this.fetchWeekSummary,
     this.fetchGateReveal,
+    this.approveAction,
+    this.rejectAction,
     this.fetchNegotiation,
     this.chooseNegotiation,
   });
@@ -543,13 +594,29 @@ class _TodayTabState extends State<_TodayTab> {
             now: DateTime.now(),
             fetchTasks: widget.fetchTasks,
             fetchPredictiveRisk: widget.fetchPredictiveRisk,
+            completeTask: widget.completeTask,
+            cancelTask: widget.cancelTask,
+            fetchWeekSummary: widget.fetchWeekSummary,
             onTapAction: gateReveal == null
                 ? null
-                : (action) => Navigator.of(context).push(
+                : (action) async {
+                    await Navigator.of(context).push(
                       MaterialPageRoute(
-                        builder: (_) => _GateRevealLoader(fetch: () => gateReveal(action.proposalId)),
+                        builder: (_) => _GateRevealLoader(
+                          proposalId: action.proposalId,
+                          fetch: () => gateReveal(action.proposalId),
+                          approveAction: widget.approveAction,
+                          rejectAction: widget.rejectAction,
+                        ),
                       ),
-                    ),
+                    );
+                    // Same real reason as the negotiation reload just
+                    // below: approving/rejecting resolves this row
+                    // server-side, and Today's own Needs-You-Now list
+                    // must reflect that the moment the user comes back
+                    // -- not just on the next cold launch (DEC-187).
+                    if (context.mounted) _reload();
+                  },
             onTapNegotiation: negotiation == null
                 ? null
                 : (negotiationId) async {
@@ -581,9 +648,17 @@ class _TodayTabState extends State<_TodayTab> {
 /// The Gate reveal's real drill-through: "why is the Gate asking about
 /// THIS" for a specific pending action, triggered from Needs You Now.
 class _GateRevealLoader extends StatelessWidget {
+  final String proposalId;
   final Future<GateRevealBundle> Function() fetch;
+  final ApproveActionCall? approveAction;
+  final RejectActionCall? rejectAction;
 
-  const _GateRevealLoader({required this.fetch});
+  const _GateRevealLoader({
+    required this.proposalId,
+    required this.fetch,
+    this.approveAction,
+    this.rejectAction,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -599,7 +674,12 @@ class _GateRevealLoader extends StatelessWidget {
             return Center(child: Text("Couldn't load the Gate reveal: ${snapshot.error}"));
           }
           final bundle = snapshot.data!;
-          return GateRevealScreen(stakes: bundle.stakes, findings: bundle.findings, objections: bundle.objections);
+          return GateRevealScreen(
+            proposalId: proposalId,
+            bundle: bundle,
+            onApprove: approveAction,
+            onReject: rejectAction,
+          );
         },
       ),
     );

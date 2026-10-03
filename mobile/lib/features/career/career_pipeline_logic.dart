@@ -96,3 +96,47 @@ List<String> orderedStatusKeys(Map<String, List<CareerApplication>> grouped) {
   final unknown = grouped.keys.where((s) => !knownStatusOrder.contains(s)).toList()..sort();
   return [...known, ...unknown];
 }
+
+/// REAL, DISCLOSED OVERRIDE (the redesign's own real Career Pipeline
+/// richness work) -- `career_pipeline_screen.dart`'s own header has
+/// documented, since `DEC-157`, a real, deliberate decision NOT to
+/// color-code by status at all, reasoned directly from the real,
+/// confirmed fact this file's own header already establishes:
+/// `applications.status` is genuinely open vocabulary, and only two of
+/// four `knownStatusOrder` values were confirmed real anywhere in this
+/// codebase at the time. That reasoning is still sound for a genuinely
+/// UNKNOWN status (see the `neutral` fallback below, unchanged from
+/// before) -- but this session's own approved redesign plan explicitly
+/// asked for real color-coding on the four real, KNOWN statuses
+/// specifically: "Offer -> verified/green, Interview -> a distinct
+/// accent, Rejected -> muted, Applied -> neutral." A considered,
+/// disclosed override for known values, not a silent reversal of the
+/// open-vocabulary caution itself.
+///
+/// Returns a category, not a `Color`, to keep this file's own real,
+/// zero-Flutter-dependency testability tier -- `QuorumStatusColors`
+/// lives in `theme/quorum_theme.dart`, which imports `package:flutter/
+/// material.dart`. `career_pipeline_screen.dart` (which already depends
+/// on Flutter) maps this category to the real color, the same real
+/// "pure logic returns an enum, the widget maps it to a Color" split
+/// `gate_reveal_logic.dart`'s own `EvidenceVisualState` already
+/// established.
+enum StatusColorCategory { positive, attention, muted, neutral }
+
+StatusColorCategory colorCategoryForStatus(String status) {
+  switch (status) {
+    case 'offer':
+      return StatusColorCategory.positive;
+    case 'interview_scheduled':
+      return StatusColorCategory.attention;
+    case 'rejected':
+      return StatusColorCategory.muted;
+    case 'applied':
+      return StatusColorCategory.neutral;
+    default:
+      // A genuinely unknown status -- the real, original `DEC-157`
+      // caution still applies in full: never invent a color/meaning for
+      // a real value this codebase has never actually seen.
+      return StatusColorCategory.neutral;
+  }
+}

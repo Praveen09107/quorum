@@ -25,7 +25,7 @@ async def user_id(pool):
     await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(uid))
 
 
-# --- _describe_action / build_honesty_feed: pure ---
+# --- describe_action / build_honesty_feed: pure ---
 
 
 def test_build_honesty_feed_an_empty_list_is_a_real_honest_no_data_state():
