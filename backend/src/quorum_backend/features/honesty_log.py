@@ -52,7 +52,7 @@ SILENTLY INVENTED: `QUORUM_DATA_CONTRACTS.md` §5.13 names a real
 `description` field in its own JSON example ("Replied to Priya about
 Thursday") but never specifies how to construct one -- `action_events`
 has no dedicated description column, only `action_type`/`payload`.
-`_describe_action()` below is a real, honest, human-readable rendering
+`describe_action()` below is a real, honest, human-readable rendering
 built directly from those two real, already-stored fields, defensive
 throughout (a real payload missing an expected key never raises, it
 just produces a slightly less specific real sentence) -- not scraped
@@ -103,11 +103,21 @@ class HonestyFeed:
     genuinely_uncertain: list[LoggedAction]
 
 
-def _describe_action(action_type: str, payload: dict) -> str:
+def describe_action(action_type: str, payload: dict) -> str:
     """Real, honest, human-readable descriptions -- see this module's
     own top-of-file docstring for why this is a real, new design
     decision, not a recalled spec value. Defensive throughout: a real
-    payload missing an expected key never raises."""
+    payload missing an expected key never raises.
+
+    REAL, DISCLOSED FIX (the redesign's own real bug-fix work): made
+    public (dropped the leading underscore) so `features/search.py` can
+    reuse this exact same formatter for its own `decision`-type results
+    -- closes a real, confirmed-live bug found during this session's
+    on-device audit (raw jargon like `"update_budget: caught_by_gate"`
+    shown directly in a real search result) rather than building a
+    second, parallel human-readable mapping (the same "reuse, don't
+    re-derive" precedent `gate_reveal_screen.dart`'s own public
+    `FindingRow` already set on the mobile side, `DEC-153`)."""
     if action_type == ActionType.CREATE_TASK.value:
         return f"Created task: {payload.get('title') or 'a real task'}"
     if action_type == ActionType.LOG_EXPENSE.value:
@@ -143,7 +153,7 @@ def build_honesty_feed(rows: list[tuple[str, datetime, str, str, dict]]) -> Hone
             action_id=action_id,
             timestamp=timestamp,
             outcome=outcome,
-            description=_describe_action(action_type, payload),
+            description=describe_action(action_type, payload),
         )
         if outcome == "approved_unchanged":
             successes.append(entry)

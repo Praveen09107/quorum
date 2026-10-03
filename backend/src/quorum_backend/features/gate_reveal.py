@@ -47,6 +47,35 @@ class GateRevealBundle:
     stakes: str
     findings: list[dict] | None
     objections: list[dict] | None
+    # REAL, DISCLOSED FIX (the redesign's own "real Approve/Reject"
+    # work): the real, previously-undiscovered gap that this whole
+    # screen had no way to act on what it showed meant this bundle
+    # never needed to say whether the action was still pending, or
+    # which real action_type it even was. Both are now real, needed
+    # facts the mobile client uses to decide whether to show real
+    # Approve/Reject controls at all -- see `features/action_approval.
+    # py`'s own top-of-file docstring for the exact, closed set of
+    # action types a real "Approve" can execute.
+    action_type: str
+    gate_decision: str
+    resolved_at: str | None
+    # REAL, DISCLOSED FIX (CRITICAL-tier cross-model review of `features/
+    # action_approval.py`, HIGH-3): the real payload a human "Approve"
+    # tap executes is the Judge-possibly-REVISED `final_payload` --
+    # `retry_queue_drainer.py::persist_gate_verdict()`'s own real
+    # `revised_payload` path means this can genuinely differ from
+    # whatever the user originally typed into quick-capture. Before this
+    # fix, no real screen anywhere ever rendered it: a user could tap
+    # Approve on a real `SEND_EMAIL`/`CREATE_CALENDAR_EVENT_EXTERNAL`
+    # action without ever seeing the real recipient, subject, body, or
+    # invitee the Gate was about to send on their behalf -- meeting the
+    # letter of "S3 always requires explicit human approval" while
+    # missing its real substance (the human approving something they
+    # never actually saw). Exposed here as a plain `dict`, the exact
+    # same real JSON `action_events.payload` already stores -- never
+    # re-shaped or filtered, since the mobile client needs to render
+    # whichever real keys a given `action_type` actually carries.
+    payload: dict
 
 
 async def fetch_gate_reveal(pool: asyncpg.Pool, *, user_id: str, proposal_id: str) -> GateRevealBundle | None:
@@ -70,7 +99,8 @@ async def fetch_gate_reveal(pool: asyncpg.Pool, *, user_id: str, proposal_id: st
     before migration `0013` -- see this module's own header for why
     that distinction is load-bearing, not pedantry."""
     row = await pool.fetchrow(
-        "SELECT stakes, findings, objections FROM action_events WHERE proposal_id = $1 AND user_id = $2",
+        "SELECT stakes, findings, objections, action_type, gate_decision, resolved_at, payload FROM action_events "
+        "WHERE proposal_id = $1 AND user_id = $2",
         uuid.UUID(proposal_id),
         uuid.UUID(user_id),
     )
@@ -78,4 +108,13 @@ async def fetch_gate_reveal(pool: asyncpg.Pool, *, user_id: str, proposal_id: st
         return None
     findings = json.loads(row["findings"]) if row["findings"] is not None else None
     objections = json.loads(row["objections"]) if row["objections"] is not None else None
-    return GateRevealBundle(stakes=row["stakes"], findings=findings, objections=objections)
+    resolved_at = row["resolved_at"].isoformat() if row["resolved_at"] is not None else None
+    return GateRevealBundle(
+        stakes=row["stakes"],
+        findings=findings,
+        objections=objections,
+        action_type=row["action_type"],
+        gate_decision=row["gate_decision"],
+        resolved_at=resolved_at,
+        payload=json.loads(row["payload"]),
+    )

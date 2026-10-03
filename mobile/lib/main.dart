@@ -99,8 +99,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:quorum_mobile/api/account_api.dart';
+import 'package:quorum_mobile/api/action_approval_api.dart';
 import 'package:quorum_mobile/api/career_digest_api.dart';
 import 'package:quorum_mobile/api/career_pipeline_api.dart';
+import 'package:quorum_mobile/api/expenses_api.dart';
 import 'package:quorum_mobile/api/finance_api.dart';
 import 'package:quorum_mobile/api/gate_reveal_api.dart';
 import 'package:quorum_mobile/api/health_api.dart';
@@ -109,11 +111,13 @@ import 'package:quorum_mobile/api/negotiation_api.dart';
 import 'package:quorum_mobile/api/predictive_risk_api.dart';
 import 'package:quorum_mobile/api/quick_capture_api.dart';
 import 'package:quorum_mobile/api/search_api.dart';
+import 'package:quorum_mobile/api/task_status_api.dart';
 import 'package:quorum_mobile/api/tasks_api.dart';
 import 'package:quorum_mobile/api/today_api.dart';
 import 'package:quorum_mobile/api/trust_api.dart';
 import 'package:quorum_mobile/api/trust_digest_api.dart';
 import 'package:quorum_mobile/api/waiting_on_api.dart';
+import 'package:quorum_mobile/api/week_summary_api.dart';
 import 'package:quorum_mobile/auth/auth_api.dart';
 import 'package:quorum_mobile/auth/auth_controller.dart';
 import 'package:quorum_mobile/auth/login_screen.dart';
@@ -261,6 +265,24 @@ class _QuorumAppState extends State<QuorumApp> {
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
+            // REAL, NEW -- closes the real, confirmed-live bug this
+            // redesign's own bug-fix pass found: the Tasks screen's own
+            // trailing status chip has looked like a button since it
+            // was written but never actually did anything.
+            completeTask: createCompleteTaskFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            cancelTask: createCancelTaskFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // REAL, NEW -- the redesign's own new "This week across your
+            // agents" cross-domain strip.
+            fetchWeekSummary: createWeekSummaryFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
             fetchCareerApplications: createCareerPipelineFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
@@ -273,6 +295,11 @@ class _QuorumAppState extends State<QuorumApp> {
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
+            // REAL, NEW -- the redesign's own real "Finance hub" work.
+            fetchExpenses: createExpensesFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
             fetchSearch: createSearchFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
@@ -282,6 +309,18 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             fetchGateReveal: createGateRevealFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // REAL, NEW -- closes the real gap `action_approval.py`/
+            // `action_approval_api.dart` exist to fix: the first real
+            // way a signed-in user can act on a pending S3 "Needs you
+            // now" card instead of only ever reading about it.
+            approveAction: createApproveActionFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            rejectAction: createRejectActionFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),

@@ -2,16 +2,18 @@
 // was written. Structurally correct against Flutter's documented widget
 // API; `flutter analyze` on a real machine is the actual verification.
 //
-// Phase 8 Session 3 (`DEC-157`): every application row gets the same
-// neutral `QuorumIconBadge` (no per-status color) -- deliberately, unlike
-// Tasks' real per-status color coding. `applications.status` is a
-// genuinely open vocabulary (no database `CHECK` constraint,
-// `career_pipeline_logic.dart`'s own header confirms only two of the
-// four `knownStatusOrder` values are real anywhere in this codebase
-// today) -- inventing a color per status now would mean guessing a
-// meaning for values that don't exist yet, exactly the kind of
-// unrequested architecture `CLAUDE.md` Rule 3 exists to prevent. A
-// neutral, identical badge for every row is the honest choice here.
+// REAL, DISCLOSED OVERRIDE (the redesign's own real Career Pipeline
+// richness work) -- this header used to say, as a Phase 8 Session 3
+// (`DEC-157`) decision, that every application row deliberately gets the
+// same neutral badge with no per-status color, reasoned from `applications
+// .status` being genuinely open vocabulary. That reasoning is still
+// honored in full for a genuinely UNKNOWN status (see `career_pipeline_
+// logic.dart`'s own `colorCategoryForStatus()`, whose `default` case
+// still falls back to neutral) -- but this session's own approved
+// redesign plan explicitly asked for real color-coding on the four real,
+// KNOWN statuses specifically, so each row's `QuorumIconBadge` now uses
+// `colorCategoryForStatus()`'s real, disclosed mapping instead of a
+// single, always-neutral color.
 
 import 'package:flutter/material.dart';
 
@@ -59,7 +61,15 @@ class _StatusSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final badgeColor = Theme.of(context).colorScheme.onSurfaceVariant;
+    // Every real row in this section shares the same real `status` (that
+    // is what groups them into a section at all), so the real color
+    // category is computed once per section, not once per row.
+    final badgeColor = switch (colorCategoryForStatus(status)) {
+      StatusColorCategory.positive => QuorumStatusColors.verified,
+      StatusColorCategory.attention => QuorumStatusColors.needsAttention,
+      StatusColorCategory.muted => QuorumStatusColors.uncertain,
+      StatusColorCategory.neutral => Theme.of(context).colorScheme.onSurfaceVariant,
+    };
 
     return Padding(
       padding: const EdgeInsets.only(bottom: QuorumSpacing.md),
