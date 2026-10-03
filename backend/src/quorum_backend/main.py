@@ -1182,9 +1182,20 @@ async def approve_action_endpoint(
         proposal_uuid = uuid.UUID(proposal_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=_PENDING_ACTION_NOT_FOUND_DETAIL) from exc
+    # REAL, DISCLOSED FIX (found live by this session's own CI run, not
+    # hypothetical): this route used to reject EVERY approve attempt
+    # with a real 503 the moment Google OAuth wasn't configured --
+    # before ever checking whether the real row even exists, or whether
+    # the Gate actually approved it. That's wrong for the real 404/409
+    # cases, which never need a real Google credential at all (confirmed
+    # directly: `approve_pending_action()`'s own not-found/not-approvable
+    # checks all run before it ever touches `client_id`/`client_secret`/
+    # `encryption_key`). Real Google OAuth settings are now passed
+    # through as-is (possibly `None`) -- `approve_pending_action()`
+    # itself owns the honest "Google OAuth isn't configured" failure,
+    # and only produces it once execution has genuinely reached the
+    # point of needing a real Google credential.
     settings = get_settings()
-    if settings.google_oauth_client_id is None or settings.google_oauth_client_secret is None or settings.google_token_encryption_key is None:
-        raise HTTPException(status_code=503, detail="Approving a real action isn't available yet -- Google OAuth isn't fully configured on this deployment.")
     internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
     try:
         result = await approve_pending_action(

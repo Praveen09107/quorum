@@ -133,9 +133,9 @@ async def approve_pending_action(
     *,
     user_id: str,
     proposal_id: str,
-    client_id: str,
-    client_secret: str,
-    encryption_key: str,
+    client_id: str | None,
+    client_secret: str | None,
+    encryption_key: str | None,
     http_client: httpx.AsyncClient | None = None,
 ) -> ExecutionResult:
     """The real, live approval path. Raises `PendingActionNotFound`/
@@ -144,10 +144,23 @@ async def approve_pending_action(
     no-ops. A real `ExecutionResult` with `executed=False` (never an
     exception) is returned for a genuine, anticipated real-world
     failure during execution itself (no Google account connected, a
-    real Google API error) -- the row is deliberately left unresolved
-    in that case so a real retry (after re-authorizing, say) remains
-    possible, matching `action_executor.py`'s own "never fabricate
-    success" discipline.
+    real Google API error, Google OAuth genuinely not configured on
+    this deployment) -- the row is deliberately left unresolved in that
+    case so a real retry (after re-authorizing, say) remains possible,
+    matching `action_executor.py`'s own "never fabricate success"
+    discipline.
+
+    REAL, DISCLOSED FIX (found live by this session's own CI run):
+    `client_id`/`client_secret`/`encryption_key` are genuinely `None`-
+    able -- the real caller (`main.py`'s own route) used to pre-check
+    these and refuse with a real 503 before ever reaching this
+    function at all, which incorrectly blocked the real 404/409 cases
+    below (neither needs a real Google credential). The not-found/
+    not-approvable checks below still run first, exactly as before;
+    only once execution has genuinely reached the point of needing a
+    real Google credential does a missing one produce an honest,
+    non-resolving failure, the same shape as "no Google account
+    connected."
 
     REAL, DISCLOSED FIX (CRITICAL-tier cross-model review, HIGH-1/
     HIGH-2): the entire real row-claim-through-resolution sequence now
@@ -197,6 +210,12 @@ async def approve_pending_action(
         if action_type not in _HUMAN_APPROVABLE_ACTION_TYPES:
             raise PendingActionNotApprovable(
                 f"{action_type.value!r} has no real human-approval execution path -- nothing to do here."
+            )
+
+        if client_id is None or client_secret is None or encryption_key is None:
+            return ExecutionResult(
+                executed=False,
+                detail="Approving a real action isn't available yet -- Google OAuth isn't fully configured on this deployment.",
             )
 
         try:

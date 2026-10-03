@@ -162,6 +162,48 @@ async def test_approve_pending_action_raises_not_approvable_for_an_action_type_w
         )
 
 
+async def test_approve_pending_action_is_an_honest_failure_when_google_oauth_is_not_configured_at_all(pool, user_id):
+    """REAL, DISCLOSED FIX (found live by this session's own real CI
+    run, not hypothetical): the real route used to pre-check `client_id
+    `/`client_secret`/`encryption_key` and refuse with a blanket 503
+    before this function was ever called -- which incorrectly blocked
+    the real not-found/not-approvable cases too, since CI deliberately
+    has no real Google OAuth client secret configured. `None` for any
+    of the three must now produce this same honest, non-resolving
+    `executed=False` -- the row stays open for a real retry once
+    configured, never fabricated as resolved."""
+    proposal_id = await _seed_row(pool, user_id=user_id)
+    result = await approve_pending_action(
+        pool, user_id=user_id, proposal_id=proposal_id,
+        client_id=None, client_secret=None, encryption_key=None,
+    )
+    assert result.executed is False
+    assert "google" in result.detail.lower()
+    row = await pool.fetchrow("SELECT resolved_at FROM action_events WHERE proposal_id = $1", uuid.UUID(proposal_id))
+    assert row["resolved_at"] is None
+
+
+async def test_approve_pending_action_checks_not_found_and_not_approvable_before_ever_needing_a_real_google_credential(pool, user_id):
+    """The real, load-bearing property the route-level fix above relies
+    on: these checks must run, and raise, before this function ever
+    looks at `client_id`/`client_secret`/`encryption_key` -- proven
+    directly by passing `None` for all three and confirming the real
+    not-found/not-approvable exceptions still fire, not a crash from
+    touching a `None` credential."""
+    with pytest.raises(PendingActionNotFound):
+        await approve_pending_action(
+            pool, user_id=user_id, proposal_id=str(uuid.uuid4()),
+            client_id=None, client_secret=None, encryption_key=None,
+        )
+
+    already_resolved = await _seed_row(pool, user_id=user_id, resolved=True)
+    with pytest.raises(PendingActionNotApprovable):
+        await approve_pending_action(
+            pool, user_id=user_id, proposal_id=already_resolved,
+            client_id=None, client_secret=None, encryption_key=None,
+        )
+
+
 async def test_approve_pending_action_is_an_honest_failure_when_no_google_account_is_connected(pool, user_id):
     # This real test user has zero real google_oauth_tokens rows --
     # confirms the real, honest "no account connected" failure path,
