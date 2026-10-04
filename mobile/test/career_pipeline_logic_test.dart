@@ -96,4 +96,26 @@ void main() {
       expect(orderedStatusKeys(grouped), ['ghosted', 'withdrawn']);
     });
   });
+
+  group('colorCategoryForStatus -- the redesign\'s own real, disclosed override of DEC-157', () {
+    test('a real offer gets the real positive category', () {
+      expect(colorCategoryForStatus('offer'), StatusColorCategory.positive);
+    });
+
+    test('a real interview_scheduled gets the real attention category', () {
+      expect(colorCategoryForStatus('interview_scheduled'), StatusColorCategory.attention);
+    });
+
+    test('a real rejected gets the real muted category', () {
+      expect(colorCategoryForStatus('rejected'), StatusColorCategory.muted);
+    });
+
+    test('a real applied gets the real neutral category', () {
+      expect(colorCategoryForStatus('applied'), StatusColorCategory.neutral);
+    });
+
+    test('a genuinely unrecognized status falls back to neutral -- the original DEC-157 caution, still honored for unknown values', () {
+      expect(colorCategoryForStatus('ghosted'), StatusColorCategory.neutral);
+    });
+  });
 }

@@ -60,3 +60,28 @@ def test_email_domain_authorized_for_its_own_real_tools_only():
         raise AssertionError("email domain must not be authorized for finance tools")
     except ToolAuthorizationError:
         pass
+
+
+def test_build_reply_proposal_includes_a_real_subject_when_given_one():
+    """`DEC-189`: the payload gained an optional `subject`, closing the
+    real gap that made every executed send go out with an empty Subject
+    header. `action_executor.py` already read `payload.get("subject")`
+    -- the defect was always on this, the producing, side."""
+    proposal = build_reply_proposal("sarah@example.com", "Body text.", subject="Contract Monday")
+    assert proposal.payload["subject"] == "Contract Monday"
+    assert proposal.payload["to"] == "sarah@example.com"
+    assert proposal.payload["body"] == "Body text."
+
+
+def test_build_reply_proposal_omits_subject_entirely_when_absent_or_blank():
+    """Kept OPTIONAL deliberately, so the existing `draft_reply_node`
+    caller -- which has no subject to give -- produces exactly today's
+    behavior rather than a key with an empty string in it."""
+    for subject in (None, "", "   "):
+        proposal = build_reply_proposal("sarah@example.com", "Body text.", subject=subject)
+        assert "subject" not in proposal.payload, f"blank subject {subject!r} must not create the key"
+
+
+def test_build_reply_proposal_strips_surrounding_whitespace_from_subject():
+    proposal = build_reply_proposal("sarah@example.com", "Body.", subject="  Padded  ")
+    assert proposal.payload["subject"] == "Padded"
