@@ -6,6 +6,7 @@
 
 import 'package:flutter/material.dart';
 
+import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_screen.dart';
 import 'package:quorum_mobile/features/quick_capture/quick_capture_logic.dart';
 import 'package:quorum_mobile/theme/quorum_theme.dart';
@@ -121,6 +122,13 @@ class _QuickCaptureScreenState extends State<QuickCaptureScreen> {
 /// for the whole result (never a `ListView` nested inside another
 /// scrollable, the same layout discipline `today_screen.dart`'s own
 /// header already establishes for this codebase).
+///
+/// REAL, DISCLOSED FIX (the redesign's own real Quick-capture richness
+/// work): now also renders the real Stage B section (reusing `gate_
+/// reveal_screen.dart`'s own public `StageBSection`) whenever `result
+/// .stakes` genuinely reached Stage B -- closes the real, confirmed gap
+/// where this screen's own real `/quick_capture` response has always
+/// carried real `objections` on every call, silently dropped until now.
 class _QuickCaptureResultView extends StatelessWidget {
   final QuickCaptureResultData result;
 
@@ -128,6 +136,7 @@ class _QuickCaptureResultView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ranStageB = stageBRanForStakes(result.stakes);
     return ListView(
       padding: const EdgeInsets.all(QuorumSpacing.md),
       children: [
@@ -152,6 +161,17 @@ class _QuickCaptureResultView extends StatelessWidget {
         Text('What the Gate checked', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: QuorumSpacing.sm),
         for (final finding in result.findings) FindingRow(finding: finding),
+        // Stage B only ever renders if this real proposal's own real
+        // stakes genuinely reached it (S2/S3) -- never inferred from
+        // whether `objections` happens to be non-empty, the same real
+        // `stageBRanForStakes()` discipline `gate_reveal_screen.dart`
+        // itself already holds to (DEC-146).
+        if (ranStageB) ...[
+          const Divider(height: QuorumSpacing.xl),
+          Text('Stage B — Critic review', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: QuorumSpacing.sm),
+          StageBSection(summary: summarizeStageB(result.objections)),
+        ],
       ],
     );
   }

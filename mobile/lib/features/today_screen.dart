@@ -45,11 +45,14 @@ import 'package:quorum_mobile/features/computed_state.dart';
 import 'package:quorum_mobile/features/predictive_risk/predictive_risk_logic.dart';
 import 'package:quorum_mobile/features/tasks/tasks_logic.dart';
 import 'package:quorum_mobile/features/tasks/tasks_screen.dart';
+import 'package:quorum_mobile/features/today/holding_steady_logic.dart';
 import 'package:quorum_mobile/features/today/holding_steady_zone.dart';
 import 'package:quorum_mobile/features/today/in_motion_logic.dart';
 import 'package:quorum_mobile/features/today/in_motion_zone.dart';
 import 'package:quorum_mobile/features/today/needs_you_now_logic.dart';
 import 'package:quorum_mobile/features/today/needs_you_now_zone.dart';
+import 'package:quorum_mobile/features/today/week_summary_logic.dart';
+import 'package:quorum_mobile/features/today/week_summary_strip.dart';
 import 'package:quorum_mobile/theme/spacing.dart';
 
 /// A real, disclosed bundling type -- no document in this project's
@@ -93,6 +96,19 @@ class TodayScreen extends StatelessWidget {
   /// screen this banner lives on.
   final Future<RiskAssessmentData> Function()? fetchPredictiveRisk;
 
+  /// REAL, DISCLOSED FIX (the redesign's own real bug-fix work): real,
+  /// optional injected actions for the Tasks screen this same "View
+  /// tasks" link opens -- see `TasksScreen.onComplete`/`onCancel`'s own
+  /// docstring for the real, confirmed-live bug this closes.
+  final Future<void> Function(String taskId)? completeTask;
+  final Future<void> Function(String taskId)? cancelTask;
+
+  /// REAL, NEW (the redesign's own real "This week across your agents"
+  /// work) -- see `WeekSummaryStrip`'s own docstring for the full real
+  /// reasoning. Deferred, same pattern as every other real/external
+  /// boundary in this screen.
+  final Future<WeekSummaryData> Function()? fetchWeekSummary;
+
   const TodayScreen({
     super.key,
     required this.data,
@@ -101,6 +117,9 @@ class TodayScreen extends StatelessWidget {
     this.onTapNegotiation,
     this.fetchTasks,
     this.fetchPredictiveRisk,
+    this.completeTask,
+    this.cancelTask,
+    this.fetchWeekSummary,
   });
 
   @override
@@ -111,6 +130,10 @@ class TodayScreen extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(QuorumSpacing.md),
       children: [
+        _TodayHeader(now: now),
+        const SizedBox(height: QuorumSpacing.md),
+        WeekSummaryStrip(fetch: fetchWeekSummary),
+        const SizedBox(height: QuorumSpacing.lg),
         _ZoneSection(
           title: 'Needs you now',
           child: NeedsYouNowZone(actions: data.pendingActions, onTapAction: onTapAction),
@@ -122,7 +145,12 @@ class TodayScreen extends StatelessWidget {
               : TextButton(
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => _TasksLoader(fetch: fetchTasks!, fetchPredictiveRisk: fetchPredictiveRisk),
+                      builder: (_) => _TasksLoader(
+                        fetch: fetchTasks!,
+                        fetchPredictiveRisk: fetchPredictiveRisk,
+                        onComplete: completeTask,
+                        onCancel: cancelTask,
+                      ),
                     ),
                   ),
                   child: const Text('View tasks'),
@@ -133,6 +161,36 @@ class TodayScreen extends StatelessWidget {
           title: 'In motion',
           child: InMotionZone(negotiations: data.negotiations, onTapNegotiation: onTapNegotiation),
         ),
+      ],
+    );
+  }
+}
+
+/// REAL, NEW (the redesign's own real "much stronger home page" work) --
+/// closes a real, named gap from the approved redesign plan: "Add a real
+/// header: greeting + date, using the teal accent for the first time in
+/// a visually meaningful way (not just a tiny icon badge)." Reuses
+/// `holding_steady_logic.dart`'s own real, already-hand-verified hour
+/// boundaries and new `greetingForTouchpoint()`/`formatHeaderDate()`
+/// functions -- no new, parallel time-of-day logic invented here.
+class _TodayHeader extends StatelessWidget {
+  final DateTime now;
+
+  const _TodayHeader({required this.now});
+
+  @override
+  Widget build(BuildContext context) {
+    final greeting = greetingForTouchpoint(classifyTouchpoint(now.hour));
+    final colorScheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          greeting,
+          style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: colorScheme.tertiary),
+        ),
+        const SizedBox(height: QuorumSpacing.xs),
+        Text(formatHeaderDate(now), style: Theme.of(context).textTheme.bodyMedium),
       ],
     );
   }
@@ -167,18 +225,58 @@ class _ZoneSection extends StatelessWidget {
   }
 }
 
-class _TasksLoader extends StatelessWidget {
+/// REAL, DISCLOSED FIX (the redesign's own real bug-fix work): converted
+/// from a `StatelessWidget` calling `fetch()` fresh inside `build()` to
+/// a real `StatefulWidget` that reloads itself after a real complete/
+/// cancel action -- the same real, disclosed "a plain StatelessWidget
+/// never re-triggers its own fetch" lesson `_TodayTabState`'s own header
+/// comment already documents (`DEC-187`). Without this, a real "Mark as
+/// done" tap would genuinely execute server-side but the real task would
+/// keep showing as open on this screen until a full navigation round
+/// trip.
+class _TasksLoader extends StatefulWidget {
   final Future<List<TaskData>> Function() fetch;
   final Future<RiskAssessmentData> Function()? fetchPredictiveRisk;
+  final Future<void> Function(String taskId)? onComplete;
+  final Future<void> Function(String taskId)? onCancel;
 
-  const _TasksLoader({required this.fetch, this.fetchPredictiveRisk});
+  const _TasksLoader({required this.fetch, this.fetchPredictiveRisk, this.onComplete, this.onCancel});
+
+  @override
+  State<_TasksLoader> createState() => _TasksLoaderState();
+}
+
+class _TasksLoaderState extends State<_TasksLoader> {
+  late Future<List<TaskData>> _tasksFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _tasksFuture = widget.fetch();
+  }
+
+  void _reload() {
+    setState(() {
+      _tasksFuture = widget.fetch();
+    });
+  }
+
+  Future<void> _wrapAndReload(Future<void> Function(String taskId)? action, String taskId) async {
+    if (action == null) return;
+    await action(taskId);
+    // A real, deliberate reload regardless of outcome path here -- a
+    // thrown exception already propagates up to `TasksScreen`'s own
+    // real SnackBar handler before this line, so reaching here means
+    // the real write genuinely succeeded.
+    if (mounted) _reload();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Tasks')),
       body: FutureBuilder<List<TaskData>>(
-        future: fetch(),
+        future: _tasksFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
@@ -186,7 +284,12 @@ class _TasksLoader extends StatelessWidget {
           if (snapshot.hasError) {
             return Center(child: Text("Couldn't load tasks: ${snapshot.error}"));
           }
-          return TasksScreen(tasks: snapshot.data!, fetchPredictiveRisk: fetchPredictiveRisk);
+          return TasksScreen(
+            tasks: snapshot.data!,
+            fetchPredictiveRisk: widget.fetchPredictiveRisk,
+            onComplete: widget.onComplete == null ? null : (taskId) => _wrapAndReload(widget.onComplete, taskId),
+            onCancel: widget.onCancel == null ? null : (taskId) => _wrapAndReload(widget.onCancel, taskId),
+          );
         },
       ),
     );
