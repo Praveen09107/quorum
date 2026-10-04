@@ -76,6 +76,34 @@ dependencies:
   # asset files are bundled in this repository.
   google_fonts: ^6.2.1
   sqlite3: ^3.5.1
+
+  # Real presentation-layer dependencies for the `DEC-189` product
+  # rebuild (Block A). All three are deliberately PURE DART with no
+  # Android module of their own -- a real, specific constraint in this
+  # repository, not a general preference: this machine's installed
+  # Android Gradle Plugin genuinely cannot parse compileSdk 37 metadata
+  # (see the `receive_sharing_intent` and `flutter_secure_storage` pins
+  # above, both real, live-found instances of exactly that failure), so
+  # any new package carrying its own Android build config is a real
+  # toolchain risk.
+  fl_chart: ^0.69.0
+  flutter_animate: ^4.5.0
+  shimmer: ^3.0.0
+
+  # `url_launcher` opens the real Gmail/Calendar artifact links the
+  # rebuild adds. It DOES carry an Android module, which is normally the
+  # risk the comment above describes -- confirmed directly in
+  # `pubspec.lock` before adding it, though, this exact package is
+  # ALREADY in this app's resolved dependency tree transitively
+  # (`url_launcher 6.3.2`, `url_launcher_android 6.3.32`), so its
+  # Android module is already part of every build this machine has
+  # successfully produced. Promoting it to a direct dependency adds no
+  # new native code and no new compileSdk requirement -- it only makes
+  # an existing, already-building dependency importable, which is also
+  # why it is pinned to the major range already resolved rather than
+  # left to float onto a newer one.
+  url_launcher: ^6.3.2
+
   flutter_web_auth_2: ^5.1.0
   # Pinned to 10.3.1, the last pre-11.x release -- same real,
   # disclosed, environment-driven reason as receive_sharing_intent

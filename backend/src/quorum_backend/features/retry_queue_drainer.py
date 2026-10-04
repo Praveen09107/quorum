@@ -104,6 +104,7 @@ from quorum_backend.features.action_executor import execute_approved_action
 from quorum_backend.features.today import TODAY_WORKING_HOURS_PER_DAY
 from quorum_backend.gate.orchestration import CriticCall, JudgeCall, StageACheck, review
 from quorum_backend.gate.schemas import ActionProposal, GateVerdict, Stakes
+from quorum_backend.gate.timeline import GateTimeline
 from quorum_backend.gate.validators import deadline_conflict_check, provenance_check
 from quorum_backend.negotiation.downstream_translation import (
     DownstreamTranslationCall,
@@ -539,7 +540,13 @@ def map_verdict_to_outcome(verdict: GateVerdict, *, executed: bool) -> tuple[str
 
 
 async def persist_gate_verdict(
-    conn: asyncpg.Connection, *, proposal: ActionProposal, stakes: Stakes, verdict: GateVerdict, user_id: str
+    conn: asyncpg.Connection,
+    *,
+    proposal: ActionProposal,
+    stakes: Stakes,
+    verdict: GateVerdict,
+    user_id: str,
+    timeline: GateTimeline | None = None,
 ) -> bool:
     """Persists the real `action_events` row, then -- for a genuine
     `approve` verdict only -- calls the real `action_executor.py` on
@@ -598,9 +605,20 @@ async def persist_gate_verdict(
     # why escalate_to_human specifically must never execute.
 
     outcome, is_resolved = map_verdict_to_outcome(verdict, executed=executed)
+    # `DEC-189`: three real columns added by migration `0021`. All three
+    # stay genuinely NULL when no `timeline` was supplied -- NULL means
+    # "not recorded," and a consumer must render an honest absence
+    # rather than a fabricated empty timeline that would imply the Gate
+    # ran no checks. `revision_count` deliberately follows the same rule
+    # rather than defaulting to `verdict.revision_count` whenever a
+    # timeline is absent: it IS always available on the verdict, but
+    # writing it for some rows and not others with no way to tell which
+    # is worse than a consistent "recorded or not" signal, and every
+    # real caller that cares about it passes a timeline.
+    pre_revision = timeline.pre_revision_payload if timeline is not None else None
     await conn.execute(
-        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at, findings, objections) "
-        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)",
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at, findings, objections, gate_timeline, revision_count, pre_revision_payload) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13, $14::jsonb)",
         proposal.proposal_id,
         proposal.action_type.value,
         stakes.value,
@@ -612,6 +630,9 @@ async def persist_gate_verdict(
         datetime.now(timezone.utc) if is_resolved else None,
         json.dumps([finding.model_dump(mode="json") for finding in verdict.findings]),
         json.dumps([objection.model_dump(mode="json") for objection in verdict.objections]),
+        json.dumps(timeline.events) if timeline is not None else None,
+        verdict.revision_count if timeline is not None else None,
+        json.dumps(pre_revision) if pre_revision is not None else None,
     )
     return executed
 

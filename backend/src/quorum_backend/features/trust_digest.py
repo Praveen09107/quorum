@@ -149,21 +149,41 @@ async def aggregate_weekly_summary(pool: asyncpg.Pool, week_start: date, *, user
     doesn't enforce they're set together), the same defensive-parsing
     discipline `CLAUDE.md` holds for `applications.status`.
 
-    `uncertain_no_data` outcomes are deliberately excluded from both
-    `total_actions` and the success-rate numerator, and never a
-    denominator either -- counting them as attempts that merely didn't
-    succeed would collapse "we don't know" into "it failed," the exact
-    thing `CLAUDE.md`'s `Finding.evidence_state` rule forbids for Stage A
-    findings, applied here by the same reasoning to this real, adjacent
-    case. This is a real, reasoned, disclosed choice -- nothing in this
-    project's real spec corpus states the formula explicitly.
+    `uncertain_no_data` and `outcome_unknown` outcomes are deliberately
+    excluded from both `total_actions` and the success-rate numerator,
+    and never a denominator either -- counting them as attempts that
+    merely didn't succeed would collapse "we don't know" into "it
+    failed," the exact thing `CLAUDE.md`'s `Finding.evidence_state` rule
+    forbids for Stage A findings, applied here by the same reasoning to
+    this real, adjacent case. This is a real, reasoned, disclosed choice
+    -- nothing in this project's real spec corpus states the formula
+    explicitly.
+
+    `rejected_by_user` IS counted (as a resolved non-success), added
+    `DEC-189`. The distinction between the two groups is whether the
+    system knows what happened, not whether the news was good: a
+    rejection is a fully-known outcome that simply wasn't a success, so
+    omitting it inflated `success_rate`; `outcome_unknown` is genuinely
+    unknown, so including it either way would assert something false.
     """
     week_end = week_start + timedelta(days=7)
     row = await pool.fetchrow(
         """
         SELECT
             COUNT(*) FILTER (
-                WHERE outcome IN ('approved_unchanged', 'caught_by_gate', 'corrected_by_user')
+                WHERE outcome IN (
+                    'approved_unchanged',
+                    'caught_by_gate',
+                    'corrected_by_user',
+                    -- Added `DEC-189`. `DEC-188` widened this column's
+                    -- CHECK constraint without revisiting this filter,
+                    -- so every real human rejection was being dropped
+                    -- from `total_actions` -- which silently INFLATED
+                    -- `success_rate`, since a rejected action is a real
+                    -- resolved attempt that did not succeed. Excluding
+                    -- it made the trend read better than the truth.
+                    'rejected_by_user'
+                )
             ) AS total_actions,
             COUNT(*) FILTER (WHERE outcome = 'approved_unchanged') AS successes
         FROM action_events
