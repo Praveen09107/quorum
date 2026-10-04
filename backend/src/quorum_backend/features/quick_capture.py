@@ -409,7 +409,7 @@ import httpx
 
 from quorum_backend.agents.calendar_agent import build_event_proposal
 from quorum_backend.agents.career_agent import build_status_update_proposal
-from quorum_backend.agents.email_agent import LlmCall, build_reply_proposal
+from quorum_backend.agents.email_agent import LlmCall, build_draft_proposal, build_reply_proposal
 from quorum_backend.agents.finance_agent import build_finance_proposal
 from quorum_backend.agents.tasks_agent import build_task_deletion_proposal
 from quorum_backend.core.gemini_quota import GeminiQuotaExhaustedError, reserve_gemini_quota_slot
@@ -421,7 +421,7 @@ from quorum_backend.features.retry_queue_drainer import (
     validate_and_build_task_proposal,
 )
 from quorum_backend.gate.orchestration import CriticCall, JudgeCall, review
-from quorum_backend.gate.schemas import ActionProposal, Finding, Objection, Stakes
+from quorum_backend.gate.schemas import ActionProposal, ActionType, Finding, Objection, Stakes
 from quorum_backend.gate.timeline import GateTimeline, GateTimelineSink
 from quorum_backend.router import get_stakes
 
@@ -991,19 +991,43 @@ def make_gemini_quick_capture_extraction_call(*, api_key: str) -> QuickCaptureEx
 
 @dataclass(frozen=True)
 class QuickCaptureResult:
-    """A real, honest summary of what genuinely happened -- never
-    collapsed into a bare boolean. `executed` mirrors `ExecutionResult
-    .executed`'s own three-valued discipline (`action_executor.py`):
-    `True` a real row was created/updated, `False` it genuinely was not
-    (a Gate `reject`/`revise`/`escalate_to_human`, or a real,
-    non-executing result), `None` is never produced by any real domain
-    this module drives today (S1 `CREATE_TASK`/`LOG_EXPENSE` and S2
-    `UPDATE_BUDGET` have no transport-level ambiguity risk;
-    `CREATE_CALENDAR_EVENT_LOCAL`/`_EXTERNAL` never even attempt a real
-    network call through this module -- see below -- included in the
-    type for honesty about what `persist_gate_verdict()`'s own real
-    return type allows in general, not because any real path here can
-    actually produce it).
+    """A real, honest summary of what genuinely happened. `executed`
+    is kept as a plain `bool` here -- a DELIBERATE SIMPLIFICATION of
+    `ExecutionResult.executed`'s own three-valued discipline (`action_
+    executor.py`), not an oversight: `True` a real row was created/
+    updated or a real external call DEFINITELY succeeded, `False`
+    covers both a genuine non-execution (a Gate `reject`/`revise`/
+    `escalate_to_human`, or a real, honestly non-executing result) AND
+    a genuinely UNKNOWN transport failure.
+
+    REAL, DISCLOSED CORRECTION (`DEC-191`, product rebuild Block C):
+    this docstring previously claimed `None`-at-the-`ExecutionResult`-
+    level "is never produced by any real domain this module drives
+    today," reasoning that S1/S2 domains have no transport-level
+    ambiguity risk and S3 never auto-executes through this module at
+    all. That was true when written and is no longer true: real
+    `Stakes.S1` `CREATE_EMAIL_DRAFT` (`agents/email_agent.py::
+    build_draft_proposal()`) now reaches a genuine Google API call
+    autonomously, with no separate human-approval step, through this
+    exact module -- so a real transport failure during a draft attempt
+    is now a genuine, live possibility. The SIMPLIFICATION at THIS
+    field's own level is unaffected and remains deliberate: that
+    genuinely-unknown case is still collapsed to `False` here, exactly
+    as before, because no real client of this HTTP response currently
+    needs the distinction. What changed is that the collapse is no
+    longer vacuous -- it is now doing real work. The fact itself is
+    NOT lost: `persist_gate_verdict()` records it correctly and
+    distinctly as the real `outcome_unknown` terminal state
+    (`retry_queue_drainer.py::map_verdict_to_outcome()`) in the
+    database `action_events` row this result is built from, which is
+    what `trust_digest.py`/`honesty_log.py` actually read. Widening
+    THIS field to `bool | None` to surface that distinction to an HTTP
+    client is real, disclosed, deliberately deferred follow-on work --
+    every real client of this response today (the mobile app's own
+    `QuickCaptureResultData`) parses `executed` as a plain, non-
+    nullable bool, and widening it here would be a breaking response-
+    shape change with no real caller ready to consume the extra state
+    yet.
 
     REAL, DISCLOSED SESSION-4 EXTENSION: `domain` (`"tasks"`/
     `"finance"`) is now always present. `title` stays `tasks`-specific,
@@ -1017,25 +1041,42 @@ class QuickCaptureResult:
     `FinanceAction` this request resolved to, not the free-form
     `category` a person typed.
 
-    REAL, DISCLOSED SESSION-5 EXTENSION, A DELIBERATE ASYMMETRY FROM
-    `finance`'S OWN CONVENTION, NOT AN INCONSISTENCY: `event_start`/
-    `event_end`/`event_title` follow the same "only when genuinely
-    executed" rule `title`/`amount`/`category` already use -- but
-    `calendar_action` does NOT. For `finance`, `executed=False` was the
-    rare, exceptional case worth a null; for `calendar`, `executed=False`
-    is the ORDINARY case, by construction, for BOTH real calendar action
-    types today (`CREATE_CALENDAR_EVENT_LOCAL` has no real execution
-    target anywhere in this backend; `CREATE_CALENDAR_EVENT_EXTERNAL`'s
-    real `Stakes.S3` human-approval backstop refuses to auto-execute on
-    a Gate verdict alone, matching `CLAUDE.md`'s own absolute rule --
-    see this module's own top-of-file docstring for the full account).
-    `calendar_action` (`proposal.action_type.value`) is therefore
-    populated regardless of `executed`, specifically so a real, honest
-    mobile message can distinguish "this needs a real Google Calendar
-    invite sent, which needs your separate, explicit approval" from
-    "this was reviewed correctly, but nothing writes a real local event
-    from here yet" -- a distinction that would otherwise be invisible
-    every single time this domain is used.
+    REAL, DISCLOSED SESSION-5 EXTENSION, ORIGINALLY A DELIBERATE
+    ASYMMETRY FROM `finance`'S OWN CONVENTION: `calendar_action`
+    (`proposal.action_type.value`) is populated regardless of
+    `executed`, specifically so a real, honest mobile message can
+    distinguish "this needs a real Google Calendar invite sent, which
+    needs your separate, explicit approval" from "this was reviewed
+    correctly, but nothing writes a real local event from here yet" --
+    a distinction that would otherwise be invisible every single time
+    this domain is used. `executed=False` is the ORDINARY case, by
+    construction, for BOTH real calendar action types (`CREATE_
+    CALENDAR_EVENT_LOCAL` has no real execution target anywhere in this
+    backend; `CREATE_CALENDAR_EVENT_EXTERNAL`'s real `Stakes.S3`
+    human-approval backstop refuses to auto-execute on a Gate verdict
+    alone, matching `CLAUDE.md`'s own absolute rule -- see this
+    module's own top-of-file docstring for the full account).
+
+    `event_start`/`event_end`/`event_title` ALSO now follow that
+    "regardless of `executed`" rule, as of `DEC-191` -- REVERSED from
+    this Session's own original "only when genuinely executed"
+    restriction, Session-7/`DEC-189`-style: that restriction wasn't
+    merely delaying these fields for `CREATE_CALENDAR_EVENT_LOCAL`, it
+    was withholding them FOREVER, because `executed` is not just
+    usually but STRUCTURALLY, PERMANENTLY `False` for that action type
+    -- confirmed directly against `action_executor.py`, which has no
+    execution branch for it at all, by the same deliberate "on-device
+    calendar ground truth is never written server-side" architecture
+    decision `calendar_action`'s own reasoning already describes. The
+    real consequence: the one real client that needs these fields to
+    finish the job itself -- a mobile app performing the actual
+    on-device write (`CalendarSync.createLocalEvent()`) once the Gate
+    has cleared the proposal -- had no other real source for the
+    resolved start/end/title at all. For `CREATE_CALENDAR_EVENT_
+    EXTERNAL` the same change is a smaller, but real, improvement for
+    the identical reason `DEC-189` already established for `email_
+    recipient`: a human approving a pending S3 send needs to see what
+    they're approving before they approve it, not after.
 
     REAL, DISCLOSED SESSION-6 EXTENSION: `operation` (`"create"`/
     `"update"`/`"delete"`) is now always present. `company`/`new_status`
@@ -1099,6 +1140,17 @@ class QuickCaptureResult:
     new_status: str | None = None
     email_recipient: str | None = None
     email_action: str | None = None
+    # `DEC-191` (product rebuild Block C). The real, structured external
+    # id a Google API call returned on success -- `{"draft_id":
+    # ..., "message_id": ...}` for a genuine `CREATE_EMAIL_DRAFT`,
+    # `None` for every other domain and for any non-executed outcome.
+    # This is what lets a real client turn a completed action into a
+    # real tappable link straight into Gmail -- "it drafted this, here
+    # it is" -- rather than a bare success message with nothing to
+    # follow. Domain-generic by construction: populated the identical
+    # way regardless of which domain's branch below constructs this
+    # result, exactly like `executed` itself already is.
+    artifact: dict | None = None
     findings: list[Finding] = field(default_factory=list)
     objections: list[Objection] = field(default_factory=list)
 
@@ -1764,13 +1816,41 @@ async def _fetch_known_recipients(conn: asyncpg.Connection, *, user_id: str) -> 
     return [(address, identity_text) for address, (_, identity_text) in best_by_address.items()]
 
 
-async def resolve_and_build_email_proposal(conn: asyncpg.Connection, *, user_id: str, args: dict, draft_call: LlmCall) -> ActionProposal:
+async def resolve_and_build_email_proposal(
+    conn: asyncpg.Connection, *, user_id: str, args: dict, draft_call: LlmCall, want_draft: bool = False
+) -> ActionProposal:
     """THE real, safety-critical core of Session 7 -- see this module's
     own top-of-file docstring for the full account of why recipient
     resolution reuses `_resolve_single_reference()` directly rather than
     inventing new ambiguity logic, and why a genuine Gate `approve` for
     the resulting `SEND_EMAIL` proposal still never actually sends
-    anything through this real path today.
+    anything through this real path today -- that remains true even
+    after `DEC-191` threaded real Google credentials into this
+    function's own real caller (`persist_gate_verdict()`), because real
+    `Stakes.S3`'s own structural human-approval backstop
+    (`execute_approved_action()`) checks `approved_by_user_id`, which
+    that caller still never supplies.
+
+    `want_draft` (`DEC-191`, product rebuild Block C), default `False`,
+    preserves this function's exact existing behavior -- build a real
+    `SEND_EMAIL` via `build_reply_proposal()` -- for every real caller
+    that doesn't pass it, which today means every real CLOUD-extracted
+    call: the live Gemini extraction prompt has no concept of "draft
+    vs. send" intent, and changing that prompt is real, separate,
+    deliberately out-of-scope work this session did not take on (it is
+    CRITICAL-tier, prompt-injection-defended code, and the real daily
+    Gemini quota was already exhausted verifying everything else in
+    this block, leaving no room to verify a prompt change live). `True`
+    builds a real `CREATE_EMAIL_DRAFT` instead, via `build_draft_
+    proposal()` -- real `Stakes.S1`, autonomous, no approval needed --
+    reachable TODAY only through `POST /quick_capture/extracted`, where
+    a caller that has ALREADY classified the user's own intent (an
+    on-device extraction pass, or a future explicit "Draft it" UI
+    action neither of which needs a cloud model call to know the
+    difference) can set `args["email_action"] = "create_email_draft"`
+    directly. Every other real step below -- recipient resolution, the
+    real drafted body, the real subject line -- is identical regardless
+    of which real action type this ultimately becomes.
 
     A REAL, DISCLOSED, ACCEPTED TRADE-OFF, NOT AN OVERSIGHT: this is the
     ONE real caller in this backend that passes `require_singleton_
@@ -1834,6 +1914,8 @@ async def resolve_and_build_email_proposal(conn: asyncpg.Connection, *, user_id:
     if not draft_body.strip():
         raise DownstreamTranslationError(f"Real email draft had no body after parsing the subject line: {drafted!r}")
 
+    if want_draft:
+        return build_draft_proposal(resolved_recipient, draft_body.strip(), subject=subject)
     return build_reply_proposal(resolved_recipient, draft_body.strip(), subject=subject)
 
 
@@ -1847,6 +1929,8 @@ async def capture_action_from_extracted_args(
     draft_call: LlmCall | None = None,
     timeline_sink: GateTimelineSink | None = None,
     timeline: GateTimeline | None = None,
+    google_access_token: str | None = None,
+    http_client: httpx.AsyncClient | None = None,
 ) -> QuickCaptureResult:
     """The real, DB-touching half of the pipeline: propose -> Gate ->
     persist/execute, on ONE connection so the real Gate verdict and the
@@ -1875,6 +1959,24 @@ async def capture_action_from_extracted_args(
     the whole pipeline a single shared clock origin. Pass `timeline` OR
     `timeline_sink`, not both -- when `timeline` is given it already
     carries its own sink.
+
+    `google_access_token`/`http_client` (`DEC-191`, product rebuild
+    Block C) -- threaded straight through to `persist_gate_verdict()`
+    and from there to `execute_approved_action()`. Both default to
+    `None`, the ordinary case for every domain except email: a
+    `CREATE_TASK`/`LOG_EXPENSE`/... proposal never reaches a branch
+    that reads either, so passing them costs nothing when they're not
+    needed. They exist so a genuine `CREATE_EMAIL_DRAFT` proposal --
+    real `Stakes.S1`, so it reaches `persist_gate_verdict()`'s own
+    auto-execute branch with no separate human-approval step -- can
+    actually call the real Gmail API the moment Stage A clears it,
+    rather than silently no-executing for want of credentials this
+    function was never given. This does NOT create any new way for a
+    real S3 action (`SEND_EMAIL`/`CREATE_CALENDAR_EVENT_EXTERNAL`) to
+    execute without human approval: `execute_approved_action()`'s own
+    structural S3 backstop checks `approved_by_user_id`, which this
+    function's own call into `persist_gate_verdict()` never supplies,
+    exactly as before this change.
     Takes an already-extracted `args` dict -- see `capture_action_from_
     text()` below for why extraction itself is kept OUT of this
     function and out of any real database transaction.
@@ -1947,8 +2049,20 @@ async def capture_action_from_extracted_args(
     elif domain == "email" and operation == "create":
         if draft_call is None:
             raise QuickCaptureError("Real email drafting is not currently available -- no draft_call was configured for this request.")
+        # `DEC-191`: an explicit, optional, additive `email_action` field
+        # -- absent from every real CLOUD-extracted `args` dict (the
+        # live Gemini extraction prompt has no "draft vs. send" concept,
+        # and changing it is real, separate, out-of-scope work), so the
+        # default here preserves this route's exact existing behavior.
+        # A caller that has already classified intent some other way
+        # (today: nothing real; the real, intended future caller is a
+        # client that sets this directly) can request a real,
+        # autonomous `CREATE_EMAIL_DRAFT` instead of `SEND_EMAIL`.
+        want_draft = args.get("email_action") == ActionType.CREATE_EMAIL_DRAFT.value
         try:
-            proposal = await resolve_and_build_email_proposal(conn, user_id=user_id, args=args, draft_call=draft_call)
+            proposal = await resolve_and_build_email_proposal(
+                conn, user_id=user_id, args=args, draft_call=draft_call, want_draft=want_draft
+            )
         except (DownstreamTranslationError, KeyError, ValueError, TypeError) as exc:
             raise QuickCaptureError(f"Real extraction produced an unusable email: {exc}") from exc
     else:
@@ -2040,8 +2154,15 @@ async def capture_action_from_extracted_args(
                 "act on a different real row than the one the user's own reference actually resolved to."
             )
 
-    executed = await persist_gate_verdict(
-        conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id, timeline=timeline
+    executed, artifact = await persist_gate_verdict(
+        conn,
+        proposal=proposal,
+        stakes=stakes,
+        verdict=verdict,
+        user_id=user_id,
+        timeline=timeline,
+        google_access_token=google_access_token,
+        http_client=http_client,
     )
 
     final_payload = verdict.revised_payload if verdict.revised_payload is not None else proposal.payload
@@ -2055,6 +2176,7 @@ async def capture_action_from_extracted_args(
         show_regardless = result_operation != "create"
         return QuickCaptureResult(
             executed=bool(executed),
+            artifact=artifact,
             decision=verdict.decision,
             stakes=stakes.value,
             domain=domain,
@@ -2067,15 +2189,39 @@ async def capture_action_from_extracted_args(
         # `calendar_action` is populated regardless of `executed` -- see
         # `QuickCaptureResult`'s own docstring for why this domain's
         # convention deliberately differs from `finance`'s.
+        #
+        # `event_start`/`event_end`/`event_title` ALSO now follow that
+        # "regardless of executed" rule, as of `DEC-191` -- REVERSED
+        # from this domain's own original "only when genuinely executed"
+        # restriction, for a real reason confirmed structurally rather
+        # than assumed: `CREATE_CALENDAR_EVENT_LOCAL` has NO execution
+        # branch anywhere in `action_executor.py` at all (the real,
+        # deliberate architecture decision that on-device calendar
+        # ground truth is never written server-side), which means
+        # `executed` is not merely "often False" for this action type
+        # but PERMANENTLY, STRUCTURALLY False. Gating these three
+        # fields on `executed` therefore did not delay them -- it
+        # withheld them forever, from the one real client that actually
+        # needs them to finish the job itself: a mobile app that wants
+        # to perform the real on-device write (`CalendarSync.
+        # createLocalEvent()`, new this session) once the Gate has
+        # cleared the proposal has no other real source for the real,
+        # resolved start/end/title to write. The identical real
+        # reasoning already applies to `CREATE_CALENDAR_EVENT_EXTERNAL`
+        # (S3): `executed=False` is its own ordinary, pending-approval
+        # case too, and a human approving that send needs to see what
+        # they're approving -- the same real argument `DEC-189` already
+        # made once for `email_recipient`.
         return QuickCaptureResult(
             executed=bool(executed),
+            artifact=artifact,
             decision=verdict.decision,
             stakes=stakes.value,
             domain=domain,
             operation="create",
-            event_start=final_payload.get("start") if executed else None,
-            event_end=final_payload.get("end") if executed else None,
-            event_title=final_payload.get("title") if executed else None,
+            event_start=final_payload.get("start"),
+            event_end=final_payload.get("end"),
+            event_title=final_payload.get("title"),
             calendar_action=proposal.action_type.value,
             findings=verdict.findings,
             objections=verdict.objections,
@@ -2090,6 +2236,7 @@ async def capture_action_from_extracted_args(
         # account of why Session 7's original restriction was reversed.
         return QuickCaptureResult(
             executed=bool(executed),
+            artifact=artifact,
             decision=verdict.decision,
             stakes=stakes.value,
             domain=domain,
@@ -2104,6 +2251,7 @@ async def capture_action_from_extracted_args(
         # -- this domain's own `operation` is always genuinely "update".
         return QuickCaptureResult(
             executed=bool(executed),
+            artifact=artifact,
             decision=verdict.decision,
             stakes=stakes.value,
             domain=domain,
@@ -2122,6 +2270,7 @@ async def capture_action_from_extracted_args(
     show_regardless = result_operation != "create"
     return QuickCaptureResult(
         executed=bool(executed),
+        artifact=artifact,
         decision=verdict.decision,
         stakes=stakes.value,
         domain=domain,
@@ -2146,6 +2295,8 @@ async def capture_action_from_text(
     draft_call: LlmCall | None = None,
     timeline_sink: GateTimelineSink | None = None,
     timeline: GateTimeline | None = None,
+    google_access_token: str | None = None,
+    http_client: httpx.AsyncClient | None = None,
 ) -> QuickCaptureResult:
     """A real, convenience wrapper combining extraction with the real,
     DB-touching pipeline above -- correct and safe wherever the caller
@@ -2153,6 +2304,10 @@ async def capture_action_from_text(
     network latency (this module's own tests, which use fast, fake
     `extraction_call`s with no real latency at all). Renamed from
     `capture_task_from_text` this session -- logic unchanged.
+
+    `google_access_token`/`http_client` (`DEC-191`) are passed straight
+    through to `capture_action_from_extracted_args()` -- see that
+    function's own docstring for the full real account.
 
     RESOLVED, a real, disclosed CRITICAL-tier review MEDIUM (`DEC-153`
     M2): the real production route (`main.py::quick_capture_endpoint`)
@@ -2236,4 +2391,6 @@ async def capture_action_from_text(
         judge_call=judge_call,
         draft_call=draft_call,
         timeline=timeline,
+        google_access_token=google_access_token,
+        http_client=http_client,
     )

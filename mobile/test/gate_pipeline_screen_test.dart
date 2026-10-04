@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:quorum_mobile/features/calendar_sync.dart' show CreateLocalEventResult;
 import 'package:quorum_mobile/features/gate_pipeline/gate_pipeline_logic.dart';
 import 'package:quorum_mobile/features/gate_pipeline/gate_pipeline_screen.dart';
 import 'package:quorum_mobile/theme/quorum_dark_theme.dart';
@@ -75,6 +76,7 @@ Widget _harness({
   required Stream<GateEvent> Function(String) stream,
   Future<void> Function(String)? onApprove,
   Future<void> Function(String)? onReject,
+  CreateLocalEventCall? onCreateLocalEvent,
 }) {
   return MaterialApp(
     theme: buildQuorumDarkTheme(),
@@ -82,6 +84,7 @@ Widget _harness({
       captureStream: (text, {onDeviceAttempted = false, onDeviceFailureReason}) => stream(text),
       onApprove: onApprove ?? (_) async {},
       onReject: onReject ?? (_) async {},
+      onCreateLocalEvent: onCreateLocalEvent,
     ),
   );
 }
@@ -229,6 +232,93 @@ void main() {
       await tester.pump();
 
       expect(find.text('What should Quorum do?'), findsOneWidget);
+    });
+  });
+
+  group('on-device calendar write (DEC-191)', () {
+    /// A real `create_calendar_event_local` stream, S2 -- the Gate
+    /// approves it, but `executed` stays permanently `False` since no
+    /// server-side execution target exists for this action type by
+    /// design. `event_start`/`event_end`/`event_title` ARE populated
+    /// (as of this same session's backend fix) -- that is exactly what
+    /// this screen needs to finish the job itself.
+    Stream<GateEvent> localCalendarStream() async* {
+      yield _event('routing', const {
+        'action_type': 'create_calendar_event_local',
+        'stakes': 'S2',
+        'stage_b_will_run': true,
+        'critic_will_run': false,
+        'stage_a_check_count': 1,
+      });
+      yield _event('done', const {'decision': 'approve', 'stakes': 'S2', 'stage_b_ran': true, 'revision_count': 0});
+      yield _event('result', const {
+        'decision': 'approve',
+        'domain': 'calendar',
+        'calendar_action': 'create_calendar_event_local',
+        'executed': false,
+        'event_start': '2027-01-01T14:00:00.000Z',
+        'event_end': '2027-01-01T15:00:00.000Z',
+        'event_title': 'Design review',
+      });
+    }
+
+    testWidgets('a real approved local event triggers the on-device write and shows success', (tester) async {
+      String? capturedTitle;
+      await tester.pumpWidget(_harness(
+        stream: (_) => localCalendarStream(),
+        onCreateLocalEvent: ({required title, required start, required end, description}) async {
+          capturedTitle = title;
+          return const CreateLocalEventResult(success: true, eventId: 'evt-1', detail: 'Real event created on-device.');
+        },
+      ));
+      await tester.enterText(find.byType(TextField), 'block 2-3pm for a design review');
+      await tester.tap(find.text('Run it through the Gate'));
+      await tester.pumpAndSettle();
+
+      expect(capturedTitle, 'Design review');
+      expect(find.text('Added to your on-device calendar.'), findsOneWidget);
+    });
+
+    testWidgets('an on-device write failure shows the real honest reason', (tester) async {
+      await tester.pumpWidget(_harness(
+        stream: (_) => localCalendarStream(),
+        onCreateLocalEvent: ({required title, required start, required end, description}) async {
+          return const CreateLocalEventResult(success: false, detail: 'Calendar permission was not granted.');
+        },
+      ));
+      await tester.enterText(find.byType(TextField), 'block 2-3pm for a design review');
+      await tester.tap(find.text('Run it through the Gate'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Calendar permission was not granted.'), findsOneWidget);
+    });
+
+    testWidgets('no write is attempted when onCreateLocalEvent is not configured', (tester) async {
+      // The honest-gating default: absent, not a crash, not a silent
+      // no-op that pretends to have happened.
+      await tester.pumpWidget(_harness(stream: (_) => localCalendarStream()));
+      await tester.enterText(find.byType(TextField), 'block 2-3pm for a design review');
+      await tester.tap(find.text('Run it through the Gate'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Added to your on-device calendar.'), findsNothing);
+      expect(find.text('Done'), findsOneWidget);
+    });
+
+    testWidgets('a real S1 task capture never attempts a calendar write', (tester) async {
+      var called = false;
+      await tester.pumpWidget(_harness(
+        stream: (_) => _s1Stream(),
+        onCreateLocalEvent: ({required title, required start, required end, description}) async {
+          called = true;
+          return const CreateLocalEventResult(success: true, detail: 'should not happen');
+        },
+      ));
+      await tester.enterText(find.byType(TextField), 'write the test task');
+      await tester.tap(find.text('Run it through the Gate'));
+      await tester.pumpAndSettle();
+
+      expect(called, isFalse);
     });
   });
 }

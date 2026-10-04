@@ -416,6 +416,13 @@ class _QuorumAppState extends State<QuorumApp> {
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
+            // `DEC-191` (product rebuild Block C) -- the real on-device
+            // calendar write. Reuses the same `CalendarSync` instance
+            // `syncCalendar` above already owns, rather than
+            // constructing a second one -- both real permission checks
+            // and the real `DeviceCalendarPlugin` connection are cheap
+            // to share, and there is no reason for two.
+            onCreateLocalEvent: _calendarSync.createLocalEvent,
             confirmDelete: _handleAccountDeletion,
             onSignOut: _handleSignOut,
             // Real, deliberately unauthenticated -- `GET /health` needs

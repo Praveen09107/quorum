@@ -8,6 +8,7 @@ extraction test.
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 import pytest_asyncio
 
@@ -435,11 +436,25 @@ async def test_capture_action_from_text_a_local_calendar_event_is_reviewed_corre
     as `UPDATE_BUDGET` -- the real Judge runs, the real Critic never
     does), proven the same structural way. THE real, disclosed point
     this test exists to prove: even a genuine Gate `approve` never
-    actually creates anything here -- `action_executor.py` has no real
-    execution target anywhere in this backend for this action type (real
-    local-event ground truth belongs on-device) -- so `executed` is
-    correctly `False` on a genuine approve, not because the Gate
-    rejected anything."""
+    actually creates anything SERVER-SIDE here -- `action_executor.py`
+    has no real execution target anywhere in this backend for this
+    action type (real local-event ground truth belongs on-device) --
+    so `executed` is correctly `False` on a genuine approve, not
+    because the Gate rejected anything.
+
+    REAL, DISCLOSED REVERSAL (`DEC-191`, product rebuild Block C) of
+    this test's own former assertion that `event_start` stays `None`
+    here: that assertion was proving the OLD, now-corrected bug.
+    `executed` being `False` for this action type isn't an occasional
+    case -- it is PERMANENT and STRUCTURAL (confirmed directly: no
+    execution branch for it exists at all), so gating `event_start`/
+    `event_end`/`event_title` on `executed` didn't delay them, it
+    withheld them FOREVER from the one real client that actually needs
+    them: a mobile app performing the real on-device write
+    (`CalendarSync.createLocalEvent()`) once the Gate has cleared the
+    proposal. They are now populated regardless of `executed`, the
+    same real reasoning `calendar_action` already established and
+    `DEC-189` already proved once for `email_recipient`."""
     start = datetime.now(timezone.utc) + timedelta(days=1)
     end = start + timedelta(hours=1)
     extraction = _fake_extraction(
@@ -459,7 +474,13 @@ async def test_capture_action_from_text_a_local_calendar_event_is_reviewed_corre
     assert result.decision == "approve"
     assert result.calendar_action == "create_calendar_event_local"
     assert result.executed is False  # a genuine approve, but no real execution target exists for this action type anywhere in this backend
-    assert result.event_start is None  # only populated on a genuine `executed=True`, which this domain never produces today
+    # Populated regardless of `executed` as of `DEC-191` -- see this
+    # test's own docstring for why the old "only when executed" gate
+    # meant these were withheld PERMANENTLY, not just delayed, for this
+    # specific action type.
+    assert result.event_start == start.isoformat()
+    assert result.event_end == end.isoformat()
+    assert result.event_title == "Design review"
 
 
 async def test_capture_action_from_text_an_external_invitee_calendar_event_reaches_the_real_full_stage_b_debate_and_still_never_auto_executes(pool, user_id):
@@ -1404,6 +1425,60 @@ async def test_capture_action_from_text_a_real_email_is_reviewed_correctly_but_n
     assert result.decision == "approve"
     assert result.email_action == "send_email"
     assert result.executed is False  # NEVER auto-sent for a real S3 action, regardless of the Gate's own verdict
+
+
+class _FakeDraftPostClient:
+    """A real, minimal `httpx.AsyncClient.post()` double, local to this
+    test module -- this real end-to-end test is the one real place in
+    this file that needs the real Gmail call to actually happen."""
+
+    async def post(self, url, json=None, headers=None):
+        return httpx.Response(200, json={"id": "draft-1", "message": {"id": "msg-1"}}, request=httpx.Request("POST", url))
+
+
+async def test_capture_action_from_text_email_action_create_email_draft_bypasses_stage_b_and_executes_autonomously(pool, user_id):
+    """`DEC-191` (product rebuild Block C), the real end-to-end proof
+    that a caller supplying `args["email_action"] = "create_email_
+    draft"` through this same real pipeline gets a genuinely different
+    real outcome from the test immediately above it: a real
+    `CREATE_EMAIL_DRAFT` (`Stakes.S1`) rather than `SEND_EMAIL`
+    (`Stakes.S3`) -- Stage B never runs at all (proven by the real,
+    zero call counts below, the same architecture-by-call-count proof
+    this module's own sibling tests already establish), and -- given a
+    real Google access token and a real HTTP client -- this one
+    genuinely EXECUTES, with no separate human-approval step, landing
+    a real artifact id on the result. `judge_call`/`critic_call` are
+    still passed (every real caller of this pipeline must supply them,
+    matching its own uniform signature), but must never actually be
+    invoked for a real S1 action -- proven, not assumed."""
+    await _seed_sent_message(pool, user_id=user_id, recipient="Sarah Jones <sarah@company.com>")
+    extraction = _fake_extraction(
+        {
+            "domain": "email", "operation": "create", "email_action": "create_email_draft",
+            "recipient_description": "Sarah", "recipient_email": None, "user_intent": "Tell Sarah the proposal looks good.",
+        }
+    )
+    judge_call, judge_calls = _fake_approving_judge_call()
+    critic_call, critic_calls = _fake_objecting_critic_call()
+    draft_call, draft_calls = _fake_draft_call()
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await capture_action_from_text(
+                conn, user_id=user_id, free_text="draft a reply telling Sarah the proposal looks good",
+                extraction_call=extraction, critic_call=critic_call, judge_call=judge_call, draft_call=draft_call,
+                google_access_token="fake-access-token", http_client=_FakeDraftPostClient(),
+            )
+
+    assert result.stakes == "S1"
+    assert len(critic_calls) == 0  # Stage B never runs for a real S1 action
+    assert len(judge_calls) == 0
+    assert draft_calls == ["Tell Sarah the proposal looks good."]
+    assert result.decision == "approve"
+    assert result.email_action == "create_email_draft"
+    # Genuinely autonomous -- no separate human approval exists for S1,
+    # and none was needed.
+    assert result.executed is True
 
 
 async def test_capture_action_from_text_a_literal_recipient_email_skips_resolution_entirely(pool, user_id):

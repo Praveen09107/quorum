@@ -104,6 +104,31 @@ dependencies:
   # left to float onto a newer one.
   url_launcher: ^6.3.2
 
+  # `DEC-191` (product rebuild Block C) -- real on-device calendar
+  # writes. `device_calendar`'s own real `Event.start`/`.end` fields are
+  # `TZDateTime`, not plain `DateTime`, and the native Android/iOS side
+  # resolves the IANA zone string `TZDateTime.location.name` serializes
+  # to -- an incorrect zone (e.g. a bare `tz.UTC`, when the user is not
+  # in UTC) would write a REAL event at the wrong real wall-clock time,
+  # confirmed directly by reading the plugin's own Kotlin source
+  # (`CalendarDelegate.kt::getTimeZone()`) rather than assumed. This
+  # package is the plugin maintainers' own documented way to get the
+  # real device IANA zone name (confirmed in `device_calendar`'s own
+  # example app, `calendar_event.dart`) -- there is no pure-Dart way to
+  # do this reliably (`DateTime.timeZoneName` returns an ambiguous
+  # abbreviation, not a real IANA id). A thin native shim, not a pure-
+  # Dart package, so it carries the SAME real category of risk this
+  # file's own header already names -- checked directly before adding
+  # it (see the real `flutter pub get` verification this session ran).
+  flutter_timezone: ^4.1.0
+  # Promoted to direct, matching `url_launcher`'s own established
+  # reasoning above: already resolved transitively (`device_calendar`
+  # itself depends on it for its own `TZDateTime` fields), so this adds
+  # no new native code -- it only makes an existing, already-building
+  # dependency importable from this project's own code, which this
+  # file's `createLocalEvent()` now needs directly.
+  timezone: ^0.9.4
+
   flutter_web_auth_2: ^5.1.0
   # Pinned to 10.3.1, the last pre-11.x release -- same real,
   # disclosed, environment-driven reason as receive_sharing_intent

@@ -310,3 +310,25 @@ async def test_action_status_returns_null_timeline_for_a_pre_migration_row(pool,
     assert body["timeline"] is None
     assert body["revision_count"] is None
     assert body["pre_revision_payload"] is None
+    assert body["artifact"] is None
+
+
+async def test_action_status_returns_the_real_artifact_as_parsed_json_not_a_string(pool, user):
+    """`DEC-191`, migration `0022`. The same real "asyncpg returns JSONB
+    as a bare string with no codec registered" trap `timeline`/
+    `pre_revision_payload` were already written to guard against,
+    proven here for the newest JSONB column too."""
+    proposal_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, artifact) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9::jsonb)",
+        proposal_id, "create_email_draft", "S1", '{"to": "a@example.com"}', "approve", "approved_unchanged",
+        str(proposal_id), uuid.UUID(user["user_id"]), json.dumps({"draft_id": "draft-1", "message_id": "msg-1"}),
+    )
+
+    with TestClient(app) as client:
+        response = client.get(f"/actions/{proposal_id}/status", headers=user["headers"])
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["artifact"] == {"draft_id": "draft-1", "message_id": "msg-1"}

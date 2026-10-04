@@ -23,7 +23,7 @@ reimplementing authorize_tool_call itself.
 from __future__ import annotations
 
 DOMAIN_TOOL_MAP: dict[str, set[str]] = {
-    "email": {"gmail.send", "gmail.read", "gmail.archive", "gmail.label"},
+    "email": {"gmail.send", "gmail.read", "gmail.archive", "gmail.label", "gmail.draft"},
     "calendar": {"calendar.create_local", "calendar.create_external", "calendar.read"},
     "tasks": {"tasks.create", "tasks.update", "tasks.delete", "tasks.read"},
     "finance": {"finance.log_expense", "finance.update_expense", "finance.delete_expense", "finance.write_budget", "finance.read"},

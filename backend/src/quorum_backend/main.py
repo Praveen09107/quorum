@@ -32,6 +32,7 @@ from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator
 
 import asyncpg
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
@@ -44,7 +45,7 @@ from quorum_backend.auth.access_token import (
     decode_access_token,
 )
 from quorum_backend.auth.google_oauth import GoogleIdTokenInvalid, GoogleOAuthExchangeFailed, exchange_authorization_code, verify_google_id_token
-from quorum_backend.auth.google_token_store import fetch_google_tokens, store_google_tokens, update_access_token_after_refresh
+from quorum_backend.auth.google_token_store import fetch_google_tokens, get_valid_google_access_token, store_google_tokens, update_access_token_after_refresh
 from quorum_backend.auth.refresh_token import (
     TokenExpired,
     TokenInvalid,
@@ -333,6 +334,47 @@ async def _resolve_internal_user_id_or_404(pool: asyncpg.Pool, google_sub: str) 
     return internal_user_id
 
 
+async def _resolve_google_access_token_or_none(pool: asyncpg.Pool, *, internal_user_id: str) -> str | None:
+    """`DEC-191` (product rebuild Block C). Real, shared, DEFENSIVE token
+    resolution for every quick-capture route below -- mirrors `features/
+    action_approval.py::approve_pending_action()`'s own already-
+    established pattern for the identical call, factored out here since
+    three separate routes now need it rather than one.
+
+    Returns `None`, never raises, for every real reason a token might
+    be unavailable: Google OAuth genuinely unconfigured on this
+    deployment, no real tokens stored for this user (never connected,
+    or already revoked), or a real refresh attempt that genuinely
+    failed (`GoogleOAuthExchangeFailed` -- an expired/revoked refresh
+    token). A `None` here is NOT an error for a quick-capture request:
+    the overwhelming majority of real capture domains (`tasks`/
+    `finance`/`career`/most of `calendar`) never call a Google API at
+    all, and `execute_approved_action()`'s own branches already handle
+    a missing token for the ones that do with an honest, non-crashing
+    `executed=False` -- exactly the same degraded-but-correct behavior
+    this function's own absence would otherwise have produced for
+    every quick-capture request, Google-dependent or not, before this
+    block existed."""
+    settings = get_settings()
+    if not settings.google_oauth_client_id or not settings.google_oauth_client_secret or settings.google_token_encryption_key is None:
+        return None
+    try:
+        return await get_valid_google_access_token(
+            pool,
+            internal_user_id=internal_user_id,
+            client_id=settings.google_oauth_client_id,
+            client_secret=settings.google_oauth_client_secret,
+            encryption_key=settings.google_token_encryption_key,
+        )
+    except GoogleOAuthExchangeFailed:
+        logger.warning(
+            "Real Google token refresh failed for user_id=%s during quick-capture -- treated as 'no token "
+            "available', not a route error.",
+            internal_user_id,
+        )
+        return None
+
+
 class TokenExchangeRequest(BaseModel):
     """Real request shape for `POST /auth/token` -- a reasoned
     construction against standard OAuth 2.0 Authorization Code + PKCE
@@ -437,6 +479,19 @@ class QuickCaptureExtractedRequest(BaseModel):
     recipient_description: str | None = None
     recipient_email: str | None = None
     user_intent: str | None = None
+    # `DEC-191` (product rebuild Block C). A real, NEW, additive field --
+    # absent from `_QUICK_CAPTURE_EXTRACTION_SCHEMA` (the on-device
+    # extraction contract this request model otherwise mirrors field-
+    # for-field) because no real on-device extraction pass has any way
+    # to know "draft vs. send" intent either. A caller that HAS already
+    # made that determination some other way sets this to the real,
+    # literal string `"create_email_draft"` to request a real,
+    # autonomous Gmail draft instead of the real, S3-gated `SEND_EMAIL`
+    # this route builds by default -- see `features/quick_capture.py::
+    # resolve_and_build_email_proposal()`'s own docstring for the full
+    # account. Any other value, including the field's own default
+    # `None`, is treated identically to today's existing behavior.
+    email_action: str | None = None
 
 
 class TokenPairResponse(BaseModel):
@@ -784,19 +839,30 @@ async def quick_capture_endpoint(
     critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
     judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
     draft_call = make_gemini_email_draft_call(api_key=settings.gemini_api_key)
+    # `DEC-191`: resolved BEFORE extraction, for the identical real
+    # reason extraction itself already runs before `pool.acquire()`
+    # above -- never hold a real network call inside an open
+    # transaction. `None` whenever Google OAuth isn't configured or no
+    # real token is available; `execute_approved_action()`'s own
+    # branches already handle that honestly for the one real domain
+    # (`CREATE_EMAIL_DRAFT`) that needs it.
+    google_access_token = await _resolve_google_access_token_or_none(pool, internal_user_id=internal_user_id)
 
     try:
         args = await extraction_call(body.text)
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                result = await capture_action_from_extracted_args(
-                    conn,
-                    user_id=internal_user_id,
-                    args=args,
-                    critic_call=critic_call,
-                    judge_call=judge_call,
-                    draft_call=draft_call,
-                )
+        async with httpx.AsyncClient(timeout=15.0) as google_http_client:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    result = await capture_action_from_extracted_args(
+                        conn,
+                        user_id=internal_user_id,
+                        args=args,
+                        critic_call=critic_call,
+                        judge_call=judge_call,
+                        draft_call=draft_call,
+                        google_access_token=google_access_token,
+                        http_client=google_http_client,
+                    )
     except QuickCaptureError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except InfrastructureFailure as exc:
@@ -931,6 +997,11 @@ async def capture_stream_endpoint(
     critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
     judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
     draft_call = make_gemini_email_draft_call(api_key=settings.gemini_api_key)
+    # `DEC-191` -- resolved up front, alongside this route's own other
+    # preconditions, for the same reason named in this route's own
+    # docstring: everything knowable before the stream opens should be
+    # resolved before it opens.
+    google_access_token = await _resolve_google_access_token_or_none(pool, internal_user_id=internal_user_id)
 
     queue: asyncio.Queue[dict] = asyncio.Queue()
 
@@ -946,19 +1017,34 @@ async def capture_stream_endpoint(
         queue.put_nowait(record)
 
     async def run_capture() -> dict:
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                result = await capture_action_from_text(
-                    conn,
-                    user_id=internal_user_id,
-                    free_text=body.text,
-                    extraction_call=extraction_call,
-                    critic_call=critic_call,
-                    judge_call=judge_call,
-                    draft_call=draft_call,
-                    timeline_sink=sink,
-                )
-        return _quick_capture_result_to_dict(result)
+        # `DEC-191`: this real `httpx.AsyncClient` is deliberately
+        # constructed and closed HERE, inside the task itself, rather
+        # than via an `async with` around the whole route -- this task
+        # is deliberately kept alive by `_IN_FLIGHT_CAPTURES` even after
+        # a client disconnects and this route function has already
+        # returned, so a client scoped to the route's own stack frame
+        # would already be closed by the time a real `CREATE_EMAIL_
+        # DRAFT` execution tried to use it. Closed in `finally` so a
+        # real connection is never leaked on any exit path.
+        google_http_client = httpx.AsyncClient(timeout=15.0)
+        try:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    result = await capture_action_from_text(
+                        conn,
+                        user_id=internal_user_id,
+                        free_text=body.text,
+                        extraction_call=extraction_call,
+                        critic_call=critic_call,
+                        judge_call=judge_call,
+                        draft_call=draft_call,
+                        timeline_sink=sink,
+                        google_access_token=google_access_token,
+                        http_client=google_http_client,
+                    )
+            return _quick_capture_result_to_dict(result)
+        finally:
+            await google_http_client.aclose()
 
     async def event_stream() -> AsyncIterator[str]:
         task = asyncio.create_task(run_capture())
@@ -1091,7 +1177,7 @@ async def action_status_endpoint(
     # 404 for both. Matches every other per-user read in this backend.
     row = await pool.fetchrow(
         "SELECT proposal_id, action_type, stakes, gate_decision, outcome, created_at, resolved_at, "
-        "       payload, findings, objections, gate_timeline, revision_count, pre_revision_payload "
+        "       payload, findings, objections, gate_timeline, revision_count, pre_revision_payload, artifact "
         "FROM action_events WHERE proposal_id = $1 AND user_id = $2",
         parsed_id,
         uuid.UUID(internal_user_id),
@@ -1123,6 +1209,10 @@ async def action_status_endpoint(
         "timeline": _json_column(row["gate_timeline"]),
         "revision_count": row["revision_count"],
         "pre_revision_payload": _json_column(row["pre_revision_payload"]),
+        # `DEC-191`, migration `0022`. Genuinely null for any action
+        # resolved before that migration, or whose own real execution
+        # never called a Google API at all -- never a fabricated id.
+        "artifact": _json_column(row["artifact"]),
     }
 
 
@@ -1160,6 +1250,11 @@ def _quick_capture_result_to_dict(result: QuickCaptureResult) -> dict:
         # said nothing about it.
         "email_recipient": result.email_recipient,
         "email_action": result.email_action,
+        # `DEC-191`: the real, structured external id a Google API call
+        # returned on success -- what lets a real client turn a
+        # completed action into a real tappable link into Gmail. `None`
+        # for every domain/outcome that never produces one.
+        "artifact": result.artifact,
         "findings": [finding.model_dump(mode="json") for finding in result.findings],
         "objections": [objection.model_dump(mode="json") for objection in result.objections],
     }
@@ -1218,18 +1313,24 @@ async def quick_capture_extracted_endpoint(
     critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
     judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
     draft_call = make_gemini_email_draft_call(api_key=settings.gemini_api_key) if settings.gemini_api_key else None
+    # `DEC-191` -- see `POST /quick_capture`'s own identical real
+    # reasoning above.
+    google_access_token = await _resolve_google_access_token_or_none(pool, internal_user_id=internal_user_id)
 
     try:
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                result = await capture_action_from_extracted_args(
-                    conn,
-                    user_id=internal_user_id,
-                    args=body.model_dump(),
-                    critic_call=critic_call,
-                    judge_call=judge_call,
-                    draft_call=draft_call,
-                )
+        async with httpx.AsyncClient(timeout=15.0) as google_http_client:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    result = await capture_action_from_extracted_args(
+                        conn,
+                        user_id=internal_user_id,
+                        args=body.model_dump(),
+                        critic_call=critic_call,
+                        judge_call=judge_call,
+                        draft_call=draft_call,
+                        google_access_token=google_access_token,
+                        http_client=google_http_client,
+                    )
     except QuickCaptureError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except InfrastructureFailure as exc:

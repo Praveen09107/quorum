@@ -17,9 +17,12 @@
 // the ordinary, non-streaming `QuickCaptureScreen`.
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:quorum_mobile/api/api_exceptions.dart';
 import 'package:quorum_mobile/api/capture_stream_api.dart';
+import 'package:quorum_mobile/features/calendar_sync.dart' show CreateLocalEventResult;
+import 'package:quorum_mobile/features/gate_pipeline/artifact_links.dart';
 import 'package:quorum_mobile/features/gate_pipeline/gate_pipeline_logic.dart';
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
 import 'package:quorum_mobile/theme/agent_identity.dart';
@@ -37,16 +40,35 @@ import 'package:quorum_mobile/theme/spacing.dart';
 typedef ApproveCall = Future<void> Function(String proposalId);
 typedef RejectCall = Future<void> Function(String proposalId);
 
+/// Matches `CalendarSync.createLocalEvent()`'s own real signature
+/// exactly, re-declared here for the identical reason `ApproveCall`/
+/// `RejectCall` are: this screen takes it as a plain injected function
+/// rather than importing `calendar_sync.dart` directly.
+typedef CreateLocalEventCall = Future<CreateLocalEventResult> Function({
+  required String title,
+  required DateTime start,
+  required DateTime end,
+  String? description,
+});
+
 class GatePipelineScreen extends StatefulWidget {
   final CaptureStreamFetcher captureStream;
   final ApproveCall onApprove;
   final RejectCall onReject;
+
+  /// `DEC-191` (product rebuild Block C). Optional, matching every
+  /// other injected dependency's own honest-gating convention: when
+  /// absent, a real local-calendar-create result renders exactly as
+  /// before (an honest "nothing writes a local event from here yet"),
+  /// never a crash or a silently-skipped write.
+  final CreateLocalEventCall? onCreateLocalEvent;
 
   const GatePipelineScreen({
     super.key,
     required this.captureStream,
     required this.onApprove,
     required this.onReject,
+    this.onCreateLocalEvent,
   });
 
   @override
@@ -69,6 +91,15 @@ class _GatePipelineScreenState extends State<GatePipelineScreen> {
   String? _approvalError;
   bool _approvalDone = false;
 
+  /// `DEC-191`: the real, separate outcome of the on-device calendar
+  /// write this screen performs itself -- genuinely distinct from the
+  /// backend's own `executed` (which is permanently `False` for
+  /// `create_calendar_event_local`, by design, since the real write
+  /// never happens server-side). `null` until a local-calendar result
+  /// has actually been attempted.
+  CreateLocalEventResult? _localEventResult;
+  bool _localEventInFlight = false;
+
   @override
   void dispose() {
     _controller.dispose();
@@ -85,6 +116,8 @@ class _GatePipelineScreenState extends State<GatePipelineScreen> {
       _approvalInFlight = false;
       _approvalError = null;
       _approvalDone = false;
+      _localEventResult = null;
+      _localEventInFlight = false;
     });
 
     widget.captureStream(text).listen(
@@ -94,6 +127,10 @@ class _GatePipelineScreenState extends State<GatePipelineScreen> {
           _events.add(event);
           _view = reducePipelineEvents(_events);
         });
+        // Fired exactly once, the moment the real `result` event
+        // arrives -- not derived from `_view.isFinished` broadly, so
+        // this can never double-fire on a later, unrelated event.
+        if (event.name == 'result') _maybeCreateLocalEvent(event.data);
       },
       onError: (Object error) {
         if (!mounted) return;
@@ -104,6 +141,56 @@ class _GatePipelineScreenState extends State<GatePipelineScreen> {
         });
       },
     );
+  }
+
+  /// `DEC-191`: performs the real on-device write for a genuine
+  /// `create_calendar_event_local` result the Gate has approved.
+  ///
+  /// Checked against the REAL result fields, never inferred from
+  /// `executed` -- `executed` is permanently `False` for this action
+  /// type (no server-side execution target exists for it, by design),
+  /// so using it as the trigger would mean this code never ran at all.
+  /// `decision == 'approve'` is the real signal that matters: the Gate
+  /// genuinely cleared this proposal, and the on-device write is this
+  /// client's own job to finish, honoring the same real privacy
+  /// decision that keeps local calendar ground truth off the server
+  /// entirely.
+  Future<void> _maybeCreateLocalEvent(Map<String, dynamic> result) async {
+    final onCreateLocalEvent = widget.onCreateLocalEvent;
+    if (onCreateLocalEvent == null) return;
+    if (result['domain'] != 'calendar') return;
+    if (result['calendar_action'] != 'create_calendar_event_local') return;
+    if (result['decision'] != 'approve') return;
+
+    final startRaw = result['event_start'] as String?;
+    final endRaw = result['event_end'] as String?;
+    final title = result['event_title'] as String?;
+    final start = startRaw == null ? null : DateTime.tryParse(startRaw);
+    final end = endRaw == null ? null : DateTime.tryParse(endRaw);
+    if (start == null || end == null || title == null) {
+      // The Gate approved this, but the real fields this client needs
+      // to finish the write didn't come through -- an honest failure,
+      // never a crash and never a silent no-op.
+      if (mounted) {
+        setState(() => _localEventResult = const CreateLocalEventResult(
+              success: false,
+              detail: "The approved event didn't carry enough real detail to write it on-device.",
+            ));
+      }
+      return;
+    }
+
+    setState(() => _localEventInFlight = true);
+    try {
+      final localResult = await onCreateLocalEvent(title: title, start: start, end: end);
+      if (mounted) setState(() => _localEventResult = localResult);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _localEventResult = CreateLocalEventResult(success: false, detail: e.toString()));
+      }
+    } finally {
+      if (mounted) setState(() => _localEventInFlight = false);
+    }
   }
 
   void _reset() {
@@ -366,16 +453,54 @@ class _GatePipelineScreenState extends State<GatePipelineScreen> {
       );
     }
 
+    // `DEC-191`: a real, tappable link straight into Gmail/Calendar --
+    // "it drafted this, here it is" -- whenever this real result
+    // carried a real artifact (a genuinely executed CREATE_EMAIL_DRAFT
+    // today; any future autonomous Google-API action tomorrow, with no
+    // code change needed here). Null, honestly, for every domain/
+    // outcome that never produces one -- `artifactLinkFor()` returns
+    // null rather than a broken link in that case.
+    final link = artifactLinkFor(result['artifact'] as Map<String, dynamic>?);
+
     return SafeArea(
       top: false,
       child: Padding(
         padding: const EdgeInsets.all(QuorumSpacing.md),
-        child: SizedBox(
-          width: double.infinity,
-          child: FilledButton(onPressed: _reset, child: const Text('Done')),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_localEventInFlight || _localEventResult != null) ...[
+              _LocalEventStatusRow(inFlight: _localEventInFlight, result: _localEventResult),
+              const SizedBox(height: QuorumSpacing.sm),
+            ],
+            if (link != null) ...[
+              OutlinedButton.icon(
+                onPressed: () => _openArtifactLink(link),
+                icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                label: Text(link.label),
+              ),
+              const SizedBox(height: QuorumSpacing.sm),
+            ],
+            FilledButton(onPressed: _reset, child: const Text('Done')),
+          ],
         ),
       ),
     );
+  }
+
+  Future<void> _openArtifactLink(ArtifactLink link) async {
+    final uri = Uri.parse(link.url);
+    // `launchUrl` returning `false` means no app/browser on the device
+    // could handle this real URL -- a real, honest failure mode (never
+    // thrown, per `url_launcher`'s own documented contract), surfaced
+    // to the user rather than silently swallowed.
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't open ${link.label.toLowerCase()} -- no app available for this link.")),
+      );
+    }
   }
 
   String _domainFor(String actionType) {
@@ -470,6 +595,52 @@ class _ErrorCard extends StatelessWidget {
           const Icon(Icons.error_outline_rounded, color: QuorumDarkStatus.critical, size: 20),
           const SizedBox(width: QuorumSpacing.sm),
           Expanded(child: Text(error.detail, style: const TextStyle(color: QuorumDarkGround.textPrimary))),
+        ],
+      ),
+    );
+  }
+}
+
+/// `DEC-191`: the real, honest status of this screen's own on-device
+/// calendar write -- deliberately separate from every other row above
+/// it, since this is the one real outcome the BACKEND never reports at
+/// all (it happens entirely on this device).
+class _LocalEventStatusRow extends StatelessWidget {
+  final bool inFlight;
+  final CreateLocalEventResult? result;
+
+  const _LocalEventStatusRow({required this.inFlight, required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    if (inFlight) {
+      return Container(
+        padding: const EdgeInsets.all(QuorumSpacing.sm),
+        decoration: solidPanelDecoration(),
+        child: const Row(
+          children: [
+            SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+            SizedBox(width: QuorumSpacing.sm),
+            Text('Adding this to your calendar...'),
+          ],
+        ),
+      );
+    }
+    final outcome = result!;
+    final color = outcome.success ? QuorumDarkStatus.verified : QuorumDarkStatus.critical;
+    return Container(
+      padding: const EdgeInsets.all(QuorumSpacing.sm),
+      decoration: solidPanelDecoration(accent: color),
+      child: Row(
+        children: [
+          Icon(outcome.success ? Icons.event_available_rounded : Icons.event_busy_rounded, color: color, size: 20),
+          const SizedBox(width: QuorumSpacing.sm),
+          Expanded(
+            child: Text(
+              outcome.success ? 'Added to your on-device calendar.' : outcome.detail,
+              style: const TextStyle(color: QuorumDarkGround.textPrimary),
+            ),
+          ),
         ],
       ),
     );

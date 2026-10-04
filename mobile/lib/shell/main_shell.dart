@@ -196,6 +196,12 @@ class MainShell extends ConsumerStatefulWidget {
   final ApproveCall? onApproveAction;
   final RejectCall? onRejectAction;
 
+  /// `DEC-191` (product rebuild Block C). Optional, matching every
+  /// sibling field's own honest gating -- when absent, a real local-
+  /// calendar-create result still renders correctly, just without the
+  /// real on-device write being attempted.
+  final CreateLocalEventCall? onCreateLocalEvent;
+
   /// The real, live "sign out" action (`DEC-105`) -- distinct from
   /// `confirmDelete` above: signing out ends the current real session
   /// only, never touches any real stored data, the opposite stakes
@@ -260,6 +266,7 @@ class MainShell extends ConsumerStatefulWidget {
     this.captureStream,
     this.onApproveAction,
     this.onRejectAction,
+    this.onCreateLocalEvent,
     this.onSignOut,
     this.healthCheck,
     this.healthCheckInterval = const Duration(seconds: 20),
@@ -345,6 +352,7 @@ class _MainShellState extends ConsumerState<MainShell> {
               captureStream: widget.captureStream!,
               onApprove: widget.onApproveAction!,
               onReject: widget.onRejectAction!,
+              onCreateLocalEvent: widget.onCreateLocalEvent,
             ),
           ),
         ),

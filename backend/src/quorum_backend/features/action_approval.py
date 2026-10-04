@@ -108,7 +108,9 @@ async def _fetch_and_lock_row(conn: asyncpg.Connection, *, user_id: str, proposa
     return row
 
 
-async def _resolve_row(conn: asyncpg.Connection, *, user_id: str, proposal_id: str, outcome: str) -> None:
+async def _resolve_row(
+    conn: asyncpg.Connection, *, user_id: str, proposal_id: str, outcome: str, artifact: dict | None = None
+) -> None:
     """The real, conditional write side of the same fix: `AND
     resolved_at IS NULL` is real defense in depth (the `FOR UPDATE` lock
     above already makes a genuine race impossible for any caller that
@@ -116,13 +118,20 @@ async def _resolve_row(conn: asyncpg.Connection, *, user_id: str, proposal_id: s
     doesn't), and checking the real `UPDATE n` status tag -- rather than
     trusting the earlier read -- means a logic error here fails loud
     instead of silently reporting success for a write that touched zero
-    rows."""
+    rows.
+
+    `artifact` (`DEC-191`, migration `0022`) is the real, structured
+    external id Google's own API returned on a successful execution --
+    `None` for every non-executed outcome and every action type that
+    never calls a Google API, matching the column's own genuinely
+    nullable, no-default design."""
     status = await conn.execute(
-        "UPDATE action_events SET outcome = $3, resolved_at = now() "
+        "UPDATE action_events SET outcome = $3, resolved_at = now(), artifact = $4::jsonb "
         "WHERE proposal_id = $1 AND user_id = $2 AND resolved_at IS NULL",
         uuid.UUID(proposal_id),
         uuid.UUID(user_id),
         outcome,
+        json.dumps(artifact) if artifact is not None else None,
     )
     if status != "UPDATE 1":
         raise PendingActionNotApprovable(_ALREADY_RESOLVED_DETAIL)
@@ -261,7 +270,9 @@ async def approve_pending_action(
                 )
 
         if result.executed is True:
-            await _resolve_row(conn, user_id=user_id, proposal_id=proposal_id, outcome="approved_unchanged")
+            await _resolve_row(
+                conn, user_id=user_id, proposal_id=proposal_id, outcome="approved_unchanged", artifact=result.artifact
+            )
         elif result.executed is None:
             await _resolve_row(conn, user_id=user_id, proposal_id=proposal_id, outcome="outcome_unknown")
         # `result.executed is False` is the one real case left
