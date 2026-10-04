@@ -401,6 +401,7 @@ import logging
 import math
 import uuid
 from datetime import datetime, timezone
+from time import perf_counter
 from typing import Awaitable, Callable
 
 import asyncpg
@@ -420,7 +421,8 @@ from quorum_backend.features.retry_queue_drainer import (
     validate_and_build_task_proposal,
 )
 from quorum_backend.gate.orchestration import CriticCall, JudgeCall, review
-from quorum_backend.gate.schemas import ActionProposal, Finding, Objection
+from quorum_backend.gate.schemas import ActionProposal, Finding, Objection, Stakes
+from quorum_backend.gate.timeline import GateTimeline, GateTimelineSink
 from quorum_backend.router import get_stakes
 
 logger = logging.getLogger("quorum_backend")
@@ -1843,11 +1845,36 @@ async def capture_action_from_extracted_args(
     critic_call: CriticCall,
     judge_call: JudgeCall,
     draft_call: LlmCall | None = None,
+    timeline_sink: GateTimelineSink | None = None,
+    timeline: GateTimeline | None = None,
 ) -> QuickCaptureResult:
     """The real, DB-touching half of the pipeline: propose -> Gate ->
     persist/execute, on ONE connection so the real Gate verdict and the
     real row it authorizes commit or roll back together (matching
     `persist_gate_verdict()`'s own established atomicity discipline).
+
+    `timeline_sink` (`DEC-189` Block B) is an optional, real, synchronous
+    callback receiving each pipeline stage event the moment it genuinely
+    completes -- what `POST /capture/stream` streams to a live client.
+    Passing nothing changes nothing observable: the timeline is still
+    recorded and still persisted onto the real `action_events` row, so
+    every decision is replayable afterward whether or not anyone watched
+    it happen. See `gate/timeline.py` for the guarantee that this sink
+    can never alter a verdict or fail a review.
+
+    `timeline` lets a CALLER own the recorder instead of this function
+    creating one. That exists for a real, found reason rather than
+    flexibility for its own sake: `capture_action_from_text()` below
+    runs the extraction call BEFORE reaching this function, and
+    extraction is genuinely the slowest stage in a real capture (live-
+    measured at ~7.8s against a Gate that completed in under 1ms). When
+    this function created the recorder itself, the clock started after
+    extraction had already finished, so every recorded `at_ms` was 0 and
+    the persisted timeline omitted the one stage that accounted for
+    virtually the entire request. A caller that owns the recorder gives
+    the whole pipeline a single shared clock origin. Pass `timeline` OR
+    `timeline_sink`, not both -- when `timeline` is given it already
+    carries its own sink.
     Takes an already-extracted `args` dict -- see `capture_action_from_
     text()` below for why extraction itself is kept OUT of this
     function and out of any real database transaction.
@@ -1932,7 +1959,48 @@ async def capture_action_from_extracted_args(
 
     stakes = get_stakes(proposal.action_type)
     stage_a_checks = await build_stage_a_checks_for_domain(conn, domain=domain, proposal=proposal, user_id=user_id)
-    verdict = await review(proposal, stakes, stage_a_checks, critic_call, judge_call)
+
+    # `DEC-189` Block B: the real Gate execution timeline. Instrumented
+    # by wrapping the callables `review()` is handed, never by changing
+    # `review()` itself -- see `gate/timeline.py`'s own docstring for why
+    # that boundary matters (that function is CRITICAL-tier and its
+    # correctness argument is structural). `timeline` is always created
+    # here, with or without a `timeline_sink`: the recorded timeline is
+    # persisted onto the real `action_events` row either way, so a
+    # decision made through the ordinary non-streaming endpoint is just
+    # as replayable afterward as one watched live. The sink is only
+    # about watching it happen in real time.
+    if timeline is None:
+        timeline = GateTimeline(sink=timeline_sink)
+
+    # The real routing decision, marked before the Gate runs. Not
+    # cosmetic: the stakes tier is what determines whether Stage B runs
+    # at all, and it is genuinely known at this point, so saying so
+    # up front is what lets a watching user understand WHY the pipeline
+    # about to run looks the way it does rather than inferring it
+    # afterward. `stage_b_will_run` is computed from the same real
+    # structural rule `gate.orchestration.run_stage_b()` itself applies
+    # (S2 and S3 reach Stage B; S0 and S1 never do) -- stated as an
+    # expectation here, and the `done` event's own `stage_b_ran`
+    # reports what ACTUALLY happened, which can legitimately differ
+    # when Stage A hard-fails and short-circuits.
+    timeline.mark(
+        "routing",
+        action_type=proposal.action_type.value,
+        stakes=stakes.value,
+        stage_b_will_run=stakes in (Stakes.S2, Stakes.S3),
+        critic_will_run=stakes == Stakes.S3,
+        stage_a_check_count=len(stage_a_checks),
+    )
+
+    verdict = await review(
+        proposal,
+        stakes,
+        timeline.instrument_stage_a(stage_a_checks),
+        timeline.instrument_critic(critic_call),
+        timeline.instrument_judge(judge_call),
+    )
+    timeline.finish(verdict, stakes)
 
     # RESOLVED, a real, disclosed CRITICAL-tier review HIGH, found before
     # merge (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 6, `DEC-172`): a
@@ -1972,7 +2040,9 @@ async def capture_action_from_extracted_args(
                 "act on a different real row than the one the user's own reference actually resolved to."
             )
 
-    executed = await persist_gate_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
+    executed = await persist_gate_verdict(
+        conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id, timeline=timeline
+    )
 
     final_payload = verdict.revised_payload if verdict.revised_payload is not None else proposal.payload
     action_type_value = proposal.action_type.value
@@ -2074,6 +2144,8 @@ async def capture_action_from_text(
     critic_call: CriticCall,
     judge_call: JudgeCall,
     draft_call: LlmCall | None = None,
+    timeline_sink: GateTimelineSink | None = None,
+    timeline: GateTimeline | None = None,
 ) -> QuickCaptureResult:
     """A real, convenience wrapper combining extraction with the real,
     DB-touching pipeline above -- correct and safe wherever the caller
@@ -2094,7 +2166,74 @@ async def capture_action_from_text(
     free-tier connection pool, for a call that touches no database at
     all. This wrapper still exists, and is still correct, for any real
     caller (or test) that doesn't share that same real constraint."""
+    # `DEC-189`: the recorder is created HERE, before extraction, and
+    # handed down -- so the whole pipeline shares one clock origin and
+    # the extraction stage is genuinely part of the recorded timeline.
+    #
+    # REAL DEFECT THIS FIXES, found by a live end-to-end run rather than
+    # by reasoning: the first version of this created the recorder inside
+    # `capture_action_from_extracted_args()` and emitted the two
+    # extraction events straight to the sink with a hardcoded `at_ms: 0`.
+    # Two things were wrong with that, and both were visible the moment a
+    # real capture was watched. Every recorded offset was 0, because the
+    # clock started after extraction had already finished -- so a
+    # genuinely 7.8-second request rendered as if nothing took any time.
+    # And the persisted timeline held only the three Gate events, so
+    # replaying that decision later showed a Gate completing in under a
+    # millisecond with no sign of the stage that accounted for
+    # essentially the entire request. Extraction is not a Gate stage and
+    # is deliberately marked by this caller rather than instrumented
+    # inside `GateTimeline`, but it IS part of the pipeline a user
+    # watches and replays, so it belongs on the same record.
+    if timeline is None:
+        timeline = GateTimeline(sink=timeline_sink)
+
+    extraction_started = perf_counter()
+    timeline.mark("understanding.start")
     args = await extraction_call(free_text)
+
+    # REAL REGRESSION, found by this session's own full suite run and
+    # fixed before merge: `args` is never assumed to be a real dict here
+    # either, for the identical reason a real, disclosed CRITICAL-tier
+    # review already established for `capture_action_from_extracted_
+    # args()` below -- a genuinely malformed real extraction response (a
+    # bare JSON array or scalar, which `_call_gemini_json()`'s own
+    # `json.loads()` returns unguarded) would otherwise reach a bare
+    # `args.get("domain")` outside any `try`, raising an uncaught
+    # `AttributeError` instead of this module's own honest
+    # `QuickCaptureError`. That function already guards its own entry;
+    # this caller must guard BEFORE it, because it touches `args` as a
+    # dict first, for the timeline event, on the way to calling it.
+    if isinstance(args, dict):
+        timeline.mark(
+            "understanding",
+            duration_ms=int((perf_counter() - extraction_started) * 1000),
+            domain=args.get("domain"),
+            # The extracted KEYS only, never their values. A value here
+            # is untrusted model output derived from untrusted free
+            # text, and this record is persisted and re-rendered later;
+            # the keys are what a user actually needs to see ("it
+            # understood this as an email with a recipient and an
+            # intent"), and the values already reach the client through
+            # the real response.
+            extracted_fields=sorted(k for k, v in args.items() if v is not None),
+        )
+    else:
+        # Still recorded, honestly, rather than silently skipped --
+        # `capture_action_from_extracted_args()` raises `QuickCaptureError`
+        # immediately below, and a watching client should see why.
+        timeline.mark(
+            "understanding",
+            duration_ms=int((perf_counter() - extraction_started) * 1000),
+            domain=None,
+            extracted_fields=[],
+        )
     return await capture_action_from_extracted_args(
-        conn, user_id=user_id, args=args, critic_call=critic_call, judge_call=judge_call, draft_call=draft_call
+        conn,
+        user_id=user_id,
+        args=args,
+        critic_call=critic_call,
+        judge_call=judge_call,
+        draft_call=draft_call,
+        timeline=timeline,
     )

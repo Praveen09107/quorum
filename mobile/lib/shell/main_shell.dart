@@ -103,6 +103,8 @@ import 'package:quorum_mobile/features/outage/outage_banner.dart';
 import 'package:quorum_mobile/features/outage/outage_detector.dart';
 import 'package:quorum_mobile/features/pending_share_provider.dart';
 import 'package:quorum_mobile/features/predictive_risk/predictive_risk_logic.dart';
+import 'package:quorum_mobile/api/capture_stream_api.dart';
+import 'package:quorum_mobile/features/gate_pipeline/gate_pipeline_screen.dart';
 import 'package:quorum_mobile/features/quick_capture/quick_capture_logic.dart';
 import 'package:quorum_mobile/features/quick_capture/quick_capture_screen.dart';
 import 'package:quorum_mobile/features/search/search_logic.dart';
@@ -183,6 +185,17 @@ class MainShell extends ConsumerStatefulWidget {
   final CalendarEventsFetcher? fetchCalendarEvents;
   final QuickCaptureFetcher? captureTask;
 
+  /// REAL, NEW (`DEC-189` Block B) -- the live Gate pipeline. When
+  /// provided, the FAB opens [GatePipelineScreen] instead of the
+  /// ordinary [QuickCaptureScreen], matching [captureTask]'s own
+  /// established honest-optional-fetcher gating: hidden/unused rather
+  /// than disabled when not configured. [onApproveAction]/
+  /// [onRejectAction] back the pipeline's own terminal S3 approve/
+  /// reject bar and are required together with [captureStream].
+  final CaptureStreamFetcher? captureStream;
+  final ApproveCall? onApproveAction;
+  final RejectCall? onRejectAction;
+
   /// The real, live "sign out" action (`DEC-105`) -- distinct from
   /// `confirmDelete` above: signing out ends the current real session
   /// only, never touches any real stored data, the opposite stakes
@@ -244,6 +257,9 @@ class MainShell extends ConsumerStatefulWidget {
     this.syncCalendar,
     this.fetchCalendarEvents,
     this.captureTask,
+    this.captureStream,
+    this.onApproveAction,
+    this.onRejectAction,
     this.onSignOut,
     this.healthCheck,
     this.healthCheckInterval = const Duration(seconds: 20),
@@ -311,6 +327,39 @@ class _MainShellState extends ConsumerState<MainShell> {
 
   Future<DeletionResultData> _unconfiguredDeletion() {
     throw StateError('Account deletion has not been connected to a real backend yet.');
+  }
+
+  /// Real, honest optional-fetcher gating, matching `captureTask`'s own
+  /// established pattern exactly: the richer, streaming experience is
+  /// preferred whenever it's genuinely configured; the plain,
+  /// non-streaming screen remains the real fallback rather than
+  /// disappearing, so this shell is never worse off than before this
+  /// block existed; and the FAB is hidden entirely (never
+  /// disabled/greyed) only when NEITHER is configured.
+  Widget? _buildCaptureFab(BuildContext context) {
+    if (widget.captureStream != null && widget.onApproveAction != null && widget.onRejectAction != null) {
+      return FloatingActionButton(
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => GatePipelineScreen(
+              captureStream: widget.captureStream!,
+              onApprove: widget.onApproveAction!,
+              onReject: widget.onRejectAction!,
+            ),
+          ),
+        ),
+        child: const Icon(Icons.bolt_rounded),
+      );
+    }
+    if (widget.captureTask != null) {
+      return FloatingActionButton(
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => QuickCaptureScreen(capture: widget.captureTask!)),
+        ),
+        child: const Icon(Icons.add),
+      );
+    }
+    return null;
   }
 
   Widget _bodyForIndex(int index) {
@@ -390,14 +439,7 @@ class _MainShellState extends ConsumerState<MainShell> {
       // entirely (never a disabled/greyed-out button) whenever no real
       // `captureTask` is configured -- the same honest, optional-fetcher
       // gating every other real feature in this shell already uses.
-      floatingActionButton: widget.captureTask == null
-          ? null
-          : FloatingActionButton(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => QuickCaptureScreen(capture: widget.captureTask!)),
-              ),
-              child: const Icon(Icons.add),
-            ),
+      floatingActionButton: _buildCaptureFab(context),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         onDestinationSelected: _onDestinationSelected,

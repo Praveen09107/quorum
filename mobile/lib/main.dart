@@ -100,6 +100,7 @@ import 'package:http/http.dart' as http;
 
 import 'package:quorum_mobile/api/account_api.dart';
 import 'package:quorum_mobile/api/action_approval_api.dart';
+import 'package:quorum_mobile/api/capture_stream_api.dart';
 import 'package:quorum_mobile/api/career_digest_api.dart';
 import 'package:quorum_mobile/api/career_pipeline_api.dart';
 import 'package:quorum_mobile/api/expenses_api.dart';
@@ -393,6 +394,27 @@ class _QuorumAppState extends State<QuorumApp> {
                 getAccessToken: _authController.getValidAccessToken,
                 client: _httpClient,
               ),
+            ),
+            // REAL, NEW (`DEC-189` Block B) -- the live Gate pipeline.
+            // Deliberately always cloud (no on-device routing): watching
+            // the real Stage A/B calls resolve live is the entire point
+            // of this screen, so there is no "on-device" variant of it
+            // to route to. Reuses the exact same real approve/reject
+            // fetchers already constructed above for the Needs-you-now
+            // flow -- both calls are cheap, side-effect-free closures
+            // (the same accepted, documented cost `captureTask` above
+            // already establishes for its own sibling fetchers).
+            captureStream: createCaptureStreamFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            onApproveAction: createApproveActionFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            onRejectAction: createRejectActionFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
             ),
             confirmDelete: _handleAccountDeletion,
             onSignOut: _handleSignOut,
