@@ -129,7 +129,7 @@ import 'package:quorum_mobile/features/quick_capture/on_device_extraction.dart';
 import 'package:quorum_mobile/features/quick_capture/quick_capture_router.dart';
 import 'package:quorum_mobile/features/you/you_logic.dart';
 import 'package:quorum_mobile/shell/main_shell.dart';
-import 'package:quorum_mobile/theme/quorum_theme.dart';
+import 'package:quorum_mobile/theme/quorum_dark_theme.dart';
 
 void main() {
   runApp(const ProviderScope(child: QuorumApp()));
@@ -237,7 +237,21 @@ class _QuorumAppState extends State<QuorumApp> {
     return MaterialApp(
       title: 'Quorum',
       debugShowCheckedModeBanner: false,
-      theme: buildQuorumLightTheme(),
+      // `DEC-189`: the app is now dark-first, at the product owner's
+      // explicit direction. `theme` and `darkTheme` are deliberately
+      // set to the SAME dark theme, and `themeMode` is forced to dark,
+      // rather than offering a light/dark pair: the rebuild's palette,
+      // glass surfaces and accent glows are designed against a
+      // near-black ground specifically, and handing the light theme to
+      // a device in light mode would render those surfaces against a
+      // ground they were never tuned for -- low-alpha white glass fills
+      // and hairlines genuinely disappear on white. A real light
+      // variant is a separate, deliberate piece of design work, not a
+      // free fallback, so the honest choice is to commit to one ground
+      // rather than ship a broken second one.
+      theme: buildQuorumDarkTheme(),
+      darkTheme: buildQuorumDarkTheme(),
+      themeMode: ThemeMode.dark,
       home: switch (_sessionState) {
         _SessionState.checking => const _SplashScreen(),
         _SessionState.signedOut => LoginScreen(

@@ -2,6 +2,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import pytest
 import pytest_asyncio
 
 from quorum_backend.auth.user_provisioning import get_or_create_user
@@ -118,15 +119,78 @@ def test_build_honesty_feed_a_genuinely_unrecognized_action_type_gets_an_honest_
     assert feed.successes[0].description == "Update budget"
 
 
-def test_build_honesty_feed_a_real_unrecognized_outcome_is_dropped_not_crashed():
-    """A defensive fallback for an outcome value the real schema's own
-    CHECK constraint should make unreachable in practice -- confirmed
-    here it's a real, silent skip, not a crash."""
-    feed = build_honesty_feed([("a1", datetime.now(timezone.utc), "some_future_outcome", "create_task", {})])
-    assert feed.total == 0
-    assert feed.successes == []
+def test_build_honesty_feed_a_real_unrecognized_outcome_now_fails_loud():
+    """REVERSED `DEC-189`, deliberately. This test previously asserted
+    the opposite -- that an unrecognized outcome was silently dropped
+    -- and that asserted behavior turned out to be the mechanism of a
+    real, shipped bug: `DEC-188` widened `action_events.outcome`'s own
+    CHECK constraint with `rejected_by_user` and `outcome_unknown`,
+    `build_honesty_feed()` was never updated, and from that point every
+    real rejected action vanished from the one feed whose contract is
+    that it never filters anything out.
+
+    Failing loud is the same handling `CLAUDE.md` already mandates for
+    `tasks.status`, this project's other real closed, CHECK-constrained
+    set. The error message must name the offending value so the next
+    person to widen the constraint is told exactly what to do."""
+    with pytest.raises(ValueError, match="some_future_outcome"):
+        build_honesty_feed([("a1", datetime.now(timezone.utc), "some_future_outcome", "create_task", {})])
+
+
+def test_build_honesty_feed_rejected_by_user_lands_in_failures_and_catches():
+    """`rejected_by_user` (migration `0019`) is a real, fully-known
+    resolved outcome that simply was not a success -- it belongs in the
+    denominator, and it must be visible in the feed at all, which it
+    was not before `DEC-189`."""
+    now = datetime.now(timezone.utc)
+    rows = [
+        ("a1", now, "approved_unchanged", "create_task", {"title": "x"}),
+        ("a2", now, "rejected_by_user", "send_email", {"to": "a@example.com"}),
+    ]
+    feed = build_honesty_feed(rows)
+    assert feed.total == 2
+    assert feed.success_rate == 0.5
+    assert [a.outcome for a in feed.failures_and_catches] == ["rejected_by_user"]
+
+
+def test_build_honesty_feed_outcome_unknown_is_genuinely_uncertain_not_a_failure():
+    """`outcome_unknown` (migration `0020`) means a real external call
+    may genuinely have taken effect and the system cannot tell. Folding
+    it into `failures_and_catches` would assert it did NOT happen --
+    exactly the `evidence_state` collapse this project forbids."""
+    now = datetime.now(timezone.utc)
+    rows = [
+        ("a1", now, "approved_unchanged", "create_task", {"title": "x"}),
+        ("a2", now, "outcome_unknown", "send_email", {"to": "a@example.com"}),
+    ]
+    feed = build_honesty_feed(rows)
+    assert feed.total == 1  # the unknown row is NOT a resolved attempt
+    assert feed.success_rate == 1.0  # and NOT in the denominator either
+    assert [a.outcome for a in feed.genuinely_uncertain] == ["outcome_unknown"]
     assert feed.failures_and_catches == []
-    assert feed.genuinely_uncertain == []
+
+
+def test_build_honesty_feed_covers_every_value_the_real_check_constraint_admits():
+    """The real regression guard for the whole class of bug `DEC-189`
+    fixed. If a future migration widens `action_events_outcome_check`
+    and nobody updates `honesty_log.py`, this test fails here rather
+    than silently under-reporting in production. The list below is the
+    real constraint's own full vocabulary as of migration `0020`."""
+    now = datetime.now(timezone.utc)
+    every_real_outcome = [
+        "approved_unchanged",
+        "caught_by_gate",
+        "corrected_by_user",
+        "uncertain_no_data",
+        "rejected_by_user",
+        "outcome_unknown",
+    ]
+    rows = [(f"a{i}", now, outcome, "create_task", {"title": "x"}) for i, outcome in enumerate(every_real_outcome)]
+
+    feed = build_honesty_feed(rows)  # must not raise
+
+    bucketed = len(feed.successes) + len(feed.failures_and_catches) + len(feed.genuinely_uncertain)
+    assert bucketed == len(every_real_outcome), "every real constraint value must land in exactly one bucket"
 
 
 # --- fetch_honesty_feed: real, live database ---

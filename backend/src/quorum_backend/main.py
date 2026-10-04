@@ -848,6 +848,17 @@ def _quick_capture_result_to_dict(result: QuickCaptureResult) -> dict:
         "calendar_action": result.calendar_action,
         "company": result.company,
         "new_status": result.new_status,
+        # REAL, FOUND BUG, fixed `DEC-189`: these two were the only fields
+        # on `QuickCaptureResult` this builder never serialized, so every
+        # real email-domain capture reached the client as `domain: "email"`
+        # with every email field null -- the backend genuinely computed
+        # `email_recipient`/`email_action` (quick_capture.py:1916-1917) and
+        # then silently dropped them at the HTTP boundary. This is a direct,
+        # confirmed cause of the real user-reported symptom "I never saw the
+        # app do real-time Gmail drafting": it was drafting, and the response
+        # said nothing about it.
+        "email_recipient": result.email_recipient,
+        "email_action": result.email_action,
         "findings": [finding.model_dump(mode="json") for finding in result.findings],
         "objections": [objection.model_dump(mode="json") for objection in result.objections],
     }

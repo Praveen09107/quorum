@@ -36,14 +36,45 @@ class EmailAgentState(TypedDict):
     proposal: ActionProposal | None
 
 
-def build_reply_proposal(recipient: str, body: str) -> ActionProposal:
+def build_reply_proposal(recipient: str, body: str, subject: str | None = None) -> ActionProposal:
     """Real, structural authorization check -- see this session's report
     for why this call exists even though the agent is already structurally
-    incapable of proposing anything else."""
+    incapable of proposing anything else.
+
+    `subject` added `DEC-189`, closing the real gap `features/
+    action_executor.py`'s own top-of-file docstring has disclosed since
+    it was written: this function's payload carried no subject at all,
+    and the executor honors the payload exactly, so every real email
+    this system has ever sent went out with a genuinely EMPTY Subject
+    header. That is both an obviously broken product experience and a
+    real deliverability problem (empty-subject mail is a common spam
+    signal). The executor already reads `payload.get("subject", "")`,
+    so no executor change is needed -- the gap was always on this,
+    the producing, side.
+
+    Kept OPTIONAL rather than required, deliberately: `make_draft_reply_
+    node()` below is a real existing caller that has no subject to give,
+    and making this a required argument would break it to no purpose.
+    An omitted subject still produces today's exact existing behavior,
+    so this change can only ever improve a real send, never alter one
+    that was already correct.
+
+    Still genuinely NOT fixed here, and still honestly disclosed: a real
+    reply is not threaded into its existing Gmail conversation.
+    `EmailAgentState` carries a `thread_id` that no proposal has ever
+    passed along, and threading additionally requires a real
+    `In-Reply-To`/`References` header pair built from the parent
+    message, which this system does not currently retain. That is real
+    follow-on work (Block C), not something to half-do here by passing
+    a `threadId` that would make Gmail group the message while its
+    headers still say it starts a new conversation."""
     authorize_tool_call("gmail.send", calling_agent_domain="email")
+    payload: dict = {"to": recipient, "body": body}
+    if subject is not None and subject.strip():
+        payload["subject"] = subject.strip()
     return ActionProposal(
         action_type=ActionType.SEND_EMAIL,
-        payload={"to": recipient, "body": body},
+        payload=payload,
     )
 
 

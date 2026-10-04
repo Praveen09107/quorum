@@ -3351,3 +3351,92 @@ def test_follow_up_route_real_secret_and_matching_header_reaches_the_real_route_
         }
     finally:
         get_settings.cache_clear()
+
+
+# --- _quick_capture_result_to_dict: pure, no live model needed ---
+
+
+def test_quick_capture_result_to_dict_serializes_every_field_on_the_dataclass():
+    """THE REAL REGRESSION GUARD for the `DEC-189` bug, and the reason
+    it is structural rather than a list of expected keys.
+
+    `_quick_capture_result_to_dict()` silently omitted `email_recipient`
+    and `email_action` while serializing all 16 of their siblings. The
+    backend genuinely computed both. Every real email-domain capture
+    therefore reached the client as `domain: "email"` with every email
+    field null -- a confirmed direct cause of the real user-reported
+    symptom "I never saw the app do real-time Gmail drafting."
+
+    It survived because the ONLY tests exercising this function were
+    live end-to-end ones that depend on a real Gemini extraction call,
+    so they skip or fail for unrelated external reasons and nobody
+    noticed the shape was wrong. This test needs no model, no network
+    and no database.
+
+    Asserting against `dataclasses.fields()` rather than a hardcoded
+    key list is deliberate: it means ADDING a field to
+    `QuickCaptureResult` and forgetting the serializer fails here
+    immediately, which is exactly the mistake that was made. A
+    hardcoded list would have to be updated by the same person making
+    the same omission, and would not have caught this."""
+    import dataclasses
+
+    from quorum_backend.features.quick_capture import QuickCaptureResult
+    from quorum_backend.main import _quick_capture_result_to_dict
+
+    result = QuickCaptureResult(
+        executed=False,
+        decision="approve",
+        stakes="S3",
+        domain="email",
+        operation="create",
+        email_recipient="someone@example.com",
+        email_action="send_email",
+    )
+
+    serialized = _quick_capture_result_to_dict(result)
+    declared = {f.name for f in dataclasses.fields(QuickCaptureResult)}
+
+    missing = declared - set(serialized)
+    assert not missing, f"fields computed by the backend but dropped at the HTTP boundary: {sorted(missing)}"
+
+    extra = set(serialized) - declared
+    assert not extra, f"serializer invents keys with no backing field: {sorted(extra)}"
+
+
+def test_quick_capture_result_to_dict_carries_the_real_email_fields_through():
+    """The specific values, not just the key presence -- a serializer
+    that emitted the keys as hardcoded `None` would pass the
+    exhaustiveness test above while reproducing the original defect
+    exactly."""
+    from quorum_backend.features.quick_capture import QuickCaptureResult
+    from quorum_backend.main import _quick_capture_result_to_dict
+
+    serialized = _quick_capture_result_to_dict(
+        QuickCaptureResult(
+            executed=False,
+            decision="approve",
+            stakes="S3",
+            domain="email",
+            operation="create",
+            email_recipient="sarah@example.com",
+            email_action="send_email",
+        )
+    )
+
+    assert serialized["email_recipient"] == "sarah@example.com"
+    assert serialized["email_action"] == "send_email"
+    assert serialized["domain"] == "email"
+
+
+def test_quick_capture_result_to_dict_returns_json_serializable_output():
+    """`findings`/`objections` are real Pydantic models and must already
+    be dumped to plain JSON types by the time they leave this function
+    -- FastAPI returns this dict directly."""
+    from quorum_backend.features.quick_capture import QuickCaptureResult
+    from quorum_backend.main import _quick_capture_result_to_dict
+
+    serialized = _quick_capture_result_to_dict(
+        QuickCaptureResult(executed=True, decision="approve", stakes="S0", domain="tasks", operation="create")
+    )
+    json.dumps(serialized)  # must not raise
