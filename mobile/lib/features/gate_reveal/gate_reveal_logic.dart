@@ -156,5 +156,57 @@ class GateRevealBundle {
   final List<FindingSummary>? findings;
   final List<ObjectionSummary>? objections;
 
-  const GateRevealBundle({required this.stakes, required this.findings, required this.objections});
+  /// REAL, DISCLOSED EXTENSION (the redesign's own real Approve/Reject
+  /// work): the real, previously-undiscovered gap this screen exists
+  /// to close -- it was always read-only. These three fields let this
+  /// screen decide whether to show real Approve/Reject controls at
+  /// all; see `canApprove`/`isPending` below for the real, closed
+  /// logic, kept here (not duplicated in the screen) so it stays
+  /// `dart test`-verifiable without a real Flutter dependency.
+  final String actionType;
+  final String gateDecision;
+  final String? resolvedAt;
+
+  /// REAL, DISCLOSED FIX (CRITICAL-tier cross-model review of `features/
+  /// action_approval.py`, HIGH-3): the real payload a human "Approve"
+  /// tap would actually execute -- the Judge-possibly-REVISED `final_
+  /// payload`, which can genuinely differ from whatever the user
+  /// originally typed. Before this fix, `GateRevealScreen` could show
+  /// real Approve/Reject controls without ever rendering what a real
+  /// `SEND_EMAIL`/`CREATE_CALENDAR_EVENT_EXTERNAL` approval would
+  /// actually send -- meeting "S3 requires human approval" in form,
+  /// not substance. The real, closed set of keys varies by `actionType`
+  /// (`to`/`subject`/`body` for email; `title`/`invitee_email`/`start`/
+  /// `end` for an external calendar booking) -- never re-shaped here,
+  /// the same "render whatever real keys exist" discipline this
+  /// project already uses elsewhere (`today_screen.dart`'s own
+  /// `PendingActionSummary.payload`).
+  final Map<String, dynamic> payload;
+
+  const GateRevealBundle({
+    required this.stakes,
+    required this.findings,
+    required this.objections,
+    required this.actionType,
+    required this.gateDecision,
+    required this.resolvedAt,
+    required this.payload,
+  });
+
+  /// A real row is still genuinely open the moment `resolvedAt` is
+  /// `null` -- the exact same `resolved_at IS NULL` definition
+  /// `features/today.py`'s own real "Needs you now" query already
+  /// uses, never re-derived differently here.
+  bool get isPending => resolvedAt == null;
+
+  /// The real, closed set of action types a human can actually approve
+  /// into real execution -- matches `features/action_approval.py`'s
+  /// own `_HUMAN_APPROVABLE_ACTION_TYPES` exactly, kept in sync by
+  /// hand since there is no shared schema module between this backend
+  /// and this Dart app (the same accepted precedent `computed_state.
+  /// dart`'s own port already set). `CREATE_CALENDAR_EVENT_LOCAL` is
+  /// deliberately excluded: no real execution target exists for it at
+  /// all, so there is nothing for "Approve" to do -- only "Reject"
+  /// (dismiss) applies to it.
+  bool get canApprove => isPending && gateDecision == 'approve' && (actionType == 'send_email' || actionType == 'create_calendar_event_external');
 }

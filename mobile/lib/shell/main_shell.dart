@@ -82,8 +82,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:quorum_mobile/api/action_approval_api.dart';
+import 'package:quorum_mobile/api/expenses_api.dart';
 import 'package:quorum_mobile/api/health_api.dart';
+import 'package:quorum_mobile/api/task_status_api.dart';
+import 'package:quorum_mobile/api/week_summary_api.dart';
 import 'package:quorum_mobile/db/database.dart';
+import 'package:quorum_mobile/api/agents_api.dart';
+import 'package:quorum_mobile/features/agents/agents_index_screen.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
 import 'package:quorum_mobile/features/career_digest/career_digest_logic.dart';
@@ -99,6 +105,8 @@ import 'package:quorum_mobile/features/outage/outage_banner.dart';
 import 'package:quorum_mobile/features/outage/outage_detector.dart';
 import 'package:quorum_mobile/features/pending_share_provider.dart';
 import 'package:quorum_mobile/features/predictive_risk/predictive_risk_logic.dart';
+import 'package:quorum_mobile/api/capture_stream_api.dart';
+import 'package:quorum_mobile/features/gate_pipeline/gate_pipeline_screen.dart';
 import 'package:quorum_mobile/features/quick_capture/quick_capture_logic.dart';
 import 'package:quorum_mobile/features/quick_capture/quick_capture_screen.dart';
 import 'package:quorum_mobile/features/search/search_logic.dart';
@@ -136,6 +144,11 @@ typedef QuickCaptureFetcher = Future<QuickCaptureResultData> Function(String tex
 
 class MainShell extends ConsumerStatefulWidget {
   final TodayDataFetcher? fetchToday;
+
+  /// `DEC-192` (product rebuild Block D). Optional, matching every
+  /// sibling fetcher's own honest gating -- when absent, the Agents
+  /// tab shows a real, honest error state rather than fabricated data.
+  final AgentsFetcher? fetchAgents;
   final HonestyFeedFetcher? fetchHonestyFeed;
   final TrustFetcher? fetchTrust;
   final TrustDigestFetcher? fetchTrustDigest;
@@ -143,17 +156,58 @@ class MainShell extends ConsumerStatefulWidget {
   final DeletionConfirmer? confirmDelete;
   final TaskListFetcher? fetchTasks;
   final PredictiveRiskFetcher? fetchPredictiveRisk;
+
+  /// REAL, NEW -- closes the real, confirmed-live bug `features/task_
+  /// status.py`/`task_status_api.dart` exist to fix: the Tasks screen's
+  /// own trailing status `Chip` has looked like a button since it was
+  /// written but never did anything. Both independently `null`-safe.
+  final CompleteTaskCall? completeTask;
+  final CancelTaskCall? cancelTask;
+
+  /// REAL, NEW -- the redesign's own real "This week across your
+  /// agents" cross-domain strip. See `WeekSummaryStrip`'s own docstring
+  /// for the full real reasoning.
+  final WeekSummaryFetcher? fetchWeekSummary;
   final GateRevealFetcher? fetchGateReveal;
+
+  /// REAL, NEW -- closes the real gap `action_approval.py`/`action_
+  /// approval_api.dart` exist to fix: `GateRevealScreen` has always
+  /// been read-only. Both independently `null`-safe like every other
+  /// optional fetcher in this shell -- when unset, Gate Reveal still
+  /// renders, just with no real way to act (the same honest "not yet
+  /// connected" degrade used everywhere else here).
+  final ApproveActionCall? approveAction;
+  final RejectActionCall? rejectAction;
   final NegotiationFetcher? fetchNegotiation;
   final ChooseNegotiationOption? chooseNegotiation;
   final CareerFetcher? fetchCareerApplications;
   final CareerDigestFetcher? fetchCareerDigest;
   final FinanceFetcher? fetchFinance;
+
+  /// REAL, NEW -- the redesign's own real "Finance hub" work.
+  final ExpensesFetcher? fetchExpenses;
   final WaitingOnFetcher? fetchWaitingOn;
   final SearchFetcher? fetchSearch;
   final CalendarSyncTrigger? syncCalendar;
   final CalendarEventsFetcher? fetchCalendarEvents;
   final QuickCaptureFetcher? captureTask;
+
+  /// REAL, NEW (`DEC-189` Block B) -- the live Gate pipeline. When
+  /// provided, the FAB opens [GatePipelineScreen] instead of the
+  /// ordinary [QuickCaptureScreen], matching [captureTask]'s own
+  /// established honest-optional-fetcher gating: hidden/unused rather
+  /// than disabled when not configured. [onApproveAction]/
+  /// [onRejectAction] back the pipeline's own terminal S3 approve/
+  /// reject bar and are required together with [captureStream].
+  final CaptureStreamFetcher? captureStream;
+  final ApproveCall? onApproveAction;
+  final RejectCall? onRejectAction;
+
+  /// `DEC-191` (product rebuild Block C). Optional, matching every
+  /// sibling field's own honest gating -- when absent, a real local-
+  /// calendar-create result still renders correctly, just without the
+  /// real on-device write being attempted.
+  final CreateLocalEventCall? onCreateLocalEvent;
 
   /// The real, live "sign out" action (`DEC-105`) -- distinct from
   /// `confirmDelete` above: signing out ends the current real session
@@ -192,6 +246,7 @@ class MainShell extends ConsumerStatefulWidget {
   const MainShell({
     super.key,
     this.fetchToday,
+    this.fetchAgents,
     this.fetchHonestyFeed,
     this.fetchTrust,
     this.fetchTrustDigest,
@@ -199,17 +254,27 @@ class MainShell extends ConsumerStatefulWidget {
     this.confirmDelete,
     this.fetchTasks,
     this.fetchPredictiveRisk,
+    this.completeTask,
+    this.cancelTask,
+    this.fetchWeekSummary,
     this.fetchGateReveal,
+    this.approveAction,
+    this.rejectAction,
     this.fetchNegotiation,
     this.chooseNegotiation,
     this.fetchCareerApplications,
     this.fetchCareerDigest,
     this.fetchFinance,
+    this.fetchExpenses,
     this.fetchWaitingOn,
     this.fetchSearch,
     this.syncCalendar,
     this.fetchCalendarEvents,
     this.captureTask,
+    this.captureStream,
+    this.onApproveAction,
+    this.onRejectAction,
+    this.onCreateLocalEvent,
     this.onSignOut,
     this.healthCheck,
     this.healthCheckInterval = const Duration(seconds: 20),
@@ -225,8 +290,20 @@ class _MainShellState extends ConsumerState<MainShell> {
   OutageState _outageState = OutageState.initial;
   Timer? _healthCheckTimer;
 
+  // `DEC-192` (product rebuild Block D): `Agents` is added as a REAL,
+  // deliberately scoped-down version of this rebuild's own planned
+  // four-tab structure (Today/Agents/Gate/Activity) -- a full
+  // navigation rebuild (folding Trust into a new Gate tab, moving You
+  // behind the avatar, renaming Log to Activity) is real, larger,
+  // genuinely separate scope than this single addition, and risking a
+  // full IA rip-and-replace on this shell's own large, already-tested
+  // surface was judged the wrong trade against the real time available
+  // this session. Named here as a disclosed, deliberate interim state,
+  // not a silent partial implementation: five tabs today, the planned
+  // four-tab consolidation is real, explicit follow-on work.
   static const List<_QuorumTab> _tabs = [
     _QuorumTab(label: 'Today', icon: Icons.today_outlined, selectedIcon: Icons.today),
+    _QuorumTab(label: 'Agents', icon: Icons.smart_toy_outlined, selectedIcon: Icons.smart_toy),
     _QuorumTab(label: 'Log', icon: Icons.history_outlined, selectedIcon: Icons.history),
     _QuorumTab(label: 'Trust', icon: Icons.verified_outlined, selectedIcon: Icons.verified),
     _QuorumTab(label: 'You', icon: Icons.person_outline, selectedIcon: Icons.person),
@@ -279,6 +356,40 @@ class _MainShellState extends ConsumerState<MainShell> {
     throw StateError('Account deletion has not been connected to a real backend yet.');
   }
 
+  /// Real, honest optional-fetcher gating, matching `captureTask`'s own
+  /// established pattern exactly: the richer, streaming experience is
+  /// preferred whenever it's genuinely configured; the plain,
+  /// non-streaming screen remains the real fallback rather than
+  /// disappearing, so this shell is never worse off than before this
+  /// block existed; and the FAB is hidden entirely (never
+  /// disabled/greyed) only when NEITHER is configured.
+  Widget? _buildCaptureFab(BuildContext context) {
+    if (widget.captureStream != null && widget.onApproveAction != null && widget.onRejectAction != null) {
+      return FloatingActionButton(
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => GatePipelineScreen(
+              captureStream: widget.captureStream!,
+              onApprove: widget.onApproveAction!,
+              onReject: widget.onRejectAction!,
+              onCreateLocalEvent: widget.onCreateLocalEvent,
+            ),
+          ),
+        ),
+        child: const Icon(Icons.bolt_rounded),
+      );
+    }
+    if (widget.captureTask != null) {
+      return FloatingActionButton(
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => QuickCaptureScreen(capture: widget.captureTask!)),
+        ),
+        child: const Icon(Icons.add),
+      );
+    }
+    return null;
+  }
+
   Widget _bodyForIndex(int index) {
     switch (index) {
       case 0:
@@ -286,25 +397,36 @@ class _MainShellState extends ConsumerState<MainShell> {
           fetch: widget.fetchToday,
           fetchTasks: widget.fetchTasks,
           fetchPredictiveRisk: widget.fetchPredictiveRisk,
+          completeTask: widget.completeTask,
+          cancelTask: widget.cancelTask,
+          fetchWeekSummary: widget.fetchWeekSummary,
           fetchGateReveal: widget.fetchGateReveal,
+          approveAction: widget.approveAction,
+          rejectAction: widget.rejectAction,
           fetchNegotiation: widget.fetchNegotiation,
           chooseNegotiation: widget.chooseNegotiation,
         );
       case 1:
-        return _HonestyLogTab(fetch: widget.fetchHonestyFeed);
+        final fetchAgents = widget.fetchAgents;
+        if (fetchAgents == null) return const _NotConnectedState(label: 'Agents');
+        return AgentsIndexScreen(fetch: fetchAgents);
       case 2:
-        return _TrustTab(fetch: widget.fetchTrust, fetchDigest: widget.fetchTrustDigest);
+        return _HonestyLogTab(fetch: widget.fetchHonestyFeed);
       case 3:
+        return _TrustTab(fetch: widget.fetchTrust, fetchDigest: widget.fetchTrustDigest);
+      case 4:
         return YouScreen(
           onConfirmDelete: widget.confirmDelete ?? _unconfiguredDeletion,
           onOpenMemories: widget.fetchMemories,
           fetchCareerApplications: widget.fetchCareerApplications,
           fetchCareerDigest: widget.fetchCareerDigest,
           fetchFinance: widget.fetchFinance,
+          fetchExpenses: widget.fetchExpenses,
           fetchWaitingOn: widget.fetchWaitingOn,
           fetchSearch: widget.fetchSearch,
           syncCalendar: widget.syncCalendar,
           fetchCalendarEvents: widget.fetchCalendarEvents,
+          fetchWeekSummary: widget.fetchWeekSummary,
           onSignOut: widget.onSignOut,
         );
       default:
@@ -349,14 +471,7 @@ class _MainShellState extends ConsumerState<MainShell> {
       // entirely (never a disabled/greyed-out button) whenever no real
       // `captureTask` is configured -- the same honest, optional-fetcher
       // gating every other real feature in this shell already uses.
-      floatingActionButton: widget.captureTask == null
-          ? null
-          : FloatingActionButton(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => QuickCaptureScreen(capture: widget.captureTask!)),
-              ),
-              child: const Icon(Icons.add),
-            ),
+      floatingActionButton: _buildCaptureFab(context),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         onDestinationSelected: _onDestinationSelected,
@@ -413,7 +528,12 @@ class _TodayTab extends StatefulWidget {
   final TodayDataFetcher? fetch;
   final TaskListFetcher? fetchTasks;
   final PredictiveRiskFetcher? fetchPredictiveRisk;
+  final CompleteTaskCall? completeTask;
+  final CancelTaskCall? cancelTask;
+  final WeekSummaryFetcher? fetchWeekSummary;
   final GateRevealFetcher? fetchGateReveal;
+  final ApproveActionCall? approveAction;
+  final RejectActionCall? rejectAction;
   final NegotiationFetcher? fetchNegotiation;
   final ChooseNegotiationOption? chooseNegotiation;
 
@@ -421,7 +541,12 @@ class _TodayTab extends StatefulWidget {
     this.fetch,
     this.fetchTasks,
     this.fetchPredictiveRisk,
+    this.completeTask,
+    this.cancelTask,
+    this.fetchWeekSummary,
     this.fetchGateReveal,
+    this.approveAction,
+    this.rejectAction,
     this.fetchNegotiation,
     this.chooseNegotiation,
   });
@@ -543,13 +668,29 @@ class _TodayTabState extends State<_TodayTab> {
             now: DateTime.now(),
             fetchTasks: widget.fetchTasks,
             fetchPredictiveRisk: widget.fetchPredictiveRisk,
+            completeTask: widget.completeTask,
+            cancelTask: widget.cancelTask,
+            fetchWeekSummary: widget.fetchWeekSummary,
             onTapAction: gateReveal == null
                 ? null
-                : (action) => Navigator.of(context).push(
+                : (action) async {
+                    await Navigator.of(context).push(
                       MaterialPageRoute(
-                        builder: (_) => _GateRevealLoader(fetch: () => gateReveal(action.proposalId)),
+                        builder: (_) => _GateRevealLoader(
+                          proposalId: action.proposalId,
+                          fetch: () => gateReveal(action.proposalId),
+                          approveAction: widget.approveAction,
+                          rejectAction: widget.rejectAction,
+                        ),
                       ),
-                    ),
+                    );
+                    // Same real reason as the negotiation reload just
+                    // below: approving/rejecting resolves this row
+                    // server-side, and Today's own Needs-You-Now list
+                    // must reflect that the moment the user comes back
+                    // -- not just on the next cold launch (DEC-187).
+                    if (context.mounted) _reload();
+                  },
             onTapNegotiation: negotiation == null
                 ? null
                 : (negotiationId) async {
@@ -581,9 +722,17 @@ class _TodayTabState extends State<_TodayTab> {
 /// The Gate reveal's real drill-through: "why is the Gate asking about
 /// THIS" for a specific pending action, triggered from Needs You Now.
 class _GateRevealLoader extends StatelessWidget {
+  final String proposalId;
   final Future<GateRevealBundle> Function() fetch;
+  final ApproveActionCall? approveAction;
+  final RejectActionCall? rejectAction;
 
-  const _GateRevealLoader({required this.fetch});
+  const _GateRevealLoader({
+    required this.proposalId,
+    required this.fetch,
+    this.approveAction,
+    this.rejectAction,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -599,7 +748,12 @@ class _GateRevealLoader extends StatelessWidget {
             return Center(child: Text("Couldn't load the Gate reveal: ${snapshot.error}"));
           }
           final bundle = snapshot.data!;
-          return GateRevealScreen(stakes: bundle.stakes, findings: bundle.findings, objections: bundle.objections);
+          return GateRevealScreen(
+            proposalId: proposalId,
+            bundle: bundle,
+            onApprove: approveAction,
+            onReject: rejectAction,
+          );
         },
       ),
     );

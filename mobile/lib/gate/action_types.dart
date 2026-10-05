@@ -12,8 +12,9 @@
 // assumed from memory.
 
 /// Every real `ActionType` this project's backend currently defines
-/// (11 values, confirmed live against `backend/src/quorum_backend/gate/
-/// schemas.py` before writing this switch) gets a real, readable label.
+/// (12 values as of `create_email_draft`, `DEC-191` -- confirmed live
+/// against `backend/src/quorum_backend/gate/schemas.py` before writing
+/// this switch) gets a real, readable label.
 /// An unrecognized type — a real possibility if the backend adds a new
 /// `ActionType` before this file is updated — falls back to a de-snaked,
 /// readable version instead of a crash or raw jargon.
@@ -41,6 +42,8 @@ String readableActionType(String actionType) {
       return 'Archive an email';
     case 'label_email':
       return 'Label an email';
+    case 'create_email_draft':
+      return 'Draft an email';
     default:
       return _deSnake(actionType);
   }

@@ -225,7 +225,7 @@ from email.message import EmailMessage
 import asyncpg
 import httpx
 
-from quorum_backend.features.email_ingestion import GMAIL_MESSAGES_URL
+from quorum_backend.features.email_ingestion import GMAIL_DRAFTS_URL, GMAIL_MESSAGES_URL
 from quorum_backend.gate.schemas import ActionType, Stakes
 from quorum_backend.router import get_stakes
 
@@ -265,6 +265,13 @@ _REAL_GMAIL_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 # defined here directly rather than imported from a sibling module.
 _GOOGLE_CALENDAR_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 
+# The real, shared sentinel for "Google's own response genuinely omitted
+# this field" -- as opposed to the field being absent because nothing
+# was ever fetched. Never persisted or returned as a real artifact value
+# (every `artifact=` assignment below checks against this constant
+# first), since doing so would look like a real id pointing at nothing.
+_UNKNOWN_FIELD = "<unknown>"
+
 
 @dataclass(frozen=True)
 class ExecutionResult:
@@ -274,6 +281,32 @@ class ExecutionResult:
     # UNKNOWN, not "did not happen."
     executed: bool | None
     detail: str
+
+    # `DEC-191` (product rebuild Block C). The real, structured
+    # external identifiers a Google API call returns on success --
+    # `{"message_id": ...}`, `{"draft_id": ..., "message_id": ...}`, or
+    # `{"event_id": ..., "html_link": ...}`, depending on which real
+    # branch below produced it. ALWAYS `None` for `executed in (False,
+    # None)` and for every real execution path that never calls a
+    # Google API at all (`CREATE_TASK`/`LOG_EXPENSE`/...) -- never a
+    # fabricated id standing in for "this didn't actually happen."
+    #
+    # THE REAL GAP THIS FIELD CLOSES: `real_message_id`/`real_event_id`/
+    # `real_html_link` were already being extracted from Google's own
+    # real response in `_real_gmail_post()`/`_real_google_calendar_post
+    # ()` below, long before this field existed -- but only ever
+    # embedded into the free-text `detail` string for a log line, never
+    # returned in a structured shape a caller could persist or a client
+    # could turn into a real tappable link. A full audit of this
+    # project's data surface named this gap explicitly: "the pre-
+    # revision payload... the single most compelling possible artifact
+    # ('here's what the AI wanted to send, here's what the Gate made it
+    # change') can never be shown" applies just as much to "here's the
+    # real thing that actually happened, go look at it" -- the data was
+    # computed and then thrown away at the HTTP boundary, the same
+    # pattern `DEC-189` already found and fixed once for `email_
+    # recipient`/`email_action`.
+    artifact: dict | None = None
 
 
 def _reject_header_injection(value: str, *, field_name: str) -> None:
@@ -423,7 +456,7 @@ async def _real_gmail_post(
         response_body = response.json()
     except ValueError:
         response_body = {}
-    real_message_id = response_body.get("id", "<unknown>")
+    real_message_id = response_body.get("id", _UNKNOWN_FIELD)
     real_label_ids = response_body.get("labelIds", [])
     logger.warning(
         "Real Gmail %s executed for user_id=%s message_id=%s labelIds=%s",
@@ -433,6 +466,73 @@ async def _real_gmail_post(
         executed=True,
         detail=f"Real Gmail {action_type.value} call succeeded (message_id={real_message_id!r}); "
         f"real, current labelIds={real_label_ids!r}.",
+        # `<unknown>` only if Google's own response genuinely omitted
+        # `id` -- never persisted/returned as a real artifact in that
+        # case, since it would be a fabricated-looking id pointing at
+        # nothing real.
+        artifact={"message_id": real_message_id} if real_message_id != _UNKNOWN_FIELD else None,
+    )
+
+
+async def _real_gmail_draft_post(
+    http_client: httpx.AsyncClient,
+    url: str,
+    body: dict,
+    *,
+    access_token: str,
+    user_id: str,
+) -> ExecutionResult:
+    """`DEC-191` (product rebuild Block C). The real, `drafts.create`-
+    specific sibling of `_real_gmail_post()` above -- a genuinely
+    different real response shape, not reusable as-is: `drafts.create`
+    returns `{"id": <draft_id>, "message": {"id": <message_id>,
+    "threadId", "labelIds"}}`, a real draft id wrapping a real nested
+    message object, where `_real_gmail_post()`'s own three callers
+    (`send`/`modify` for archive-label) all return the message fields
+    at the TOP level with no draft wrapper at all. Same three-valued-
+    outcome discipline throughout (a transport failure is genuinely
+    UNKNOWN, never folded into `False`) -- deliberately duplicated
+    rather than parameterized into one shared function, since forcing
+    two real, differently-shaped Google responses through one parsing
+    path would trade this file's own established clarity for a save of
+    a dozen lines."""
+    try:
+        response = await http_client.post(url, json=body, headers={"Authorization": f"Bearer {access_token}"})
+    except httpx.HTTPError as exc:
+        return ExecutionResult(
+            executed=None,
+            detail=(
+                f"Real execution for {ActionType.CREATE_EMAIL_DRAFT.value!r} is genuinely UNKNOWN -- a "
+                f"transport-level failure happened while calling Google's real API; a real draft may or may "
+                f"not have been created, never assume it was not: {exc}"
+            ),
+        )
+    if response.status_code != 200:
+        return ExecutionResult(
+            executed=False,
+            detail=f"Real execution for {ActionType.CREATE_EMAIL_DRAFT.value!r} was genuinely rejected by "
+            f"Google's real API ({response.status_code}), not carried out: {response.text}",
+        )
+    try:
+        response_body = response.json()
+    except ValueError:
+        response_body = {}
+    real_draft_id = response_body.get("id", _UNKNOWN_FIELD)
+    real_message = response_body.get("message") or {}
+    real_message_id = real_message.get("id", _UNKNOWN_FIELD) if isinstance(real_message, dict) else _UNKNOWN_FIELD
+    logger.warning(
+        "Real Gmail draft created for user_id=%s draft_id=%s message_id=%s",
+        user_id, real_draft_id, real_message_id,
+    )
+    artifact = {}
+    if real_draft_id != _UNKNOWN_FIELD:
+        artifact["draft_id"] = real_draft_id
+    if real_message_id != _UNKNOWN_FIELD:
+        artifact["message_id"] = real_message_id
+    return ExecutionResult(
+        executed=True,
+        detail=f"Real Gmail draft created (draft_id={real_draft_id!r}, message_id={real_message_id!r}).",
+        artifact=artifact or None,
     )
 
 
@@ -473,15 +573,21 @@ async def _real_google_calendar_post(
         response_body = response.json()
     except ValueError:
         response_body = {}
-    real_event_id = response_body.get("id", "<unknown>")
-    real_html_link = response_body.get("htmlLink", "<unknown>")
+    real_event_id = response_body.get("id", _UNKNOWN_FIELD)
+    real_html_link = response_body.get("htmlLink", _UNKNOWN_FIELD)
     logger.warning(
         "Real Google Calendar event created for user_id=%s event_id=%s htmlLink=%s",
         user_id, real_event_id, real_html_link,
     )
+    artifact = {}
+    if real_event_id != _UNKNOWN_FIELD:
+        artifact["event_id"] = real_event_id
+    if real_html_link != _UNKNOWN_FIELD:
+        artifact["html_link"] = real_html_link
     return ExecutionResult(
         executed=True,
         detail=f"Real Google Calendar event created (event_id={real_event_id!r}, htmlLink={real_html_link!r}).",
+        artifact=artifact or None,
     )
 
 
@@ -786,6 +892,51 @@ async def _execute_approved_action_unsafe(
         return await _real_gmail_post(
             http_client, f"{GMAIL_MESSAGES_URL}/send", {"raw": encoded},
             access_token=google_access_token, action_type=action_type, user_id=user_id,
+        )
+
+    if action_type == ActionType.CREATE_EMAIL_DRAFT:
+        # `DEC-191` (product rebuild Block C). Real `Stakes.S1` -- see
+        # `router.STAKES_TABLE` and `agents/email_agent.py::
+        # build_draft_proposal()`'s own docstring for why a draft earns
+        # a materially lower stakes tier than `SEND_EMAIL`'s S3: it is
+        # genuinely reversible (editable/deletable in the user's own
+        # Gmail with zero external effect), so this branch -- unlike
+        # `SEND_EMAIL` above -- is reached with NO real human approval
+        # at all, autonomously, the moment Stage A clears it.
+        #
+        # LIVE-VERIFIED, not assumed: a real `POST .../drafts` call
+        # against the sandbox account, using the exact same granted
+        # `gmail.modify` scope this app already has (no new OAuth
+        # consent needed), returned a real `200` with a real draft id
+        # (`DEC-189`'s own research pass, before this action type
+        # existed to use it).
+        if google_access_token is None:
+            return ExecutionResult(executed=False, detail="Real CREATE_EMAIL_DRAFT execution skipped -- no real Google access token was provided to this call.")
+        if http_client is None:
+            return ExecutionResult(executed=False, detail="Real CREATE_EMAIL_DRAFT execution skipped -- no real HTTP client was provided to this call.")
+
+        # Identical real MIME construction and identical real header-
+        # injection defense as `SEND_EMAIL` above -- a draft is still a
+        # real RFC 5322 message under the hood, and the same untrusted-
+        # payload risk applies (a Judge-authored `revised_payload` for
+        # an S1 action is not reachable today since S0/S1 never run
+        # Stage B, but this branch does not rely on that fact holding
+        # forever any more than `SEND_EMAIL`'s own does).
+        to = payload["to"]
+        body_text = payload["body"]
+        subject = payload.get("subject", "")
+        _reject_header_injection(to, field_name="to")
+        _reject_header_injection(subject, field_name="subject")
+
+        message = EmailMessage()
+        message["To"] = to
+        message["Subject"] = subject
+        message.set_content(body_text)
+        encoded = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+        return await _real_gmail_draft_post(
+            http_client, GMAIL_DRAFTS_URL, {"message": {"raw": encoded}},
+            access_token=google_access_token, user_id=user_id,
         )
 
     if action_type in (ActionType.ARCHIVE_EMAIL, ActionType.LABEL_EMAIL):

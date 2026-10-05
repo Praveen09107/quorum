@@ -65,6 +65,16 @@ class ActionType(str, Enum):
     UPDATE_APPLICATION_STATUS = "update_application_status"
     ARCHIVE_EMAIL = "archive_email"
     LABEL_EMAIL = "label_email"
+    # `DEC-191` (product rebuild Block C). A real, DISTINCT action from
+    # `SEND_EMAIL` -- a draft is genuinely reversible (it sits in the
+    # user's own Gmail Drafts folder until THEY decide to send it, and
+    # can be edited or deleted there with zero external effect), so it
+    # does not carry `SEND_EMAIL`'s own irreversibility and does not
+    # need that action's S3 human-approval backstop. See `router.
+    # STAKES_TABLE` for the real stakes value this earns from that
+    # distinction, and `agents/email_agent.py::build_draft_proposal()`
+    # for the real agent that proposes it.
+    CREATE_EMAIL_DRAFT = "create_email_draft"
 
 
 class EvidenceRef(BaseModel):
