@@ -24,6 +24,7 @@ import 'package:quorum_mobile/features/search/search_logic.dart';
 import 'package:quorum_mobile/features/tasks/tasks_logic.dart';
 import 'package:quorum_mobile/features/today/in_motion_logic.dart';
 import 'package:quorum_mobile/features/today/needs_you_now_logic.dart';
+import 'package:quorum_mobile/features/today/week_summary_logic.dart';
 import 'package:quorum_mobile/features/today_screen.dart';
 import 'package:quorum_mobile/features/waiting_on/waiting_on_logic.dart';
 import 'package:quorum_mobile/shell/main_shell.dart';
@@ -75,7 +76,56 @@ Future<GateRevealBundle> _fakeFetchGateReveal(String proposalId) async {
       FindingSummary(validator: 'budget_check', claim: 'within budget', visualState: EvidenceVisualState.positive),
     ],
     objections: [],
+    actionType: 'send_email',
+    gateDecision: 'approve',
+    resolvedAt: null,
+    payload: {'to': 'real-recipient@example.com', 'subject': 'A real test subject', 'body': 'A real test body.'},
   );
+}
+
+// REAL, NEW -- a distinct reload-tracking fetcher from
+// `_fakeFetchTodayTrackingReload` above, since that one's own
+// `pendingActions` is always empty and so could never be tapped into a
+// real Gate reveal in the first place; this one keeps the same real
+// "Send an email" pending action on every call so the approve flow has
+// something real to act on while still counting real fetch calls.
+int fetchTodayCallCountForApproveReloadTest = 0;
+
+Future<TodayScreenData> _fakeFetchTodayTrackingReloadWithPendingAction() async {
+  fetchTodayCallCountForApproveReloadTest++;
+  return TodayScreenData(
+    pendingActions: [
+      PendingActionSummary(
+        proposalId: 'p1',
+        actionType: 'send_email',
+        stakes: 'S3',
+        payload: const {},
+        createdAt: DateTime(2026, 8, 10),
+      ),
+    ],
+    capacity: const CapacityState(hoursRemainingToday: 3.5, remainingFraction: 0.44, source: DataSource.liveBackend),
+    budget: const BudgetState(amountRemaining: 4200, remainingFraction: 0.6, source: DataSource.liveBackend),
+    negotiations: const [],
+  );
+}
+
+// REAL, NEW -- proves the real Approve/Reject wiring end to end: a real
+// tap calls the real injected callback with the real proposal id, and
+// the screen shows a real, honest outcome in place, not just that a
+// callback fired silently.
+final List<String> approvedProposalIds = [];
+final List<String> rejectedProposalIds = [];
+bool approveShouldFail = false;
+
+Future<void> _fakeApproveAction(String proposalId) async {
+  if (approveShouldFail) {
+    throw StateError('Your Google account needs to be reconnected before this can be approved.');
+  }
+  approvedProposalIds.add(proposalId);
+}
+
+Future<void> _fakeRejectAction(String proposalId) async {
+  rejectedProposalIds.add(proposalId);
 }
 
 // RESOLVED, a real, disclosed gap found on-device (Session 2,
@@ -135,10 +185,30 @@ Future<List<SearchResultItem>> _fakeFetchSearch(String query) async {
   ];
 }
 
+// REAL, NEW -- a real, mutable test status, matching `negotiation
+// AlreadyResolvedForTest`'s own established pattern: lets a single fake
+// fetcher prove the real reload-after-action behavior (`_TasksLoader`'s
+// own real fix) by genuinely reflecting a completed/cancelled status on
+// the NEXT real fetch, not just asserting a callback fired.
+TaskStatus taskStatusForTest = TaskStatus.open;
+
 Future<List<TaskData>> _fakeFetchTasks() async {
   return [
-    const TaskData(taskId: 't1', title: 'A real, distinctive test task', estimatedHours: 2.0, deadline: null, status: TaskStatus.open),
+    TaskData(taskId: 't1', title: 'A real, distinctive test task', estimatedHours: 2.0, deadline: null, status: taskStatusForTest),
   ];
+}
+
+final List<String> completedTaskIds = [];
+final List<String> cancelledTaskIds = [];
+
+Future<void> _fakeCompleteTask(String taskId) async {
+  completedTaskIds.add(taskId);
+  taskStatusForTest = TaskStatus.done;
+}
+
+Future<void> _fakeCancelTask(String taskId) async {
+  cancelledTaskIds.add(taskId);
+  taskStatusForTest = TaskStatus.cancelled;
 }
 
 Future<CalendarSyncResult> _fakeSyncCalendar() async {
@@ -166,6 +236,7 @@ Future<QuickCaptureResultData> _fakeCaptureTask(String text) async {
     domain: 'tasks',
     title: 'A real, distinctive quick-captured task: $text',
     findings: const [],
+    objections: const [],
   );
 }
 
@@ -179,9 +250,20 @@ Future<RiskAssessmentData> _fakeFetchPredictiveRisk() async {
   );
 }
 
+Future<WeekSummaryData> _fakeFetchWeekSummary() async {
+  return const WeekSummaryData(
+    tasksDueThisWeek: 2,
+    monthToDateSpend: 1200,
+    monthlyBudgetLimit: 50000,
+    applicationsInProgress: 3,
+    waitingOnCount: 1,
+  );
+}
+
 Widget _harness({
   Future<List<CalendarMirrorData>> Function()? fetchCalendarEvents,
   Future<TodayScreenData> Function()? fetchToday,
+  bool startWithCapture = false,
 }) {
   return ProviderScope(
     child: MaterialApp(
@@ -189,7 +271,12 @@ Widget _harness({
         fetchToday: fetchToday ?? _fakeFetchToday,
         fetchTasks: _fakeFetchTasks,
         fetchPredictiveRisk: _fakeFetchPredictiveRisk,
+        completeTask: _fakeCompleteTask,
+        cancelTask: _fakeCancelTask,
+        fetchWeekSummary: _fakeFetchWeekSummary,
         fetchGateReveal: _fakeFetchGateReveal,
+        approveAction: _fakeApproveAction,
+        rejectAction: _fakeRejectAction,
         fetchNegotiation: _fakeFetchNegotiation,
         chooseNegotiation: _fakeChooseNegotiation,
         fetchCareerApplications: _fakeFetchCareerApplications,
@@ -201,12 +288,29 @@ Widget _harness({
         fetchCalendarEvents: fetchCalendarEvents ?? _fakeFetchCalendarEvents,
         captureTask: _fakeCaptureTask,
         confirmDelete: () async => throw UnimplementedError(),
+        startWithCapture: startWithCapture,
       ),
     ),
   );
 }
 
 void main() {
+  setUp(() {
+    taskStatusForTest = TaskStatus.open;
+    completedTaskIds.clear();
+    cancelledTaskIds.clear();
+  });
+
+  testWidgets('the real "This week across your agents" strip renders real cross-domain numbers on Today', (tester) async {
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    expect(find.text('2 tasks due this week'), findsOneWidget);
+    expect(find.text('₹1200 of ₹50000'), findsOneWidget);
+    expect(find.text('3 applications in progress'), findsOneWidget);
+    expect(find.text('1 waiting on a reply'), findsOneWidget);
+  });
+
   testWidgets('tapping "View tasks" opens the real Tasks screen with the real predictive risk banner', (tester) async {
     await tester.pumpWidget(_harness());
     await tester.pumpAndSettle();
@@ -221,6 +325,62 @@ void main() {
     expect(find.textContaining('60%'), findsOneWidget);
   });
 
+  testWidgets('tapping a real open task shows real actions, and Mark as done calls the real completeTask callback and reloads', (tester) async {
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('View tasks'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('A real, distinctive test task'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Mark as done'), findsOneWidget);
+    expect(find.text('Cancel task'), findsOneWidget);
+
+    await tester.tap(find.text('Mark as done'));
+    await tester.pumpAndSettle();
+
+    expect(completedTaskIds, ['t1']);
+    // REAL, DISCLOSED FIX -- the real, confirmed-live bug this whole
+    // feature closes: before this, nothing on this screen reflected a
+    // real completion. The real reload now shows the real new status.
+    expect(find.text('Done'), findsOneWidget);
+  });
+
+  testWidgets('Cancel task calls the real cancelTask callback and reloads to show the real new status', (tester) async {
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('View tasks'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('A real, distinctive test task'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Cancel task'));
+    await tester.pumpAndSettle();
+
+    expect(cancelledTaskIds, ['t1']);
+    expect(find.text('Cancelled'), findsOneWidget);
+  });
+
+  testWidgets('a real, already-done task is no longer tappable -- no dead-looking affordance left for a terminal task', (tester) async {
+    taskStatusForTest = TaskStatus.done;
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('View tasks'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('A real, distinctive test task'));
+    await tester.pumpAndSettle();
+
+    // No real action sheet should appear for an already-terminal task.
+    expect(find.text('Mark as done'), findsNothing);
+    expect(find.text('Cancel task'), findsNothing);
+  });
+
   testWidgets('tapping a Needs You Now action opens the real Gate reveal with real findings', (tester) async {
     await tester.pumpWidget(_harness());
     await tester.pumpAndSettle();
@@ -230,6 +390,11 @@ void main() {
 
     expect(find.text('Stage A — automated checks'), findsOneWidget);
     expect(find.textContaining('within budget'), findsOneWidget);
+    // REAL, DISCLOSED FIX (CRITICAL-tier cross-model review, HIGH-3):
+    // the real payload a tap on Approve would actually execute is now
+    // genuinely shown, not just a bare Approve/Reject button pair with
+    // nothing to tell the user what they're approving.
+    expect(find.textContaining('real-recipient@example.com'), findsOneWidget);
   });
 
   // Real, disclosed follow-up (`DEC-158` standard-tier review, finding
@@ -260,6 +425,75 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Stage B — Critic review'), findsOneWidget);
+  });
+
+  testWidgets('tapping Approve on a real Gate reveal calls the real approveAction callback and shows a real success state', (tester) async {
+    approvedProposalIds.clear();
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Send an email'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Approve'), findsOneWidget);
+    await tester.tap(find.text('Approve'));
+    await tester.pumpAndSettle();
+
+    // The real proposal id from Today's own pending action, not a
+    // fabricated placeholder -- proves the real id actually threads
+    // all the way from the Needs-You-Now card through to the call.
+    expect(approvedProposalIds, ['p1']);
+    expect(find.text('Approved — Quorum carried this out'), findsOneWidget);
+  });
+
+  testWidgets('tapping Reject on a real Gate reveal calls the real rejectAction callback and shows a real rejected state', (tester) async {
+    rejectedProposalIds.clear();
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Send an email'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reject'));
+    await tester.pumpAndSettle();
+
+    expect(rejectedProposalIds, ['p1']);
+    expect(find.text('Rejected — this will not happen'), findsOneWidget);
+  });
+
+  testWidgets('a real approve failure shows the real, specific error inline, never a silent failure', (tester) async {
+    approveShouldFail = true;
+    addTearDown(() => approveShouldFail = false);
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Send an email'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Approve'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Your Google account needs to be reconnected'), findsOneWidget);
+    // A real, honest failure never silently renders a success state.
+    expect(find.text('Approved — Quorum carried this out'), findsNothing);
+  });
+
+  testWidgets('returning from a real Gate reveal after approving triggers a real Today refetch', (tester) async {
+    approvedProposalIds.clear();
+    fetchTodayCallCountForApproveReloadTest = 0;
+    await tester.pumpWidget(_harness(fetchToday: _fakeFetchTodayTrackingReloadWithPendingAction));
+    await tester.pumpAndSettle();
+    final callsBeforeApprove = fetchTodayCallCountForApproveReloadTest;
+
+    await tester.tap(find.text('Send an email'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Approve'));
+    await tester.pumpAndSettle();
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(fetchTodayCallCountForApproveReloadTest, greaterThan(callsBeforeApprove));
   });
 
   testWidgets('tapping an In Motion negotiation card opens the real negotiation screen with real positions and options', (tester) async {
@@ -409,13 +643,47 @@ void main() {
     expect(find.textContaining('A real, distinctive research point'), findsOneWidget);
   });
 
+  testWidgets('the real Danger zone is collapsed by default -- the real delete-account button is not reachable without deliberately opening it', (tester) async {
+    // REAL, DISCLOSED FIX (the redesign's own real bug-fix work): closes
+    // a real, confirmed-live UX/safety issue found on-device -- the
+    // destructive delete-account form used to sit in plain view
+    // immediately below the feature list. This proves the real fix: a
+    // signed-in user who never taps "Danger zone" can never even see
+    // the real delete button, let alone reach it.
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('You'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Danger zone'), findsOneWidget);
+    expect(find.text('Delete my account'), findsNothing);
+  });
+
+  testWidgets('tapping the real Danger zone expands it and reveals the real delete-confirmation flow', (tester) async {
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('You'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Danger zone'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Delete my account'), findsOneWidget);
+    expect(find.textContaining('permanently deletes your account'), findsOneWidget);
+  });
+
   testWidgets('the You tab genuinely reaches real Subscriptions', (tester) async {
     await tester.pumpWidget(_harness());
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('You'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Subscriptions'));
+    // REAL, DISCLOSED RENAME (the redesign's own real You-tab promotion
+    // work): this preview card's real label changed from "Subscriptions"
+    // to "Finance" -- a more honest, general real name for the screen it
+    // opens (the same `_FinanceLoader`/`FinanceScreen`, unchanged).
+    await tester.tap(find.text('Finance'));
     await tester.pumpAndSettle();
 
     expect(find.text('Real Test Subscription'), findsOneWidget);
@@ -539,5 +807,19 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.add), findsOneWidget);
+  });
+
+  testWidgets('startWithCapture genuinely auto-opens the real capture flow on first frame, the real DEC-196 onboarding hand-off', (tester) async {
+    await tester.pumpWidget(_harness(startWithCapture: true));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Quick capture'), findsOneWidget);
+  });
+
+  testWidgets('startWithCapture false (the ordinary case) never auto-opens anything', (tester) async {
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    expect(find.text('Quick capture'), findsNothing);
   });
 }

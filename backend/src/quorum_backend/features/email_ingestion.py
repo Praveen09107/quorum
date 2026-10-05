@@ -142,6 +142,18 @@ logger = logging.getLogger("quorum_backend")
 
 GMAIL_MESSAGES_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
 
+# `DEC-191` (product rebuild Block C). Defined alongside
+# `GMAIL_MESSAGES_URL` above rather than derived from it via string
+# manipulation -- an explicit constant for a real, distinct Gmail API
+# endpoint, matching this file's own established style for every other
+# real URL it defines. Live-verified directly against the sandbox
+# account (`DEC-189`'s own research pass, before this action type
+# existed): `POST` here with `{"message": {"raw": <base64url MIME>}}`
+# returns a real `200 {"id": <draft_id>, "message": {"id", "threadId",
+# "labelIds"}}` using the already-granted `gmail.modify` scope -- no
+# new OAuth consent needed.
+GMAIL_DRAFTS_URL = "https://gmail.googleapis.com/gmail/v1/users/me/drafts"
+
 # See this module's own top-of-file docstring's "REAL, QUOTA-CONSCIOUS
 # SCOPE" section.
 MAX_MESSAGES_PER_POLL = 25

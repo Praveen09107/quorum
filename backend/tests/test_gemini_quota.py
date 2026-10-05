@@ -32,6 +32,7 @@ from quorum_backend.core.gemini_quota import (
     GeminiQuotaExhaustedError,
     _redis_command,
     _today_google_reset_date_string,
+    get_gemini_quota_usage,
     reserve_gemini_quota_slot,
 )
 
@@ -327,3 +328,46 @@ async def test_redis_command_percent_encodes_a_real_path_traversal_style_model_n
         assert attacker_value is None
     finally:
         await _redis_command("DEL", key, base_url=settings.upstash_redis_url, token=settings.upstash_redis_rest_token)
+
+
+# --- get_gemini_quota_usage: `DEC-193`, product rebuild Block E ---
+
+
+async def test_get_gemini_quota_usage_returns_none_when_redis_is_not_configured(monkeypatch):
+    monkeypatch.setattr("quorum_backend.core.gemini_quota.get_settings", lambda: type(
+        "S", (), {"upstash_redis_url": None, "upstash_redis_rest_token": None}
+    )())
+    assert await get_gemini_quota_usage(model="any-model") is None
+
+
+@pytest.mark.skipif(not _HAS_REAL_REDIS, reason="no real UPSTASH_REDIS_URL/UPSTASH_REDIS_REST_TOKEN configured in this environment")
+async def test_get_gemini_quota_usage_is_a_real_honest_zero_for_a_key_that_does_not_exist_yet():
+    model = _unique_test_model()
+    assert await get_gemini_quota_usage(model=model) == 0
+
+
+@pytest.mark.skipif(not _HAS_REAL_REDIS, reason="no real UPSTASH_REDIS_URL/UPSTASH_REDIS_REST_TOKEN configured in this environment")
+async def test_get_gemini_quota_usage_reads_the_real_current_count_without_incrementing_it():
+    """The real point of this function: reading quota headroom must
+    never itself consume a real slot."""
+    model = _unique_test_model()
+    try:
+        await reserve_gemini_quota_slot(model=model, daily_limit=20)
+        await reserve_gemini_quota_slot(model=model, daily_limit=20)
+
+        first_read = await get_gemini_quota_usage(model=model)
+        second_read = await get_gemini_quota_usage(model=model)
+
+        assert first_read == 2
+        assert second_read == 2  # reading again must not have moved it
+    finally:
+        await _delete_real_test_key(model)
+
+
+async def test_get_gemini_quota_usage_fails_open_to_none_when_a_real_redis_call_itself_fails(monkeypatch):
+    async def _raise(*args, **kwargs):
+        raise httpx.HTTPError("real transport failure")
+
+    monkeypatch.setattr("quorum_backend.core.gemini_quota._redis_command", _raise)
+    result = await get_gemini_quota_usage(model="any-model", redis_url="https://fake", redis_token="fake-token")
+    assert result is None

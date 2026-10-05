@@ -8,6 +8,7 @@ other real `ActionType` returns an honest, non-executing result, per
 CLAUDE.md Rule 5.
 """
 import base64
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -512,6 +513,144 @@ async def test_execute_approved_action_update_application_status_never_reaches_a
         await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(other_user_id))
 
 
+async def test_execute_approved_action_create_application_writes_a_real_row(pool, user_id):
+    """`DEC-194` (product rebuild Block F) -- the real, first execution
+    of this `ActionType`. Mirrors `CREATE_TASK`'s own exact shape:
+    `status` is left to the real column default (`'applied'`), never
+    set explicitly here."""
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn,
+            action_type=ActionType.CREATE_APPLICATION,
+            payload={"company": "Stripe", "role": "Backend Engineer", "deadline": None},
+            user_id=user_id,
+        )
+    assert result.executed is True
+    row = await pool.fetchrow("SELECT company, role, status FROM applications WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["company"] == "Stripe"
+    assert row["role"] == "Backend Engineer"
+    assert row["status"] == "applied"
+
+
+async def test_execute_approved_action_create_application_accepts_a_null_role_and_deadline(pool, user_id):
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_APPLICATION, payload={"company": "Stripe", "role": None, "deadline": None}, user_id=user_id,
+        )
+    assert result.executed is True
+    row = await pool.fetchrow("SELECT role, deadline FROM applications WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["role"] is None
+    assert row["deadline"] is None
+
+
+async def test_execute_approved_action_create_application_fails_safely_not_loudly_on_a_real_malformed_payload(pool, user_id):
+    """Matches this module's own established, real "fail safely, not
+    loudly" contract (see `test_execute_approved_action_fails_safely_
+    not_loudly_on_a_real_malformed_payload` below) -- a raised
+    `ValueError` is caught by this function's own real wrapper and
+    returned as an honest, non-executed `ExecutionResult`, never
+    propagated to the caller."""
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(conn, action_type=ActionType.CREATE_APPLICATION, payload={"company": "   "}, user_id=user_id)
+    assert result.executed is False
+
+
+async def test_execute_approved_action_create_interview_writes_a_real_row_and_queues_real_prep_tasks(pool, user_id):
+    """`DEC-195` (product rebuild Block F, remainder) -- the real,
+    first execution of this `ActionType`. The real `interviews` table
+    carries no `user_id` column; ownership is proven by inserting a
+    real `applications` row for THIS user first."""
+    application_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company) VALUES ($1, $2, $3)",
+        application_id, uuid.UUID(user_id), "Stripe",
+    )
+    try:
+        async with pool.acquire() as conn:
+            result = await execute_approved_action(
+                conn,
+                action_type=ActionType.CREATE_INTERVIEW,
+                payload={"application_id": str(application_id), "scheduled_at": "2027-03-01T10:00:00+00:00", "format": "video"},
+                user_id=user_id,
+            )
+        assert result.executed is True
+
+        row = await pool.fetchrow("SELECT application_id, format, status FROM interviews WHERE application_id = $1", application_id)
+        assert row is not None
+        assert row["format"] == "video"
+        assert row["status"] == "scheduled"
+
+        job = await pool.fetchrow("SELECT job_type, payload FROM retry_queue")
+        assert job is not None
+        assert job["job_type"] == "interview_prep_tasks"
+        payload = json.loads(job["payload"])
+        assert payload["company"] == "Stripe"
+        assert payload["format"] == "video"
+    finally:
+        await pool.execute("DELETE FROM retry_queue")
+        await pool.execute("DELETE FROM interviews WHERE application_id = $1", application_id)
+        await pool.execute("DELETE FROM applications WHERE application_id = $1", application_id)
+
+
+async def test_execute_approved_action_create_interview_never_reaches_a_different_real_users_application(pool, user_id):
+    other_google_sub = f"test-executor-other-{uuid.uuid4()}"
+    other_user_id = await get_or_create_user(pool, google_sub=other_google_sub, email=None)
+    application_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company) VALUES ($1, $2, $3)",
+        application_id, uuid.UUID(other_user_id), "Someone Else's Company",
+    )
+    try:
+        async with pool.acquire() as conn:
+            result = await execute_approved_action(
+                conn,
+                action_type=ActionType.CREATE_INTERVIEW,
+                payload={"application_id": str(application_id), "scheduled_at": None, "format": None},
+                user_id=user_id,
+            )
+        assert result.executed is False
+        assert await pool.fetchrow("SELECT 1 FROM interviews WHERE application_id = $1", application_id) is None
+        assert await pool.fetchrow("SELECT 1 FROM retry_queue") is None
+    finally:
+        await pool.execute("DELETE FROM applications WHERE application_id = $1", application_id)
+        await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(other_user_id))
+
+
+async def test_execute_approved_action_create_interview_fails_safely_not_loudly_on_a_real_malformed_payload(pool, user_id):
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_INTERVIEW, payload={"application_id": None, "format": "video"}, user_id=user_id
+        )
+    assert result.executed is False
+
+
+async def test_execute_approved_action_create_task_honors_a_real_caller_supplied_new_task_id(pool, user_id):
+    """`DEC-195` -- the real, new, additive `new_task_id` payload key
+    `process_interview_prep_tasks_job()` relies on to link a created
+    task back onto `interviews.prep_task_ids`."""
+    chosen_id = uuid.uuid4()
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn,
+            action_type=ActionType.CREATE_TASK,
+            payload={"title": "Pre-chosen id task", "estimated_hours": 1.0, "deadline": None, "new_task_id": str(chosen_id)},
+            user_id=user_id,
+        )
+    assert result.executed is True
+    row = await pool.fetchrow("SELECT task_id FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["task_id"] == chosen_id
+
+
+async def test_execute_approved_action_create_task_still_generates_a_fresh_id_when_new_task_id_is_absent(pool, user_id):
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_TASK, payload={"title": "Ordinary task", "estimated_hours": 1.0, "deadline": None}, user_id=user_id
+        )
+    assert result.executed is True
+    row = await pool.fetchrow("SELECT task_id FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["task_id"] is not None
+
+
 async def test_execute_approved_action_fails_safely_not_loudly_on_a_real_malformed_payload(pool, user_id):
     """A real, defensive guard: `CREATE_TASK`/`LOG_EXPENSE` should never
     reach this function with a payload missing required keys under the
@@ -781,6 +920,110 @@ async def test_execute_approved_action_label_email_a_real_gmail_rejection_is_a_d
         )
     assert result.executed is False
     assert "genuinely rejected" in result.detail
+
+
+# --- CREATE_EMAIL_DRAFT: `DEC-191`'s own real execution branch, S1 -- no human approval needed ---
+
+
+async def test_execute_approved_action_create_email_draft_succeeds_with_a_real_fake_gmail_response(pool, user_id):
+    """Real, S1 -- no `approved_by_user_id` is passed at all, matching
+    `ARCHIVE_EMAIL`/`LABEL_EMAIL`'s own established pattern above for
+    every other non-S3 Gmail-modifying action: the structural S3
+    backstop simply does not apply to this real action type."""
+    fake_client = _FakePostClient(body={"id": "draft-1", "message": {"id": "msg-1", "threadId": "t-1", "labelIds": ["DRAFT"]}})
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_EMAIL_DRAFT, payload={"to": "a@x.com", "body": "hello there", "subject": "Hi"},
+            user_id=user_id, google_access_token="fake-access-token", http_client=fake_client,
+        )
+    assert result.executed is True
+    assert "draft-1" in result.detail
+    assert result.artifact == {"draft_id": "draft-1", "message_id": "msg-1"}
+
+    url, body, headers = fake_client.calls[0]
+    assert url.endswith("/drafts")
+    assert headers["Authorization"] == "Bearer fake-access-token"
+    raw = base64.urlsafe_b64decode(body["message"]["raw"]).decode()
+    assert "To: a@x.com" in raw
+    assert "Subject: Hi" in raw
+    assert "hello there" in raw
+
+
+async def test_execute_approved_action_create_email_draft_without_a_real_access_token_is_an_honest_skip(pool, user_id):
+    """No S3 backstop applies here, so the ONLY thing that can stop a
+    real S1 draft from executing is a missing real credential -- this
+    proves that case is handled honestly, not a crash."""
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_EMAIL_DRAFT, payload={"to": "a@x.com", "body": "hi"}, user_id=user_id,
+        )
+    assert result.executed is False
+    assert "no real Google access token" in result.detail
+    assert result.artifact is None
+
+
+async def test_execute_approved_action_create_email_draft_a_real_header_injection_attempt_is_refused(pool, user_id):
+    """Identical real defense as `SEND_EMAIL` -- a draft is still a
+    real RFC 5322 message under the hood."""
+    fake_client = _FakePostClient()
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_EMAIL_DRAFT,
+            payload={"to": "a@x.com\r\nBcc: evil@example.com", "body": "hi"}, user_id=user_id,
+            google_access_token="fake-access-token", http_client=fake_client,
+        )
+    assert result.executed is False
+    assert "header-injection" in result.detail
+    assert fake_client.calls == []
+
+
+async def test_execute_approved_action_create_email_draft_a_real_malformed_payload_is_honest_not_a_crash(pool, user_id):
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_EMAIL_DRAFT, payload={"to": "a@x.com"}, user_id=user_id,  # missing "body"
+            google_access_token="fake-access-token", http_client=_FakePostClient(),
+        )
+    assert result.executed is False
+    assert "malformed" in result.detail.lower()
+
+
+async def test_execute_approved_action_create_email_draft_a_real_gmail_rejection_is_a_definite_false(pool, user_id):
+    fake_client = _FakePostClient(status_code=500, body={"error": "fake failure"})
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_EMAIL_DRAFT, payload={"to": "a@x.com", "body": "hi"}, user_id=user_id,
+            google_access_token="fake-access-token", http_client=fake_client,
+        )
+    assert result.executed is False
+    assert "genuinely rejected" in result.detail
+    assert result.artifact is None
+
+
+async def test_execute_approved_action_create_email_draft_a_real_transport_failure_is_genuinely_unknown(pool, user_id):
+    """Identical real three-valued-outcome discipline as `SEND_EMAIL`
+    -- a transport failure settles nothing about whether a real draft
+    was actually created."""
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_EMAIL_DRAFT, payload={"to": "a@x.com", "body": "hi"}, user_id=user_id,
+            google_access_token="fake-access-token", http_client=_FakeTimeoutPostClient(),
+        )
+    assert result.executed is None
+    assert "genuinely UNKNOWN" in result.detail
+    assert result.artifact is None
+
+
+async def test_execute_approved_action_create_email_draft_a_definite_200_with_no_parseable_id_is_still_executed_true(pool, user_id):
+    fake_client = _FakePostClient(status_code=200, body={"unexpected": "shape"})
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_EMAIL_DRAFT, payload={"to": "a@x.com", "body": "hi"}, user_id=user_id,
+            google_access_token="fake-access-token", http_client=fake_client,
+        )
+    assert result.executed is True
+    # Neither real id could be parsed from this response -- the real
+    # artifact must be None, never a fabricated id pointing at nothing.
+    assert result.artifact is None
 
 
 # --- CREATE_CALENDAR_EVENT_EXTERNAL: DEC-151's own real execution branch, S3 ---
@@ -1258,7 +1501,28 @@ async def test_execute_approved_action_is_honest_about_every_genuinely_unimpleme
     design (real local-event ground truth belongs on-device) -- see
     `QUORUM_FINAL_COMPLETION_PLAN.md` Session 6's own real, disclosed
     scope correction for why this session deliberately did NOT add a
-    `CANCEL_CALENDAR_EVENT_LOCAL` sibling either."""
+    `CANCEL_CALENDAR_EVENT_LOCAL` sibling either.
+
+    RESOLVED, `DEC-191` (product rebuild Block C): `CREATE_EMAIL_DRAFT`
+    -- the newest real `ActionType` -- is now genuinely executable too
+    (`_real_gmail_draft_post()`, mirroring `SEND_EMAIL`'s own real
+    Gmail call), excluded here with its own dedicated tests below. This
+    is exactly the real exhaustiveness-guard catch this test exists
+    for: adding the enum member without updating this test's own
+    exclusion list and magic number would have been silently wrong,
+    and the real, live guard below caught it immediately on the first
+    run after `CREATE_EMAIL_DRAFT` was added.
+
+    RESOLVED, `DEC-194` (product rebuild Block F): `CREATE_APPLICATION`
+    -- the newest real `ActionType` -- is now genuinely executable too
+    (a real `INSERT INTO applications`, mirroring `CREATE_TASK`'s own
+    exact shape), excluded here with its own dedicated tests below.
+
+    RESOLVED, `DEC-195` (product rebuild Block F, remainder):
+    `CREATE_INTERVIEW` -- the newest real `ActionType` -- is now
+    genuinely executable too (a real `INSERT INTO interviews` plus a
+    real, queued `interview_prep_tasks` job), excluded here with its
+    own dedicated tests below."""
     genuinely_unimplemented_non_s3 = [
         t for t in ActionType
         if t not in (
@@ -1266,6 +1530,7 @@ async def test_execute_approved_action_is_honest_about_every_genuinely_unimpleme
             ActionType.ARCHIVE_EMAIL, ActionType.LABEL_EMAIL, ActionType.CREATE_CALENDAR_EVENT_EXTERNAL,
             ActionType.UPDATE_BUDGET, ActionType.UPDATE_TASK, ActionType.DELETE_TASK,
             ActionType.UPDATE_EXPENSE, ActionType.DELETE_EXPENSE, ActionType.UPDATE_APPLICATION_STATUS,
+            ActionType.CREATE_EMAIL_DRAFT, ActionType.CREATE_APPLICATION, ActionType.CREATE_INTERVIEW,
         )
     ]
     assert len(genuinely_unimplemented_non_s3) == 2  # a real, live guard against this enum silently growing unnoticed
