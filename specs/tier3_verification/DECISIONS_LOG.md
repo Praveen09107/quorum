@@ -4773,4 +4773,20 @@ Gemini quota consumed by this verification was checked before spending it (11 of
 
 ---
 
-*Next entry: DEC-197*
+## DEC-197: the ground-up product rebuild -- Block D (remainder), real agent-workspace navigation
+
+**Mobile-only, no backend change -- the second block in a row.** Closes a real, confirmed gap found by direct inspection: every real agent card on the Agents tab has shown real, live telemetry since `DEC-192`, but tapping one did nothing at all -- confirmed by searching `agents_index_screen.dart` for any `onTap`/`GestureDetector`/`InkWell` wiring and finding none. This directly undercuts the original rebuild mandate's own "agent monitoring" and "five agents with individual purpose" points: an agent card that doesn't respond to a tap reads as decorative, not as a real, ownable thing.
+
+**The real fix reuses existing screens rather than building five new ones.** `TasksScreen`, `FinanceScreen`, `CareerPipelineScreen`, and `CalendarScreen` already exist and are already real, tested, reachable via Today/You -- the planned "five full agent workspaces" (Block D's own, still-deferred remainder) would eventually give each one a richer, agent-branded home, but that is real, separate, larger scope. This entry's own, narrower job: make the Agents tab's existing cards actually navigate somewhere real, today, with zero new screens.
+
+**Four private loader widgets promoted to public, not duplicated.** `_TasksLoader` (`today_screen.dart`), `_FinanceLoader`/`_CalendarLoader`/`_CareerPipelineLoader` (`you_screen.dart`) each already existed, privately, as the real loading/error/refresh logic behind Today's and You's own existing navigation into these same four screens. Renamed to `TasksLoader`/`FinanceLoader`/`CalendarLoader`/`CareerPipelineLoader` (dropping the leading underscore, each gaining the `super.key` the public-widget lint rule then correctly demanded) so `main_shell.dart`'s own new `_openAgentWorkspace()` could reuse the exact same real widgets instead of writing a second, parallel copy of each one's loading logic that could silently drift from the original.
+
+**`email` has no real workspace screen anywhere in this app yet.** Tapping it shows an honest `SnackBar` ("this agent's own workspace screen is real, disclosed follow-on work -- not built yet") -- a real, disclosed gap named directly to the user, never a silent no-op that would look like a broken tap, and never a fabricated screen standing in for one that doesn't exist.
+
+**Verification.** `flutter analyze` zero issues. `flutter test`: **807 passed** (up from 800 at the Block G checkpoint -- 7 new: 5 for each real agent-tap navigation (Tasks/Finance/Career/Calendar) plus the honest Email gap, 2 for `AgentsIndexScreen`'s own `onTapAgent` wiring in isolation). No backend tests apply -- confirmed zero backend files touched, matching `DEC-196`'s own identical real precedent.
+
+**Not done, named rather than assumed:** the five full agent workspaces (Email/Calendar/Tasks/Finance/Career, each a real, agent-branded tool rather than today's shared, undifferentiated screen) remain real, deferred Block D scope -- this entry makes the existing screens reachable, it does not rebuild them. The four-tab IA consolidation (Trust folded into a Gate tab, You behind an avatar, Log renamed Activity) is also still deferred. Nothing from this block is deployed to the live Cloud Run backend or witnessed on a real device -- nine real PRs (`#99` through this entry's own) remain open and unmerged.
+
+---
+
+*Next entry: DEC-198*

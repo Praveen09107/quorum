@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:quorum_mobile/features/agents/agents_index_screen.dart';
 import 'package:quorum_mobile/features/agents/agents_logic.dart';
+import 'package:quorum_mobile/theme/agent_identity.dart';
 import 'package:quorum_mobile/theme/quorum_dark_theme.dart';
 
 AgentStatsData _stats(String domain, {int lifetimeActions = 0, double? successRate}) {
@@ -21,8 +22,8 @@ AgentStatsData _stats(String domain, {int lifetimeActions = 0, double? successRa
   );
 }
 
-Widget _harness(Future<List<AgentStatsData>> Function() fetch) {
-  return MaterialApp(theme: buildQuorumDarkTheme(), home: AgentsIndexScreen(fetch: fetch));
+Widget _harness(Future<List<AgentStatsData>> Function() fetch, {void Function(QuorumAgent)? onTapAgent}) {
+  return MaterialApp(theme: buildQuorumDarkTheme(), home: AgentsIndexScreen(fetch: fetch, onTapAgent: onTapAgent));
 }
 
 void main() {
@@ -77,6 +78,31 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('Email'), findsOneWidget);
+  });
+
+  testWidgets('tapping a real agent card calls onTapAgent with that real agent -- `DEC-197`', (tester) async {
+    QuorumAgent? tapped;
+    await tester.pumpWidget(_harness(
+      () async => [_stats('email'), _stats('calendar'), _stats('tasks'), _stats('finance'), _stats('career')],
+      onTapAgent: (agent) => tapped = agent,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Email'), warnIfMissed: false);
+    await tester.pumpAndSettle();
+
+    expect(tapped, QuorumAgent.email);
+  });
+
+  testWidgets('a real agent card is not tappable at all when onTapAgent is not supplied, the honest-gating precedent', (tester) async {
+    await tester.pumpWidget(_harness(() async => [_stats('email')]));
+    await tester.pumpAndSettle();
+
+    // Tapping must not throw -- a genuinely non-interactive card, not
+    // a silently swallowed tap on an InkWell that happens to do nothing.
+    await tester.tap(find.text('Email'), warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('a real agent with an active track record shows its real stats', (tester) async {

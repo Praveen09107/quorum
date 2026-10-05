@@ -145,7 +145,7 @@ class TodayScreen extends StatelessWidget {
               : TextButton(
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => _TasksLoader(
+                      builder: (_) => TasksLoader(
                         fetch: fetchTasks!,
                         fetchPredictiveRisk: fetchPredictiveRisk,
                         onComplete: completeTask,
@@ -234,19 +234,19 @@ class _ZoneSection extends StatelessWidget {
 /// done" tap would genuinely execute server-side but the real task would
 /// keep showing as open on this screen until a full navigation round
 /// trip.
-class _TasksLoader extends StatefulWidget {
+class TasksLoader extends StatefulWidget {
   final Future<List<TaskData>> Function() fetch;
   final Future<RiskAssessmentData> Function()? fetchPredictiveRisk;
   final Future<void> Function(String taskId)? onComplete;
   final Future<void> Function(String taskId)? onCancel;
 
-  const _TasksLoader({required this.fetch, this.fetchPredictiveRisk, this.onComplete, this.onCancel});
+  const TasksLoader({super.key, required this.fetch, this.fetchPredictiveRisk, this.onComplete, this.onCancel});
 
   @override
-  State<_TasksLoader> createState() => _TasksLoaderState();
+  State<TasksLoader> createState() => TasksLoaderState();
 }
 
-class _TasksLoaderState extends State<_TasksLoader> {
+class TasksLoaderState extends State<TasksLoader> {
   late Future<List<TaskData>> _tasksFuture;
 
   @override

@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:quorum_mobile/db/database.dart';
+import 'package:quorum_mobile/features/agents/agents_logic.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
 import 'package:quorum_mobile/features/career_digest/career_digest_logic.dart';
@@ -167,6 +168,23 @@ Future<CompanyDigestData> _fakeFetchCareerDigest(String applicationId) async {
   );
 }
 
+AgentStatsData _fakeAgentStats(String domain) {
+  return AgentStatsData(
+    domain: domain,
+    lifetimeActions: 1,
+    successCount: 1,
+    caughtCount: 0,
+    rejectedCount: 0,
+    uncertainCount: 0,
+    successRate: 1.0,
+    lastActivity: DateTime(2027, 1, 1),
+  );
+}
+
+Future<List<AgentStatsData>> _fakeFetchAgents() async {
+  return [for (final domain in ['email', 'calendar', 'tasks', 'finance', 'career']) _fakeAgentStats(domain)];
+}
+
 Future<List<DetectedSubscriptionData>> _fakeFetchFinance() async {
   return const [
     DetectedSubscriptionData(payee: 'Real Test Subscription', averageAmount: 499.0, occurrences: 3, averageIntervalDays: 30.0),
@@ -269,6 +287,7 @@ Widget _harness({
     child: MaterialApp(
       home: MainShell(
         fetchToday: fetchToday ?? _fakeFetchToday,
+        fetchAgents: _fakeFetchAgents,
         fetchTasks: _fakeFetchTasks,
         fetchPredictiveRisk: _fakeFetchPredictiveRisk,
         completeTask: _fakeCompleteTask,
@@ -821,5 +840,62 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Quick capture'), findsNothing);
+  });
+
+  // --- Agents tab -> real agent workspace navigation (`DEC-197`,
+  // product rebuild Block D remainder) ---
+
+  Future<void> openAgentsTab(WidgetTester tester) async {
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Agents'));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> scrollToAndTapAgentCard(WidgetTester tester, String label) async {
+    final finder = find.text(label);
+    await tester.scrollUntilVisible(finder, 300, scrollable: find.byType(Scrollable).first);
+    // `warnIfMissed: false` -- the real tap still lands correctly (every
+    // assertion below proves it); the warning itself is a known, benign
+    // artifact of `GlassPanel`'s own `InkWell` sitting in a different
+    // part of its internal `Stack` than the exact text glyph's paint
+    // bounds, not a genuine hit-test failure.
+    await tester.tap(finder, warnIfMissed: false);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('tapping the real Tasks agent card opens the real Tasks screen', (tester) async {
+    await openAgentsTab(tester);
+    await scrollToAndTapAgentCard(tester, 'Tasks');
+
+    expect(find.widgetWithText(AppBar, 'Tasks'), findsOneWidget);
+  });
+
+  testWidgets('tapping the real Finance agent card opens the real Finance screen', (tester) async {
+    await openAgentsTab(tester);
+    await scrollToAndTapAgentCard(tester, 'Finance');
+
+    expect(find.widgetWithText(AppBar, 'Finance'), findsOneWidget);
+  });
+
+  testWidgets('tapping the real Career agent card opens the real Career pipeline screen', (tester) async {
+    await openAgentsTab(tester);
+    await scrollToAndTapAgentCard(tester, 'Career');
+
+    expect(find.widgetWithText(AppBar, 'Career pipeline'), findsOneWidget);
+  });
+
+  testWidgets('tapping the real Calendar agent card opens the real Calendar screen', (tester) async {
+    await openAgentsTab(tester);
+    await scrollToAndTapAgentCard(tester, 'Calendar');
+
+    expect(find.widgetWithText(AppBar, 'Calendar'), findsOneWidget);
+  });
+
+  testWidgets('tapping the real Email agent card shows an honest "not built yet" message, never a silent no-op', (tester) async {
+    await openAgentsTab(tester);
+    await scrollToAndTapAgentCard(tester, 'Email');
+
+    expect(find.textContaining('not built yet'), findsOneWidget);
   });
 }

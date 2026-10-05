@@ -23,7 +23,16 @@ import 'package:quorum_mobile/theme/spacing.dart';
 class AgentsIndexScreen extends StatefulWidget {
   final Future<List<AgentStatsData>> Function() fetch;
 
-  const AgentsIndexScreen({super.key, required this.fetch});
+  /// `DEC-197` (product rebuild Block D, remainder) -- real, new. The
+  /// confirmed gap this closes: every real agent card on this screen
+  /// has shown real, live telemetry since `DEC-192`, but tapping one
+  /// has done nothing at all, since this screen was written. Optional
+  /// and additive, same honest-gating pattern as every other real
+  /// navigation hook in this app: a card is only tappable when this is
+  /// genuinely supplied.
+  final void Function(QuorumAgent agent)? onTapAgent;
+
+  const AgentsIndexScreen({super.key, required this.fetch, this.onTapAgent});
 
   @override
   State<AgentsIndexScreen> createState() => _AgentsIndexScreenState();
@@ -105,7 +114,11 @@ class _AgentsIndexScreenState extends State<AgentsIndexScreen> {
                   for (final agent in kDomainAgents)
                     Padding(
                       padding: const EdgeInsets.only(bottom: QuorumSpacing.md),
-                      child: _AgentCard(agent: agent, stats: statsByDomain[identityOf(agent).domain]),
+                      child: _AgentCard(
+                        agent: agent,
+                        stats: statsByDomain[identityOf(agent).domain],
+                        onTap: widget.onTapAgent == null ? null : () => widget.onTapAgent!(agent),
+                      ),
                     ),
                 ],
               );
@@ -126,8 +139,9 @@ class _AgentCard extends StatelessWidget {
   /// all five but a client should never assume a server contract holds
   /// forever without checking.
   final AgentStatsData? stats;
+  final VoidCallback? onTap;
 
-  const _AgentCard({required this.agent, required this.stats});
+  const _AgentCard({required this.agent, required this.stats, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -135,6 +149,7 @@ class _AgentCard extends StatelessWidget {
     final localStats = stats;
 
     return GlassPanel(
+      onTap: onTap,
       accent: identity.accent,
       accentStrength: (localStats?.isActive ?? false) ? 1.0 : 0.3,
       child: Column(

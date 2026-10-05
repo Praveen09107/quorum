@@ -115,6 +115,7 @@ import 'package:quorum_mobile/features/search/search_logic.dart';
 import 'package:quorum_mobile/features/share_intent_handler.dart';
 import 'package:quorum_mobile/features/tasks/tasks_logic.dart';
 import 'package:quorum_mobile/features/today_screen.dart';
+import 'package:quorum_mobile/theme/agent_identity.dart';
 import 'package:quorum_mobile/features/gate_showcase/gate_showcase_logic.dart';
 import 'package:quorum_mobile/features/trust/trust_logic.dart';
 import 'package:quorum_mobile/features/trust/trust_screen.dart';
@@ -426,6 +427,69 @@ class _MainShellState extends ConsumerState<MainShell> {
     return null;
   }
 
+  /// `DEC-197` (product rebuild Block D, remainder) -- the real, first
+  /// navigation a tap on an Agents-tab card has ever triggered. Reuses
+  /// the exact same real loader widgets Today/You already push
+  /// (`TasksLoader`/`FinanceLoader`/`CareerPipelineLoader`/
+  /// `CalendarLoader`, all promoted public this session specifically
+  /// so this one caller could reuse them instead of duplicating their
+  /// own loading logic a second time). `email` has no real workspace
+  /// screen anywhere in this app yet -- an honest, disclosed gap named
+  /// directly to the user via a `SnackBar`, never a silent no-op that
+  /// would look like a broken tap.
+  void _openAgentWorkspace(BuildContext context, QuorumAgent agent) {
+    switch (agent) {
+      case QuorumAgent.tasks:
+        final fetchTasks = widget.fetchTasks;
+        if (fetchTasks == null) return _showNotConnectedSnackBar(context, 'Tasks');
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => TasksLoader(
+            fetch: fetchTasks,
+            fetchPredictiveRisk: widget.fetchPredictiveRisk,
+            onComplete: widget.completeTask,
+            onCancel: widget.cancelTask,
+          ),
+        ));
+      case QuorumAgent.finance:
+        final fetchFinance = widget.fetchFinance;
+        if (fetchFinance == null) return _showNotConnectedSnackBar(context, 'Finance');
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => FinanceLoader(
+            fetch: fetchFinance,
+            fetchExpenses: widget.fetchExpenses,
+            weekSummaryFuture: widget.fetchWeekSummary?.call(),
+          ),
+        ));
+      case QuorumAgent.career:
+        final fetchCareerApplications = widget.fetchCareerApplications;
+        if (fetchCareerApplications == null) return _showNotConnectedSnackBar(context, 'Career');
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => CareerPipelineLoader(
+            fetch: fetchCareerApplications,
+            fetchDigest: widget.fetchCareerDigest,
+            createApplication: widget.createApplication,
+            scheduleInterview: widget.scheduleInterview,
+          ),
+        ));
+      case QuorumAgent.calendar:
+        final syncCalendar = widget.syncCalendar;
+        final fetchCalendarEvents = widget.fetchCalendarEvents;
+        if (syncCalendar == null || fetchCalendarEvents == null) return _showNotConnectedSnackBar(context, 'Calendar');
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => CalendarLoader(sync: syncCalendar, fetchEvents: fetchCalendarEvents),
+        ));
+      case QuorumAgent.email:
+      case QuorumAgent.gate:
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This agent\'s own workspace screen is real, disclosed follow-on work -- not built yet.')),
+        );
+    }
+  }
+
+  void _showNotConnectedSnackBar(BuildContext context, String label) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$label is not connected right now.')));
+  }
+
   Widget _bodyForIndex(int index) {
     switch (index) {
       case 0:
@@ -445,7 +509,7 @@ class _MainShellState extends ConsumerState<MainShell> {
       case 1:
         final fetchAgents = widget.fetchAgents;
         if (fetchAgents == null) return const _NotConnectedState(label: 'Agents');
-        return AgentsIndexScreen(fetch: fetchAgents);
+        return AgentsIndexScreen(fetch: fetchAgents, onTapAgent: (agent) => _openAgentWorkspace(context, agent));
       case 2:
         return _HonestyLogTab(fetch: widget.fetchHonestyFeed);
       case 3:

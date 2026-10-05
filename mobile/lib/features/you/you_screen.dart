@@ -83,7 +83,7 @@ class YouScreen extends StatefulWidget {
   final Future<List<DetectedSubscriptionData>> Function()? fetchFinance;
 
   /// REAL, NEW (the redesign's own real "Finance hub" work) -- see
-  /// `_FinanceLoader`'s own docstring for the full real reasoning.
+  /// `FinanceLoader`'s own docstring for the full real reasoning.
   final Future<List<ExpenseData>> Function()? fetchExpenses;
   final Future<List<WaitingOnItem>> Function()? fetchWaitingOn;
   final Future<List<SearchResultItem>> Function(String query)? fetchSearch;
@@ -218,7 +218,7 @@ class _YouScreenState extends State<YouScreen> {
                   previewLine: _weekSummaryFuture?.then((s) => formatApplicationsSummary(s.applicationsInProgress)),
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => _CareerPipelineLoader(
+                      builder: (_) => CareerPipelineLoader(
                         fetch: widget.fetchCareerApplications!,
                         fetchDigest: widget.fetchCareerDigest,
                         createApplication: widget.createApplication,
@@ -234,7 +234,7 @@ class _YouScreenState extends State<YouScreen> {
                   previewLine: _weekSummaryFuture?.then(formatSpendSummary),
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => _FinanceLoader(
+                      builder: (_) => FinanceLoader(
                         fetch: widget.fetchFinance!,
                         fetchExpenses: widget.fetchExpenses,
                         weekSummaryFuture: _weekSummaryFuture,
@@ -273,7 +273,7 @@ class _YouScreenState extends State<YouScreen> {
                   previewLine: _eventsThisWeekFuture?.then(formatCalendarPreview),
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => _CalendarLoader(
+                      builder: (_) => CalendarLoader(
                         sync: widget.syncCalendar!,
                         fetchEvents: widget.fetchCalendarEvents!,
                       ),
@@ -523,13 +523,14 @@ class _MemoriesLoader extends StatelessWidget {
   }
 }
 
-class _CareerPipelineLoader extends StatefulWidget {
+class CareerPipelineLoader extends StatefulWidget {
   final Future<List<CareerApplication>> Function() fetch;
   final Future<CompanyDigestData> Function(String applicationId)? fetchDigest;
   final CreateApplicationFetcher? createApplication;
   final ScheduleInterviewFetcher? scheduleInterview;
 
-  const _CareerPipelineLoader({
+  const CareerPipelineLoader({
+    super.key,
     required this.fetch,
     this.fetchDigest,
     this.createApplication,
@@ -537,10 +538,10 @@ class _CareerPipelineLoader extends StatefulWidget {
   });
 
   @override
-  State<_CareerPipelineLoader> createState() => _CareerPipelineLoaderState();
+  State<CareerPipelineLoader> createState() => CareerPipelineLoaderState();
 }
 
-class _CareerPipelineLoaderState extends State<_CareerPipelineLoader> {
+class CareerPipelineLoaderState extends State<CareerPipelineLoader> {
   late Future<List<CareerApplication>> _future;
 
   @override
@@ -905,12 +906,12 @@ class _CareerDigestLoader extends StatelessWidget {
 /// `weekSummaryFuture` for the real budget-bar numbers -- never a third,
 /// separate fetch for data `WeekSummaryStrip`'s own preview card already
 /// triggered once.
-class _FinanceLoader extends StatelessWidget {
+class FinanceLoader extends StatelessWidget {
   final Future<List<DetectedSubscriptionData>> Function() fetch;
   final Future<List<ExpenseData>> Function()? fetchExpenses;
   final Future<WeekSummaryData>? weekSummaryFuture;
 
-  const _FinanceLoader({required this.fetch, this.fetchExpenses, this.weekSummaryFuture});
+  const FinanceLoader({super.key, required this.fetch, this.fetchExpenses, this.weekSummaryFuture});
 
   Future<({List<DetectedSubscriptionData> subscriptions, List<ExpenseData> expenses})> _load() async {
     final fetchExpenses = this.fetchExpenses;
@@ -966,11 +967,11 @@ class _FinanceLoader extends StatelessWidget {
 /// events a PRIOR successful sync already stored -- `CalendarScreen`
 /// itself decides the honest empty-state message from the combination
 /// of `permissionGranted` and `events`, not this loader.
-class _CalendarLoader extends StatelessWidget {
+class CalendarLoader extends StatelessWidget {
   final Future<CalendarSyncResult> Function() sync;
   final Future<List<CalendarMirrorData>> Function() fetchEvents;
 
-  const _CalendarLoader({required this.sync, required this.fetchEvents});
+  const CalendarLoader({super.key, required this.sync, required this.fetchEvents});
 
   Future<({CalendarSyncResult syncResult, List<CalendarMirrorData> events})> _load() async {
     final syncResult = await sync();
