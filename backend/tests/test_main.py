@@ -139,9 +139,20 @@ def test_trust_endpoint_runs_the_real_default_scenario_suite_against_the_real_ga
     assert len(body["results"]) == 3
 
     for result in body["results"]:
-        assert set(result.keys()) == {"scenario_id", "expected", "actual", "passed"}
+        # `verdict` added `DEC-193` -- real, disclosed correction: the
+        # spec's own example for this route literally reads "every
+        # ScenarioResult, never filtered," and `self_test_harness.py`'s
+        # own docstring already said the same thing; this route had
+        # been the one real, unforced deviation from both. See
+        # `_serialize_scenario_result()`'s own docstring for the full
+        # account.
+        assert set(result.keys()) == {"scenario_id", "expected", "actual", "passed", "verdict"}
         assert result["passed"] is True
         assert result["expected"] == result["actual"]
+        # The real, full Gate verdict behind this scenario -- genuinely
+        # present, not an empty placeholder.
+        assert result["verdict"]["decision"] in ("approve", "revise", "reject", "escalate_to_human")
+        assert "trace_id" in result["verdict"]
 
     scenario_ids = {r["scenario_id"] for r in body["results"]}
     assert scenario_ids == {"S0_clean_approval", "S2_stage_a_hard_fail", "S3_real_critic_objection_escalates"}
@@ -3486,3 +3497,70 @@ async def test_agents_endpoint_reflects_a_real_resolved_action(pool, provisioned
     assert tasks["success_count"] == 1
     assert tasks["success_rate"] == 1.0
     assert tasks["last_activity"] is not None
+
+
+# --- GET /gate/validators (`DEC-193`, product rebuild Block E) ---
+
+
+def test_gate_validators_endpoint_requires_real_auth():
+    with TestClient(app) as client:
+        response = client.get("/gate/validators")
+    assert response.status_code == 401
+
+
+def test_gate_validators_endpoint_returns_all_nine_real_validators():
+    with TestClient(app) as client:
+        response = client.get("/gate/validators", headers=_auth_header())
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["validators"]) == 9
+    names = {v["name"] for v in body["validators"]}
+    assert "ProvenanceCheck" in names
+    assert "DeadlineConflictCheck" in names
+    wired = {v["name"] for v in body["validators"] if v["wired"]}
+    assert wired == {"ProvenanceCheck", "DeadlineConflictCheck"}
+
+
+# --- GET /gate/stats (`DEC-193`, product rebuild Block E) ---
+
+
+def test_gate_stats_endpoint_requires_real_auth():
+    with TestClient(app) as client:
+        response = client.get("/gate/stats")
+    assert response.status_code == 401
+
+
+async def test_gate_stats_endpoint_returns_honest_zeros_for_a_real_user_with_no_activity(pool, provisioned_users):
+    headers, _ = await _provisioned_auth_header(pool, provisioned_users)
+    with TestClient(app) as client:
+        response = client.get("/gate/stats", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_resolved"] == 0
+    assert body["stakes_counts"] == {}
+    assert body["catch_rate"] is None
+    # Real quota headroom -- present and bounded by the real daily
+    # limit whenever Upstash is genuinely configured.
+    if body["quota_used"] is not None:
+        assert 0 <= body["quota_used"] <= body["quota_limit"]
+
+
+async def test_gate_stats_endpoint_reflects_a_real_resolved_action(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        proposal_id, "create_task", "S1", "{}", "approve", "approved_unchanged",
+        str(proposal_id), uuid.UUID(internal_user_id), datetime.now(timezone.utc),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/gate/stats", headers=headers)
+
+    body = response.json()
+    assert body["total_resolved"] == 1
+    assert body["stakes_counts"] == {"S1": 1}
+    assert body["success_count"] == 1
+    assert body["catch_rate"] == 0.0

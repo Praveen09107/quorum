@@ -117,6 +117,7 @@ import 'package:quorum_mobile/api/task_status_api.dart';
 import 'package:quorum_mobile/api/tasks_api.dart';
 import 'package:quorum_mobile/api/today_api.dart';
 import 'package:quorum_mobile/api/trust_api.dart';
+import 'package:quorum_mobile/api/gate_showcase_api.dart';
 import 'package:quorum_mobile/api/trust_digest_api.dart';
 import 'package:quorum_mobile/api/waiting_on_api.dart';
 import 'package:quorum_mobile/api/week_summary_api.dart';
@@ -270,6 +271,17 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             fetchTrustDigest: createTrustDigestFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-193` (product rebuild Block E) -- the real validator
+            // roster and real live Gate stats behind the "How the Gate
+            // works" link on the Trust tab.
+            fetchGateValidators: createGateValidatorsFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            fetchGateStats: createGateStatsFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),

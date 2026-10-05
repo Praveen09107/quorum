@@ -113,6 +113,7 @@ import 'package:quorum_mobile/features/search/search_logic.dart';
 import 'package:quorum_mobile/features/share_intent_handler.dart';
 import 'package:quorum_mobile/features/tasks/tasks_logic.dart';
 import 'package:quorum_mobile/features/today_screen.dart';
+import 'package:quorum_mobile/features/gate_showcase/gate_showcase_logic.dart';
 import 'package:quorum_mobile/features/trust/trust_logic.dart';
 import 'package:quorum_mobile/features/trust/trust_screen.dart';
 import 'package:quorum_mobile/features/trust_digest/trust_digest_logic.dart';
@@ -126,6 +127,8 @@ typedef TodayDataFetcher = Future<TodayScreenData> Function();
 typedef HonestyFeedFetcher = Future<HonestyFeedData> Function();
 typedef TrustFetcher = Future<TrustData> Function();
 typedef TrustDigestFetcher = Future<TrustDigestData> Function();
+typedef GateValidatorsFetcher = Future<List<GateValidatorData>> Function();
+typedef GateStatsFetcher = Future<GateStatsData> Function();
 typedef MemoriesFetcher = Future<List<MemoryData>> Function();
 typedef DeletionConfirmer = Future<DeletionResultData> Function();
 typedef TaskListFetcher = Future<List<TaskData>> Function();
@@ -152,6 +155,8 @@ class MainShell extends ConsumerStatefulWidget {
   final HonestyFeedFetcher? fetchHonestyFeed;
   final TrustFetcher? fetchTrust;
   final TrustDigestFetcher? fetchTrustDigest;
+  final GateValidatorsFetcher? fetchGateValidators;
+  final GateStatsFetcher? fetchGateStats;
   final MemoriesFetcher? fetchMemories;
   final DeletionConfirmer? confirmDelete;
   final TaskListFetcher? fetchTasks;
@@ -250,6 +255,8 @@ class MainShell extends ConsumerStatefulWidget {
     this.fetchHonestyFeed,
     this.fetchTrust,
     this.fetchTrustDigest,
+    this.fetchGateValidators,
+    this.fetchGateStats,
     this.fetchMemories,
     this.confirmDelete,
     this.fetchTasks,
@@ -413,7 +420,12 @@ class _MainShellState extends ConsumerState<MainShell> {
       case 2:
         return _HonestyLogTab(fetch: widget.fetchHonestyFeed);
       case 3:
-        return _TrustTab(fetch: widget.fetchTrust, fetchDigest: widget.fetchTrustDigest);
+        return _TrustTab(
+          fetch: widget.fetchTrust,
+          fetchDigest: widget.fetchTrustDigest,
+          fetchGateValidators: widget.fetchGateValidators,
+          fetchGateStats: widget.fetchGateStats,
+        );
       case 4:
         return YouScreen(
           onConfirmDelete: widget.confirmDelete ?? _unconfiguredDeletion,
@@ -920,8 +932,10 @@ class _HonestyLogTab extends StatelessWidget {
 class _TrustTab extends StatelessWidget {
   final TrustFetcher? fetch;
   final TrustDigestFetcher? fetchDigest;
+  final GateValidatorsFetcher? fetchGateValidators;
+  final GateStatsFetcher? fetchGateStats;
 
-  const _TrustTab({this.fetch, this.fetchDigest});
+  const _TrustTab({this.fetch, this.fetchDigest, this.fetchGateValidators, this.fetchGateStats});
 
   @override
   Widget build(BuildContext context) {
@@ -937,7 +951,12 @@ class _TrustTab extends StatelessWidget {
         if (snapshot.hasError) {
           return Center(child: Text("Couldn't load Trust: ${snapshot.error}"));
         }
-        return TrustScreen(trust: snapshot.data!, onOpenTrustDigest: fetchDigest);
+        return TrustScreen(
+          trust: snapshot.data!,
+          onOpenTrustDigest: fetchDigest,
+          fetchGateValidators: fetchGateValidators,
+          fetchGateStats: fetchGateStats,
+        );
       },
     );
   }

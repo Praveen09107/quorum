@@ -121,7 +121,10 @@ from quorum_backend.features.quick_capture import (
     make_gemini_quick_capture_extraction_call,
 )
 from quorum_backend.features.trust_digest import fetch_trust_digest
-from quorum_backend.gate.llm_calls import make_gemini_judge_call, make_groq_critic_call
+from quorum_backend.core.gemini_quota import GEMINI_GENERATE_CONTENT_DAILY_LIMIT, get_gemini_quota_usage
+from quorum_backend.features.gate_stats import fetch_gate_stats
+from quorum_backend.gate.llm_calls import GEMINI_JUDGE_MODEL, make_gemini_judge_call, make_groq_critic_call
+from quorum_backend.gate.validator_registry import VALIDATOR_REGISTRY
 from quorum_backend.gate.orchestration import InfrastructureFailure
 from quorum_backend.negotiation.downstream_translation import make_gemini_downstream_translation_call
 from quorum_backend.security.account_deletion import delete_account
@@ -508,15 +511,34 @@ async def health() -> dict[str, str]:
 
 
 def _serialize_scenario_result(result: ScenarioResult) -> dict:
-    # Deliberately excludes the real `verdict` field (a full GateVerdict)
-    # -- QUORUM_DATA_CONTRACTS.md §5.14's own example shows exactly four
-    # fields per scenario, never the full verdict. Serializing it would
-    # be extra, unspecified surface no client here asks for.
+    # `DEC-193` (product rebuild Block E): REAL, DISCLOSED CORRECTION --
+    # this function used to exclude `verdict` (a full `GateVerdict`),
+    # citing `QUORUM_DATA_CONTRACTS.md` §5.14's own example as showing
+    # "exactly four fields per scenario." Re-read directly before this
+    # session: that same example's own `results` field literally reads
+    # `"...every ScenarioResult, never filtered..."` -- the spec's real
+    # intent was always the full object, and `self_test_harness.py`'s
+    # own `SelfTestSummary` docstring already says so explicitly ("every
+    # real ScenarioResult, never filtered"). The narrow four-field shape
+    # was this route's own real, unforced deviation from a contract that
+    # had already specified the richer shape, not a faithful reading of
+    # it. This is the single most compelling artifact the planned Gate
+    # showcase page can show -- the real findings and real Critic/Judge
+    # output behind each adversarial scenario, not just pass/fail --
+    # and it was being computed and thrown away at this exact boundary,
+    # the identical pattern `DEC-189`/`DEC-191` already found and fixed
+    # for `email_recipient` and for Gmail/Calendar execution artifacts.
+    #
+    # `.model_dump(mode="json")`, not the bare default -- the same real
+    # `EvidenceRef.retrieved_at`-is-a-live-datetime trap `retry_queue_
+    # drainer.py::persist_gate_verdict()` already found and fixed once
+    # for this exact Pydantic model shape.
     return {
         "scenario_id": result.scenario_id,
         "expected": result.expected,
         "actual": result.actual,
         "passed": result.passed,
+        "verdict": result.verdict.model_dump(mode="json"),
     }
 
 
@@ -1378,6 +1400,80 @@ async def agents_endpoint(
             }
             for agent_stats in (stats[domain] for domain in REAL_DOMAIN_AGENTS)
         ],
+    }
+
+
+@app.get("/gate/validators")
+async def gate_validators_endpoint(
+    _google_sub: str = Depends(_require_auth),
+) -> dict:
+    """REAL, NEW (`DEC-193`, product rebuild Block E) -- the real
+    Stage A validator roster, backing the "how it works" half of the
+    Gate showcase page named in the product owner's own 11-point
+    mandate: "showcase how the backend workflow, how the gate checks
+    and validates, in a separate page, so that judges will understand
+    it is real working."
+
+    No real per-user data here at all -- this roster is the same for
+    every real user, since it describes the Gate's own code, not any
+    one person's history (`GET /gate/stats` below is where the real
+    per-user numbers live). Still requires a real, valid access token:
+    this is a real, authenticated product surface, not a public
+    marketing page, and gating it the same way every other real route
+    in this backend already is costs nothing and keeps the pattern
+    uniform."""
+    return {
+        "validators": [
+            {
+                "name": v.name,
+                "function_name": v.function_name,
+                "description": v.description,
+                "evidence_source": v.evidence_source,
+                "wired": v.wired,
+            }
+            for v in VALIDATOR_REGISTRY
+        ],
+    }
+
+
+@app.get("/gate/stats")
+async def gate_stats_endpoint(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """REAL, NEW (`DEC-193`, product rebuild Block E) -- the real,
+    per-user Gate performance numbers for the showcase page: a real
+    stakes-tier distribution, a real catch rate, how often Stage B
+    genuinely ran, how often the Gate genuinely revised a payload, and
+    real, current Gemini quota headroom -- every number computed fresh
+    on every call, never hardcoded copy describing a system that
+    doesn't exist.
+
+    `quota_used`/`quota_limit` are `None` together only when Upstash
+    genuinely isn't configured on this deployment (`get_gemini_quota_
+    usage()`'s own real, honest fail-open) -- a client must render that
+    as "quota status unavailable," never as "0 used.\""""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    stats = await fetch_gate_stats(pool, user_id=internal_user_id)
+    # `GEMINI_JUDGE_MODEL` is reused here rather than a fourth hardcoded
+    # literal -- confirmed directly that it, `GEMINI_EXTRACTION_MODEL`,
+    # and `GEMINI_TRANSLATION_MODEL` are the exact same real string
+    # today, so all three real callers already share one real quota
+    # bucket; reading under this one name reads that same real bucket.
+    quota_used = await get_gemini_quota_usage(model=GEMINI_JUDGE_MODEL)
+    return {
+        "total_resolved": stats.total_resolved,
+        "stakes_counts": stats.stakes_counts,
+        "success_count": stats.success_count,
+        "caught_count": stats.caught_count,
+        "rejected_count": stats.rejected_count,
+        "uncertain_count": stats.uncertain_count,
+        "catch_rate": stats.catch_rate,
+        "rows_with_recorded_timeline": stats.rows_with_recorded_timeline,
+        "stage_b_ran_count": stats.stage_b_ran_count,
+        "revised_count": stats.revised_count,
+        "quota_used": quota_used,
+        "quota_limit": GEMINI_GENERATE_CONTENT_DAILY_LIMIT if quota_used is not None else None,
     }
 
 

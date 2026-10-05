@@ -357,3 +357,44 @@ async def reserve_gemini_quota_slot(
             "(Google's own real reset boundary is midnight Pacific time, not UTC) -- try again after that reset, "
             "or once a real, different quota/tier is provisioned."
         )
+
+
+async def get_gemini_quota_usage(
+    *,
+    model: str,
+    redis_url: str | None = None,
+    redis_token: str | None = None,
+) -> int | None:
+    """`DEC-193` (product rebuild Block E) -- a real, read-only
+    counterpart to `reserve_gemini_quota_slot()` above, for surfacing
+    real quota headroom on the Gate showcase page (the plan's own
+    stated "real quota headroom" item). Deliberately a plain `GET`,
+    never an `INCR` -- reading how much quota remains must never itself
+    consume a real slot.
+
+    Returns the real, current count for today's real key, or `0` if
+    the key genuinely doesn't exist yet (no real call has been made
+    today) -- never conflated with a real failure to reach Redis at
+    all, which this function reports honestly as `None` instead,
+    mirroring `reserve_gemini_quota_slot()`'s own real fail-open
+    posture for the identical class of infrastructure hiccup. `None`
+    also covers the real, honest "Upstash isn't configured on this
+    deployment" case."""
+    settings = get_settings()
+    resolved_url = redis_url if redis_url is not None else settings.upstash_redis_url
+    resolved_token = redis_token if redis_token is not None else settings.upstash_redis_rest_token
+    if resolved_url is None or resolved_token is None:
+        return None
+
+    key = f"gemini:generate_content:{model}:{_today_google_reset_date_string()}"
+    try:
+        raw = await _redis_command("GET", key, base_url=resolved_url, token=resolved_token)
+    except (httpx.HTTPError, KeyError, ValueError) as exc:
+        logger.warning("Gemini quota read: real Upstash call failed for model=%s: %s", model, exc)
+        return None
+    if raw is None:
+        return 0
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
