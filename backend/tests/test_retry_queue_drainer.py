@@ -25,6 +25,7 @@ from quorum_backend.features.retry_queue_drainer import (
     available_hours_before_deadline,
     drain_due_jobs,
     map_verdict_to_outcome,
+    validate_and_build_application_proposal,
     validate_and_build_calendar_proposal,
     validate_and_build_finance_proposal,
     validate_and_build_task_proposal,
@@ -169,6 +170,46 @@ def test_validate_and_build_finance_proposal_rejects_a_real_null_amount_honestly
     stated) can equally, honestly return `amount: null`."""
     with pytest.raises(DownstreamTranslationError):
         validate_and_build_finance_proposal({"action": "log_expense", "amount": None, "category": "food", "payee": None})
+
+
+# --- `validate_and_build_application_proposal` (`DEC-194`, product
+# rebuild Block F) ---
+
+
+def test_validate_and_build_application_proposal_produces_the_real_action_type():
+    proposal = validate_and_build_application_proposal({"company": "Stripe"})
+    assert proposal.action_type == ActionType.CREATE_APPLICATION
+    assert proposal.payload["company"] == "Stripe"
+    assert proposal.payload["role"] is None
+    assert proposal.payload["deadline"] is None
+
+
+def test_validate_and_build_application_proposal_carries_role_and_parses_deadline():
+    proposal = validate_and_build_application_proposal(
+        {"company": "Stripe", "role": "Backend Engineer", "deadline_iso": "2027-03-01T00:00:00+00:00"}
+    )
+    assert proposal.payload["role"] == "Backend Engineer"
+    assert proposal.payload["deadline"] == "2027-03-01T00:00:00+00:00"
+
+
+def test_validate_and_build_application_proposal_rejects_an_empty_company():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_application_proposal({"company": "   "})
+
+
+def test_validate_and_build_application_proposal_rejects_a_non_string_company():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_application_proposal({"company": None})
+
+
+def test_validate_and_build_application_proposal_rejects_an_overlong_company():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_application_proposal({"company": "x" * 301})
+
+
+def test_validate_and_build_application_proposal_rejects_an_empty_role_when_present():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_application_proposal({"company": "Stripe", "role": "   "})
 
 
 def test_validate_and_build_task_proposal_rejects_non_positive_hours():

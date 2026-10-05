@@ -865,6 +865,34 @@ async def _execute_approved_action_unsafe(
             raise ValueError(f"real UPDATE_APPLICATION_STATUS matched no real application row for application_id={application_id!r}, user_id={user_id!r} ({status!r})")
         return ExecutionResult(executed=True, detail="Real application status updated.")
 
+    if action_type == ActionType.CREATE_APPLICATION:
+        # `DEC-194` (product rebuild Block F) -- the real, first
+        # execution branch for a NEW `applications` row. Mirrors
+        # `CREATE_TASK`'s own exact shape: a fresh `uuid.uuid4()`
+        # primary key, no artifact returned (matching that action
+        # type's own established precedent -- the real created row is
+        # discovered by the client re-fetching `GET /career_pipeline`,
+        # not by this call surfacing its own id). `status` is left to
+        # the real column default (`'applied'`) rather than set here --
+        # `applications.status` is genuinely open vocabulary (`CLAUDE.
+        # md`'s own `MOBILE_23` contract), and a freshly created
+        # application has no real status to report yet beyond that
+        # default.
+        company = payload.get("company")
+        if not isinstance(company, str) or not company.strip():
+            raise ValueError(f"real CREATE_APPLICATION payload must carry a real, non-empty company, got {payload!r}")
+        role = payload.get("role")
+        deadline_iso = payload.get("deadline")
+        await conn.execute(
+            "INSERT INTO applications (application_id, user_id, company, role, deadline) VALUES ($1, $2, $3, $4, $5)",
+            uuid.uuid4(),
+            uuid.UUID(user_id),
+            company,
+            role,
+            datetime.fromisoformat(deadline_iso) if deadline_iso else None,
+        )
+        return ExecutionResult(executed=True, detail="Real application row created.")
+
     if action_type == ActionType.SEND_EMAIL:
         if google_access_token is None:
             return ExecutionResult(executed=False, detail="Real SEND_EMAIL execution skipped -- no real Google access token was provided to this call.")

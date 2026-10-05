@@ -417,6 +417,7 @@ from quorum_backend.features.retry_queue_drainer import (
     DownstreamTranslationError,
     build_stage_a_checks_for_domain,
     persist_gate_verdict,
+    validate_and_build_application_proposal,
     validate_and_build_finance_proposal,
     validate_and_build_task_proposal,
 )
@@ -2046,6 +2047,15 @@ async def capture_action_from_extracted_args(
             proposal = await resolve_and_build_application_status_proposal(conn, user_id=user_id, args=args)
         except (DownstreamTranslationError, KeyError, ValueError, TypeError) as exc:
             raise QuickCaptureError(f"Real extraction produced an unusable application status change: {exc}") from exc
+    elif domain == "career" and operation == "create":
+        # `DEC-194` (product rebuild Block F). A pure create -- no
+        # existing row to resolve against, so this is sync and never
+        # touches `conn`, matching `validate_and_build_task_proposal()`'s
+        # own `domain == "tasks" and operation == "create"` sibling above.
+        try:
+            proposal = validate_and_build_application_proposal(args)
+        except (DownstreamTranslationError, KeyError, ValueError, TypeError) as exc:
+            raise QuickCaptureError(f"Real extraction produced an unusable application: {exc}") from exc
     elif domain == "email" and operation == "create":
         if draft_call is None:
             raise QuickCaptureError("Real email drafting is not currently available -- no draft_call was configured for this request.")
@@ -2247,8 +2257,26 @@ async def capture_action_from_extracted_args(
             objections=verdict.objections,
         )
     if domain == "career":
-        # `company`/`new_status` are populated regardless of `executed`
-        # -- this domain's own `operation` is always genuinely "update".
+        # REAL, DISCLOSED EXTENSION (`DEC-194`, product rebuild Block F):
+        # this domain's own `operation` was always genuinely "update"
+        # until this session -- `CREATE_APPLICATION` is the first real
+        # `career` action type that creates rather than mutates. `company`
+        # for a genuine create follows `title`/`CREATE_TASK`'s own
+        # established "create" convention (only when `executed`); for
+        # `update` it keeps the original "regardless of `executed`" rule
+        # unchanged.
+        if action_type_value == "create_application":
+            return QuickCaptureResult(
+                executed=bool(executed),
+                artifact=artifact,
+                decision=verdict.decision,
+                stakes=stakes.value,
+                domain=domain,
+                operation="create",
+                company=final_payload.get("company") if executed else None,
+                findings=verdict.findings,
+                objections=verdict.objections,
+            )
         return QuickCaptureResult(
             executed=bool(executed),
             artifact=artifact,

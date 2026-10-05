@@ -90,6 +90,29 @@ void main() {
     expect(find.text('Try again'), findsOneWidget);
   });
 
+  testWidgets('tapping Try again genuinely retries without throwing the real setState/Future assertion', (tester) async {
+    // REAL, DISCLOSED REGRESSION PROOF (`DEC-194`) -- see
+    // `agents_index_screen_test.dart`'s own identical new test for the
+    // full account of the real bug this catches.
+    var attempt = 0;
+    await tester.pumpWidget(_harness(
+      fetchValidators: () async {
+        attempt++;
+        if (attempt == 1) throw Exception('network down');
+        return _validators;
+      },
+      fetchStats: () async => _stats,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Try again'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    await tester.scrollUntilVisible(find.text('ProvenanceCheck'), 300, scrollable: find.byType(Scrollable).first);
+    expect(find.text('ProvenanceCheck'), findsOneWidget);
+  });
+
   testWidgets('an honest empty state when no resolved action has a stakes tier yet', (tester) async {
     const emptyStats = GateStatsData(
       totalResolved: 0,

@@ -99,6 +99,7 @@ import asyncpg
 import httpx
 
 from quorum_backend.agents.calendar_agent import build_event_proposal
+from quorum_backend.agents.career_agent import build_create_application_proposal
 from quorum_backend.agents.finance_agent import build_finance_proposal
 from quorum_backend.agents.tasks_agent import build_task_proposal
 from quorum_backend.features.action_executor import ExecutionResult, execute_approved_action
@@ -442,6 +443,35 @@ def validate_and_build_task_proposal(args: dict, *, existing_task_id: str | None
     deadline_iso = args.get("deadline_iso")
     deadline = datetime.fromisoformat(deadline_iso) if deadline_iso else None
     return build_task_proposal(title=args["title"], estimated_hours=estimated_hours, deadline=deadline, existing_task_id=existing_task_id)
+
+
+_MAX_APPLICATION_COMPANY_LENGTH = 300
+_MAX_APPLICATION_ROLE_LENGTH = 300
+
+
+def validate_and_build_application_proposal(args: dict) -> ActionProposal:
+    """`DEC-194` (product rebuild Block F). A pure create, no existing
+    row to resolve -- so, unlike `resolve_and_build_application_status_
+    proposal()`, this never needs a real database connection. Same
+    "reject a malformed real value with an honest, catchable error"
+    discipline as `validate_and_build_task_proposal()`'s own identical
+    checks: `applications.company TEXT NOT NULL` and `role TEXT` are
+    both real, unbounded columns -- the same class of risk `tasks.title`
+    was closed for, bounded here for the same reason."""
+    company = args["company"]
+    if not isinstance(company, str) or not company.strip():
+        raise DownstreamTranslationError(f"A real application needs a real, non-empty company name, got {company!r}")
+    if len(company) > _MAX_APPLICATION_COMPANY_LENGTH:
+        raise DownstreamTranslationError(f"Company name exceeds the real, max plausible length {_MAX_APPLICATION_COMPANY_LENGTH}")
+    role = args.get("role")
+    if role is not None:
+        if not isinstance(role, str) or not role.strip():
+            raise DownstreamTranslationError(f"Role must be a real, non-empty string or null, got {role!r}")
+        if len(role) > _MAX_APPLICATION_ROLE_LENGTH:
+            raise DownstreamTranslationError(f"Role exceeds the real, max plausible length {_MAX_APPLICATION_ROLE_LENGTH}")
+    deadline_iso = args.get("deadline_iso")
+    deadline = datetime.fromisoformat(deadline_iso) if deadline_iso else None
+    return build_create_application_proposal(company=company, role=role, deadline=deadline)
 
 
 def validate_and_build_calendar_proposal(args: dict) -> ActionProposal:

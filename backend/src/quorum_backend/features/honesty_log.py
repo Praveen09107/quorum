@@ -142,6 +142,8 @@ def describe_action(action_type: str, payload: dict) -> str:
         return "Labeled an email"
     if action_type == ActionType.CREATE_EMAIL_DRAFT.value:
         return f"Drafted an email to {payload.get('to') or 'a recipient'}"
+    if action_type == ActionType.CREATE_APPLICATION.value:
+        return f"Added application: {payload.get('company') or 'a company'}"
     # A real, open fallback for every other real ActionType -- never
     # raises on an unrecognized value, matching this project's own
     # established defensive-parsing precedent for genuinely open

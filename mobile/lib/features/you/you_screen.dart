@@ -39,6 +39,7 @@
 
 import 'package:flutter/material.dart';
 
+import 'package:quorum_mobile/api/create_application_api.dart';
 import 'package:quorum_mobile/db/database.dart';
 import 'package:quorum_mobile/features/calendar/calendar_screen.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
@@ -65,6 +66,13 @@ class YouScreen extends StatefulWidget {
   final Future<List<MemoryData>> Function()? onOpenMemories;
   final Future<List<CareerApplication>> Function()? fetchCareerApplications;
   final Future<CompanyDigestData> Function(String applicationId)? fetchCareerDigest;
+
+  /// `DEC-194` (product rebuild Block F) -- the real, first write path
+  /// this screen's own Career pipeline has ever had. Optional and
+  /// additive, matching every other real write in this app: the "+ New
+  /// application" action only appears on `CareerPipelineScreen` when
+  /// this is genuinely supplied.
+  final CreateApplicationFetcher? createApplication;
   final Future<List<DetectedSubscriptionData>> Function()? fetchFinance;
 
   /// REAL, NEW (the redesign's own real "Finance hub" work) -- see
@@ -96,6 +104,7 @@ class YouScreen extends StatefulWidget {
     this.onOpenMemories,
     this.fetchCareerApplications,
     this.fetchCareerDigest,
+    this.createApplication,
     this.fetchFinance,
     this.fetchExpenses,
     this.fetchWaitingOn,
@@ -204,6 +213,7 @@ class _YouScreenState extends State<YouScreen> {
                       builder: (_) => _CareerPipelineLoader(
                         fetch: widget.fetchCareerApplications!,
                         fetchDigest: widget.fetchCareerDigest,
+                        createApplication: widget.createApplication,
                       ),
                     ),
                   ),
@@ -504,18 +514,70 @@ class _MemoriesLoader extends StatelessWidget {
   }
 }
 
-class _CareerPipelineLoader extends StatelessWidget {
+class _CareerPipelineLoader extends StatefulWidget {
   final Future<List<CareerApplication>> Function() fetch;
   final Future<CompanyDigestData> Function(String applicationId)? fetchDigest;
+  final CreateApplicationFetcher? createApplication;
 
-  const _CareerPipelineLoader({required this.fetch, this.fetchDigest});
+  const _CareerPipelineLoader({required this.fetch, this.fetchDigest, this.createApplication});
+
+  @override
+  State<_CareerPipelineLoader> createState() => _CareerPipelineLoaderState();
+}
+
+class _CareerPipelineLoaderState extends State<_CareerPipelineLoader> {
+  late Future<List<CareerApplication>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = widget.fetch();
+  }
+
+  Future<void> _refresh() async {
+    final next = widget.fetch();
+    // REAL, DISCLOSED FIX (`DEC-194`, found by this block's own new
+    // widget test actually exercising a real refresh, not assumed from
+    // the identical pre-existing flaw silently carried in `agents_
+    // index_screen.dart`/`gate_showcase_screen.dart`): an ARROW-body
+    // `() => _future = next` evaluates to the assignment's own value
+    // (`next`, a real `Future`), which Flutter's `State.setState()`
+    // runtime check catches and rejects as "callback argument returned
+    // a Future" -- a block body discards the expression's value, the
+    // real fix, not merely a style preference.
+    setState(() {
+      _future = next;
+    });
+    await next;
+  }
+
+  Future<void> _openNewApplicationSheet() async {
+    final createApplication = widget.createApplication;
+    if (createApplication == null) return;
+    final result = await showModalBottomSheet<CreateApplicationResult>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _NewApplicationSheet(createApplication: createApplication),
+    );
+    if (result == null || !mounted) return;
+    await _refresh();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result.executed ? 'Added ${result.company ?? 'that application'}.' : 'The Gate declined to add that application.')),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Career pipeline')),
-      body: FutureBuilder<List<CareerApplication>>(
-        future: fetch(),
+      floatingActionButton: widget.createApplication == null
+          ? null
+          : FloatingActionButton(onPressed: _openNewApplicationSheet, child: const Icon(Icons.add)),
+      body: RefreshIndicator(
+        onRefresh: _refresh,
+        child: FutureBuilder<List<CareerApplication>>(
+        future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
@@ -523,7 +585,7 @@ class _CareerPipelineLoader extends StatelessWidget {
           if (snapshot.hasError) {
             return Center(child: Text("Couldn't load your career pipeline: ${snapshot.error}"));
           }
-          final digest = fetchDigest;
+          final digest = widget.fetchDigest;
           return CareerPipelineScreen(
             applications: snapshot.data!,
             onTapApplication: digest == null
@@ -537,6 +599,96 @@ class _CareerPipelineLoader extends StatelessWidget {
                     ),
           );
         },
+        ),
+      ),
+    );
+  }
+}
+
+class _NewApplicationSheet extends StatefulWidget {
+  final CreateApplicationFetcher createApplication;
+
+  const _NewApplicationSheet({required this.createApplication});
+
+  @override
+  State<_NewApplicationSheet> createState() => _NewApplicationSheetState();
+}
+
+class _NewApplicationSheetState extends State<_NewApplicationSheet> {
+  final _companyController = TextEditingController();
+  final _roleController = TextEditingController();
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _companyController.dispose();
+    _roleController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final company = _companyController.text.trim();
+    if (company.isEmpty) {
+      setState(() => _error = 'Enter a real company name first.');
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final role = _roleController.text.trim();
+      final result = await widget.createApplication(company: company, role: role.isEmpty ? null : role);
+      if (!mounted) return;
+      Navigator.of(context).pop(result);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16, right: 16, top: 16,
+        bottom: 16 + MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('New application', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _companyController,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Company'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _roleController,
+            decoration: const InputDecoration(labelText: 'Role (optional)'),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ],
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: _submitting ? null : _submit,
+              child: _submitting
+                  ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('Add application'),
+            ),
+          ),
+        ],
       ),
     );
   }

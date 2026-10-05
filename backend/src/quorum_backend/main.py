@@ -498,6 +498,23 @@ class QuickCaptureExtractedRequest(BaseModel):
     email_action: str | None = None
 
 
+class CreateApplicationRequest(BaseModel):
+    """`DEC-194` (product rebuild Block F) -- the real request shape for
+    `POST /applications`, a dedicated, structured write path, not a
+    quick-capture envelope. Matches this rebuild's own established
+    design principle (`QUORUM_PRODUCTION_COMPLETION_PLAN.md`'s Part B3):
+    a structured form submission skips extraction entirely and goes
+    straight into Stage A -- zero Gemini quota cost, full real Gate
+    review regardless. Every field is exactly as untrusted as a real
+    extraction result -- `validate_and_build_application_proposal()`
+    re-validates from scratch, the same discipline `QuickCaptureExtractedRequest`
+    already established for its own route."""
+
+    company: str
+    role: str | None = None
+    deadline_iso: str | None = None
+
+
 class TokenPairResponse(BaseModel):
     access_token: str
     refresh_token: str
@@ -1363,6 +1380,52 @@ async def quick_capture_extracted_endpoint(
         raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
     except asyncpg.PostgresError as exc:
         raise HTTPException(status_code=502, detail="Couldn't turn that into a real action -- please try rephrasing it.") from exc
+
+    return _quick_capture_result_to_dict(result)
+
+
+@app.post("/applications")
+async def create_application_endpoint(
+    body: CreateApplicationRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """`DEC-194` (product rebuild Block F) -- real, new. Closes the
+    single most explicitly-named backend gap from the original rebuild
+    mandate: no real code path anywhere in this backend's history has
+    ever created a NEW `applications` row (`UPDATE_APPLICATION_STATUS`
+    only ever mutates an existing one).
+
+    A third, real, structured entry point into the SAME real `capture_
+    action_from_extracted_args()` pipeline `POST /quick_capture`/`POST
+    /quick_capture/extracted` already use -- never calls Gemini
+    extraction at all, matching this rebuild's own B3 design principle
+    (a structured write skips extraction but still goes through the
+    real Gate). `CREATE_APPLICATION` is real `Stakes.S1`, so this
+    executes the moment Stage A clears it -- no separate human-approval
+    step, same as `POST /tasks`-equivalent creates elsewhere in this
+    backend."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    settings = get_settings()
+    critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
+    judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                result = await capture_action_from_extracted_args(
+                    conn,
+                    user_id=internal_user_id,
+                    args={"domain": "career", "operation": "create", **body.model_dump()},
+                    critic_call=critic_call,
+                    judge_call=judge_call,
+                )
+    except QuickCaptureError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except InfrastructureFailure as exc:
+        raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
+    except asyncpg.PostgresError as exc:
+        raise HTTPException(status_code=502, detail="Couldn't create that application -- please try again.") from exc
 
     return _quick_capture_result_to_dict(result)
 

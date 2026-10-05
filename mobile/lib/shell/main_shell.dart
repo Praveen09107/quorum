@@ -89,6 +89,7 @@ import 'package:quorum_mobile/api/task_status_api.dart';
 import 'package:quorum_mobile/api/week_summary_api.dart';
 import 'package:quorum_mobile/db/database.dart';
 import 'package:quorum_mobile/api/agents_api.dart';
+import 'package:quorum_mobile/api/create_application_api.dart';
 import 'package:quorum_mobile/features/agents/agents_index_screen.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
@@ -187,6 +188,7 @@ class MainShell extends ConsumerStatefulWidget {
   final ChooseNegotiationOption? chooseNegotiation;
   final CareerFetcher? fetchCareerApplications;
   final CareerDigestFetcher? fetchCareerDigest;
+  final CreateApplicationFetcher? createApplication;
   final FinanceFetcher? fetchFinance;
 
   /// REAL, NEW -- the redesign's own real "Finance hub" work.
@@ -270,6 +272,7 @@ class MainShell extends ConsumerStatefulWidget {
     this.fetchNegotiation,
     this.chooseNegotiation,
     this.fetchCareerApplications,
+    this.createApplication,
     this.fetchCareerDigest,
     this.fetchFinance,
     this.fetchExpenses,
@@ -431,6 +434,7 @@ class _MainShellState extends ConsumerState<MainShell> {
           onConfirmDelete: widget.confirmDelete ?? _unconfiguredDeletion,
           onOpenMemories: widget.fetchMemories,
           fetchCareerApplications: widget.fetchCareerApplications,
+          createApplication: widget.createApplication,
           fetchCareerDigest: widget.fetchCareerDigest,
           fetchFinance: widget.fetchFinance,
           fetchExpenses: widget.fetchExpenses,

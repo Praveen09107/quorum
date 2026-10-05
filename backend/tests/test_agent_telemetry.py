@@ -49,6 +49,11 @@ def test_agent_for_action_type_maps_every_real_email_action_to_email():
         assert agent_for_action_type(action_type.value) == "email"
 
 
+def test_agent_for_action_type_maps_every_real_career_action_to_career():
+    for action_type in (ActionType.UPDATE_APPLICATION_STATUS, ActionType.CREATE_APPLICATION):
+        assert agent_for_action_type(action_type.value) == "career"
+
+
 def test_agent_for_action_type_create_note_maps_to_no_real_agent():
     """The one real, disclosed exception -- no agent in this system has
     ever proposed `CREATE_NOTE`, and it has no execution target either.

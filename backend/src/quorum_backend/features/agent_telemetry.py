@@ -67,6 +67,7 @@ AGENT_FOR_ACTION_TYPE: dict[ActionType, str | None] = {
     ActionType.DELETE_EXPENSE: "finance",
     ActionType.UPDATE_BUDGET: "finance",
     ActionType.UPDATE_APPLICATION_STATUS: "career",
+    ActionType.CREATE_APPLICATION: "career",
     ActionType.CREATE_NOTE: None,
 }
 

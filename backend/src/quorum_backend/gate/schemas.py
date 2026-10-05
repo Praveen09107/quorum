@@ -75,6 +75,16 @@ class ActionType(str, Enum):
     # distinction, and `agents/email_agent.py::build_draft_proposal()`
     # for the real agent that proposes it.
     CREATE_EMAIL_DRAFT = "create_email_draft"
+    # `DEC-194` (product rebuild Block F). The real, confirmed gap this
+    # closes: no real code path anywhere in this backend's history has
+    # ever created a NEW `applications` row -- `UPDATE_APPLICATION_
+    # STATUS` above only ever mutates an existing one. A fresh create,
+    # matching `CREATE_TASK`/`LOG_EXPENSE`'s own precedent exactly (a
+    # new, purely internal row with no existing data to corrupt), not
+    # `UPDATE_APPLICATION_STATUS`'s "mutate an existing row" risk
+    # profile. See `router.STAKES_TABLE` for the stakes value this
+    # earns from that distinction.
+    CREATE_APPLICATION = "create_application"
 
 
 class EvidenceRef(BaseModel):

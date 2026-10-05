@@ -44,7 +44,15 @@ class _GateShowcaseScreenState extends State<GateShowcaseScreen> {
 
   Future<void> _refresh() async {
     final next = _load();
-    setState(() => _future = next);
+    // REAL, DISCLOSED FIX (`DEC-194`) -- an ARROW body here evaluates
+    // to the assignment's own value (a real `Future`), which Flutter's
+    // `State.setState()` runtime check rejects as "callback argument
+    // returned a Future." A block body discards the expression's
+    // value -- the real fix, found by `you_screen.dart`'s own sibling
+    // bug in this exact same session.
+    setState(() {
+      _future = next;
+    });
     await next;
   }
 
@@ -66,7 +74,10 @@ class _GateShowcaseScreenState extends State<GateShowcaseScreen> {
                   return Center(
                     child: RetryErrorState(
                       message: 'Could not load the real Gate data -- ${snapshot.error}',
-                      onRetry: () => setState(() => _future = _load()),
+                      // Same real `DEC-194` fix as `_refresh()` above.
+                      onRetry: () => setState(() {
+                        _future = _load();
+                      }),
                     ),
                   );
                 }

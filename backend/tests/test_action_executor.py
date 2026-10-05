@@ -512,6 +512,49 @@ async def test_execute_approved_action_update_application_status_never_reaches_a
         await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(other_user_id))
 
 
+async def test_execute_approved_action_create_application_writes_a_real_row(pool, user_id):
+    """`DEC-194` (product rebuild Block F) -- the real, first execution
+    of this `ActionType`. Mirrors `CREATE_TASK`'s own exact shape:
+    `status` is left to the real column default (`'applied'`), never
+    set explicitly here."""
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn,
+            action_type=ActionType.CREATE_APPLICATION,
+            payload={"company": "Stripe", "role": "Backend Engineer", "deadline": None},
+            user_id=user_id,
+        )
+    assert result.executed is True
+    row = await pool.fetchrow("SELECT company, role, status FROM applications WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["company"] == "Stripe"
+    assert row["role"] == "Backend Engineer"
+    assert row["status"] == "applied"
+
+
+async def test_execute_approved_action_create_application_accepts_a_null_role_and_deadline(pool, user_id):
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_APPLICATION, payload={"company": "Stripe", "role": None, "deadline": None}, user_id=user_id,
+        )
+    assert result.executed is True
+    row = await pool.fetchrow("SELECT role, deadline FROM applications WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["role"] is None
+    assert row["deadline"] is None
+
+
+async def test_execute_approved_action_create_application_fails_safely_not_loudly_on_a_real_malformed_payload(pool, user_id):
+    """Matches this module's own established, real "fail safely, not
+    loudly" contract (see `test_execute_approved_action_fails_safely_
+    not_loudly_on_a_real_malformed_payload` below) -- a raised
+    `ValueError` is caught by this function's own real wrapper and
+    returned as an honest, non-executed `ExecutionResult`, never
+    propagated to the caller."""
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(conn, action_type=ActionType.CREATE_APPLICATION, payload={"company": "   "}, user_id=user_id)
+    assert result.executed is False
+    assert "malformed payload" in result.detail
+
+
 async def test_execute_approved_action_fails_safely_not_loudly_on_a_real_malformed_payload(pool, user_id):
     """A real, defensive guard: `CREATE_TASK`/`LOG_EXPENSE` should never
     reach this function with a payload missing required keys under the
@@ -1372,7 +1415,12 @@ async def test_execute_approved_action_is_honest_about_every_genuinely_unimpleme
     for: adding the enum member without updating this test's own
     exclusion list and magic number would have been silently wrong,
     and the real, live guard below caught it immediately on the first
-    run after `CREATE_EMAIL_DRAFT` was added."""
+    run after `CREATE_EMAIL_DRAFT` was added.
+
+    RESOLVED, `DEC-194` (product rebuild Block F): `CREATE_APPLICATION`
+    -- the newest real `ActionType` -- is now genuinely executable too
+    (a real `INSERT INTO applications`, mirroring `CREATE_TASK`'s own
+    exact shape), excluded here with its own dedicated tests below."""
     genuinely_unimplemented_non_s3 = [
         t for t in ActionType
         if t not in (
@@ -1380,7 +1428,7 @@ async def test_execute_approved_action_is_honest_about_every_genuinely_unimpleme
             ActionType.ARCHIVE_EMAIL, ActionType.LABEL_EMAIL, ActionType.CREATE_CALENDAR_EVENT_EXTERNAL,
             ActionType.UPDATE_BUDGET, ActionType.UPDATE_TASK, ActionType.DELETE_TASK,
             ActionType.UPDATE_EXPENSE, ActionType.DELETE_EXPENSE, ActionType.UPDATE_APPLICATION_STATUS,
-            ActionType.CREATE_EMAIL_DRAFT,
+            ActionType.CREATE_EMAIL_DRAFT, ActionType.CREATE_APPLICATION,
         )
     ]
     assert len(genuinely_unimplemented_non_s3) == 2  # a real, live guard against this enum silently growing unnoticed

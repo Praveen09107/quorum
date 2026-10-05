@@ -44,7 +44,19 @@ class _AgentsIndexScreenState extends State<AgentsIndexScreen> {
     // screen through the reload rather than blanking to a spinner,
     // matching `DEC-187`'s own established real fix for exactly this
     // real Flutter framework behavior.
-    setState(() => _future = next);
+    //
+    // REAL, DISCLOSED FIX (`DEC-194`): the ARROW body here used to be
+    // `() => _future = next`, which evaluates to the assignment's own
+    // value -- a real `Future` -- that Flutter's `State.setState()`
+    // runtime check rejects as "callback argument returned a Future".
+    // Never actually exercised by a real pull-to-refresh gesture in
+    // this screen's own existing tests, so this real, live bug sat
+    // latent until a sibling screen's new test (`DEC-194`, product
+    // rebuild Block F) genuinely triggered a refresh and caught it. A
+    // block body discards the expression's value -- the real fix.
+    setState(() {
+      _future = next;
+    });
     await next;
   }
 
@@ -64,7 +76,13 @@ class _AgentsIndexScreenState extends State<AgentsIndexScreen> {
                 return Center(
                   child: RetryErrorState(
                     message: 'Could not load your agents -- ${snapshot.error}',
-                    onRetry: () => setState(() => _future = widget.fetch()),
+                    // Same real `DEC-194` fix as `_refresh()` above --
+                    // a block body, not an arrow body, so this
+                    // callback doesn't return the real `Future` the
+                    // assignment evaluates to.
+                    onRetry: () => setState(() {
+                      _future = widget.fetch();
+                    }),
                   ),
                 );
               }

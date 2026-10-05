@@ -119,6 +119,14 @@ STAKES_TABLE: dict[ActionType, Stakes] = {
     # VISIBLY work on its own, rather than sitting behind an approval
     # that may never be given.
     ActionType.CREATE_EMAIL_DRAFT: Stakes.S1,
+    # `DEC-194` (product rebuild Block F). `S1`, matching `CREATE_TASK`/
+    # `LOG_EXPENSE`'s own established precedent exactly: a fresh,
+    # additive create of a purely internal row, not a mutation of an
+    # existing one -- `UPDATE_APPLICATION_STATUS` above sits at `S2`
+    # for the opposite, already-reasoned reason. Stage B never runs for
+    # `S1` (`gate.orchestration.run_stage_b()`), so a real application
+    # is created the moment Stage A clears it, no separate approval.
+    ActionType.CREATE_APPLICATION: Stakes.S1,
 }
 
 

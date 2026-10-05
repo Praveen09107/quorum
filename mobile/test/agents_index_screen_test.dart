@@ -56,6 +56,29 @@ void main() {
     expect(find.text('Try again'), findsOneWidget);
   });
 
+  testWidgets('tapping Try again genuinely retries without throwing the real setState/Future assertion', (tester) async {
+    // REAL, DISCLOSED REGRESSION PROOF (`DEC-194`): this exact real
+    // tap is what caught the real "callback argument returned a
+    // Future" bug in this screen's own `onRetry` closure -- the
+    // existing error-state test above never actually tapped the
+    // button, so the flaw sat latent until a sibling screen's new
+    // test (`you_screen.dart`'s Career pipeline refresh) exercised the
+    // identical pattern and failed first.
+    var attempt = 0;
+    await tester.pumpWidget(_harness(() async {
+      attempt++;
+      if (attempt == 1) throw Exception('network down');
+      return [_stats('email', lifetimeActions: 1, successRate: 1.0)];
+    }));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Try again'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Email'), findsOneWidget);
+  });
+
   testWidgets('a real agent with an active track record shows its real stats', (tester) async {
     await tester.pumpWidget(_harness(() async => [
           _stats('email', lifetimeActions: 10, successRate: 0.7),
