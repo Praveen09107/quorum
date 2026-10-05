@@ -96,14 +96,16 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import asyncpg
+import httpx
 
 from quorum_backend.agents.calendar_agent import build_event_proposal
 from quorum_backend.agents.finance_agent import build_finance_proposal
 from quorum_backend.agents.tasks_agent import build_task_proposal
-from quorum_backend.features.action_executor import execute_approved_action
+from quorum_backend.features.action_executor import ExecutionResult, execute_approved_action
 from quorum_backend.features.today import TODAY_WORKING_HOURS_PER_DAY
 from quorum_backend.gate.orchestration import CriticCall, JudgeCall, StageACheck, review
 from quorum_backend.gate.schemas import ActionProposal, GateVerdict, Stakes
+from quorum_backend.gate.timeline import GateTimeline
 from quorum_backend.gate.validators import deadline_conflict_check, provenance_check
 from quorum_backend.negotiation.downstream_translation import (
     DownstreamTranslationCall,
@@ -465,7 +467,7 @@ async def _translate_and_build_proposal(
     raise DownstreamDrainError(f"Unsupported domain for downstream translation: {domain!r}")
 
 
-def map_verdict_to_outcome(verdict: GateVerdict, *, executed: bool) -> tuple[str | None, bool]:
+def map_verdict_to_outcome(verdict: GateVerdict, *, executed: bool | None) -> tuple[str | None, bool]:
     """Real, exhaustive mapping from `GateVerdict.decision` (and, for a
     genuine `approve`, whether it genuinely executed) onto `action_
     events`'s own real, closed `outcome` vocabulary (`approved_
@@ -517,10 +519,30 @@ def map_verdict_to_outcome(verdict: GateVerdict, *, executed: bool) -> tuple[str
     Stage-B-issued revise that the Gate itself resolved is real
     `caught_by_gate` instead: the Gate, not a person, is what changed
     it.
+
+    `executed: bool | None`, widened from a plain `bool` by `DEC-191`
+    (product rebuild Block C). `None` is the real, distinct, genuinely-
+    ambiguous outcome `ExecutionResult.executed` already carries for a
+    transport-level failure -- `action_approval.py::approve_pending_
+    action()`'s own separate approval path has handled this correctly
+    since `DEC-188` (its own real `outcome_unknown` terminal state,
+    migration `0020`), but this function's own one real caller
+    (`persist_gate_verdict()` below) used to collapse it via a bare
+    `bool(...)` before calling this function at all -- harmless in
+    practice for as long as no real caller of THIS function ever
+    reached a Google-API-calling branch with real credentials (true
+    until `CREATE_EMAIL_DRAFT`, real `Stakes.S1`, started reaching one
+    autonomously), but a real, latent instance of the exact class of
+    bug `DEC-188` already paid a CRITICAL-tier review to find and fix
+    once. Mapped to the SAME real `outcome_unknown`/resolved=True shape
+    that path already established, rather than a second, independently
+    invented handling for the identical real fact.
     """
     if verdict.decision == "escalate_to_human":
         return None, False
     if verdict.decision == "approve":
+        if executed is None:
+            return "outcome_unknown", True
         if not executed:
             return None, False
         if verdict.revision_count == 0:
@@ -539,13 +561,55 @@ def map_verdict_to_outcome(verdict: GateVerdict, *, executed: bool) -> tuple[str
 
 
 async def persist_gate_verdict(
-    conn: asyncpg.Connection, *, proposal: ActionProposal, stakes: Stakes, verdict: GateVerdict, user_id: str
-) -> bool:
+    conn: asyncpg.Connection,
+    *,
+    proposal: ActionProposal,
+    stakes: Stakes,
+    verdict: GateVerdict,
+    user_id: str,
+    timeline: GateTimeline | None = None,
+    google_access_token: str | None = None,
+    http_client: httpx.AsyncClient | None = None,
+) -> tuple[bool, dict | None]:
     """Persists the real `action_events` row, then -- for a genuine
     `approve` verdict only -- calls the real `action_executor.py` on
     the SAME connection, so the real write (when one exists) commits or
     rolls back together with the real decision that authorized it.
-    Returns whether a real execution genuinely happened.
+    Returns `(executed, artifact)` -- whether a real execution
+    DEFINITELY happened, and the real structured external id Google's
+    own API returned, if any (`DEC-191`, migration `0022`; `None` for
+    every non-executed outcome and every action type that never calls
+    a Google API).
+
+    `executed` IS a plain `bool` in this function's own return value --
+    `True` only for a confirmed success, `False` for both a confirmed
+    non-execution AND a genuinely unknown transport failure -- matching
+    this function's two real callers, both of which only ever need a
+    "did this definitely succeed" signal (`drain_due_jobs()`'s own
+    `executed_count`; `QuickCaptureResult.executed: bool`, unchanged by
+    this function's own internal fix). This is a DELIBERATE, DIFFERENT
+    collapse from the one this docstring's own history once made BY
+    MISTAKE: the real three-valued fact is preserved all the way
+    through to `map_verdict_to_outcome()` below and recorded correctly
+    in the real, persisted `outcome` column (`outcome_unknown` for a
+    genuine transport failure, never confused with a confirmed
+    `caught_by_gate`/left ambiguously unresolved) -- only THIS
+    function's own simplified return value collapses the distinction,
+    for callers that have never needed it. The database record, which
+    is what `trust_digest.py`/`honesty_log.py` actually read, stays
+    honest either way.
+
+    REAL, DISCLOSED CHANGE FROM THIS FUNCTION'S ORIGINAL RETURN SHAPE
+    (a bare `bool`): `DEC-191` needed the real artifact to reach
+    `features/quick_capture.py`'s own `QuickCaptureResult`, which only
+    had this function's own return value to work with -- adding a
+    second return value here, rather than a third, parallel way to
+    learn the same fact, keeps there being exactly one real source for
+    "what did this persist call actually do." The one other real
+    caller (`drain_due_jobs()` below) only ever checked truthiness and
+    is updated to unpack the tuple accordingly; it does not yet surface
+    an artifact anywhere, since no real negotiation-downstream action
+    type reaches a Google-API-calling branch today.
 
     Made public (`DEC-153`) -- this function is fully generic (no
     negotiation-specific coupling anywhere in it), and `features/
@@ -554,6 +618,26 @@ async def persist_gate_verdict(
     directly rather than re-derived, the same "don't duplicate a
     once-CRITICAL-tier-review-fixed serialization detail" discipline
     this whole docstring already documents below.
+
+    `google_access_token`/`http_client` (`DEC-191`, product rebuild
+    Block C) -- threaded straight through to `execute_approved_action()`,
+    matching that function's own established optional-token pattern
+    exactly. Both default to `None`, which is the ordinary case for
+    this function's ORIGINAL real caller (`drain_due_jobs()` below,
+    negotiation downstream actions, which today never produce a real
+    Gmail- or Calendar-executable action type -- unaffected by this
+    change). They exist for `CREATE_EMAIL_DRAFT` specifically: real
+    `Stakes.S1`, so it reaches this function's own `verdict.decision ==
+    "approve"` branch with no separate human-approval step at all
+    (unlike `SEND_EMAIL`/`CREATE_CALENDAR_EVENT_EXTERNAL`, both real
+    `Stakes.S3`, which this same branch also reaches but which
+    `execute_approved_action()`'s own structural S3 backstop refuses to
+    execute without a real `approved_by_user_id` this function never
+    supplies -- so passing a token here does not, and must not, create
+    any new way for an S3 action to execute without that separate,
+    human approval step; it only lets a genuinely autonomous S1 action
+    reach the real Google API call its own stakes tier already
+    entitles it to.
 
     REAL, LIVE PERSISTENCE OF THE GATE'S OWN FINDINGS/OBJECTIONS, closing
     the real, disclosed gap `DEC-126` found (migration `0013`, `DEC-146`):
@@ -589,18 +673,58 @@ async def persist_gate_verdict(
     # docstring for the full account of why recording a genuine approve
     # as resolved/successful regardless of whether it actually executed
     # was a real, live honesty gap, not just a hypothetical one.
-    executed = False
+    # `DEC-191`: kept as the real, three-valued `bool | None` ALL THE
+    # WAY to `map_verdict_to_outcome()` below -- a bare `bool(...)`
+    # collapse here, which this line used to do, is exactly the class
+    # of bug `DEC-188` already found and fixed once for `action_
+    # approval.py`'s own separate approval path (HIGH-2: a genuinely
+    # UNKNOWN transport failure must never be recorded as a confirmed
+    # `False`). It was harmless here for as long as no real caller of
+    # this function ever reached a Google-API-calling branch with real
+    # credentials -- true until `CREATE_EMAIL_DRAFT` started reaching
+    # one autonomously (real `Stakes.S1`, no separate human-approval
+    # step to catch it first) -- so fixed here now, before this path
+    # was genuinely live, rather than after a real transport failure
+    # was misrecorded.
+    executed: bool | None = False
+    result: ExecutionResult | None = None
     if verdict.decision == "approve":
-        result = await execute_approved_action(conn, action_type=proposal.action_type, payload=final_payload, user_id=user_id)
-        executed = bool(result.executed)
+        result = await execute_approved_action(
+            conn,
+            action_type=proposal.action_type,
+            payload=final_payload,
+            user_id=user_id,
+            google_access_token=google_access_token,
+            http_client=http_client,
+        )
+        executed = result.executed
     # Never executes on reject/revise/escalate_to_human -- see this
     # module's and action_executor.py's own top-of-file docstrings for
     # why escalate_to_human specifically must never execute.
 
     outcome, is_resolved = map_verdict_to_outcome(verdict, executed=executed)
+    # `DEC-189`: three real columns added by migration `0021`. All three
+    # stay genuinely NULL when no `timeline` was supplied -- NULL means
+    # "not recorded," and a consumer must render an honest absence
+    # rather than a fabricated empty timeline that would imply the Gate
+    # ran no checks. `revision_count` deliberately follows the same rule
+    # rather than defaulting to `verdict.revision_count` whenever a
+    # timeline is absent: it IS always available on the verdict, but
+    # writing it for some rows and not others with no way to tell which
+    # is worse than a consistent "recorded or not" signal, and every
+    # real caller that cares about it passes a timeline.
+    pre_revision = timeline.pre_revision_payload if timeline is not None else None
+    # `DEC-191`, migration `0022`. Genuinely NULL for every non-executed
+    # outcome and every action type that never calls a Google API --
+    # `result` itself is `None` on every real reject/revise/escalate_to_
+    # human branch above, and `ExecutionResult.artifact` is already
+    # `None` by default for every executor branch that never sets it,
+    # so this one expression correctly covers all of those cases with
+    # no separate check needed.
+    artifact = result.artifact if result is not None else None
     await conn.execute(
-        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at, findings, objections) "
-        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)",
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at, findings, objections, gate_timeline, revision_count, pre_revision_payload, artifact) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13, $14::jsonb, $15::jsonb)",
         proposal.proposal_id,
         proposal.action_type.value,
         stakes.value,
@@ -612,8 +736,16 @@ async def persist_gate_verdict(
         datetime.now(timezone.utc) if is_resolved else None,
         json.dumps([finding.model_dump(mode="json") for finding in verdict.findings]),
         json.dumps([objection.model_dump(mode="json") for objection in verdict.objections]),
+        json.dumps(timeline.events) if timeline is not None else None,
+        verdict.revision_count if timeline is not None else None,
+        json.dumps(pre_revision) if pre_revision is not None else None,
+        json.dumps(artifact) if artifact is not None else None,
     )
-    return executed
+    # Collapsed to a plain bool HERE, at the return boundary, not
+    # earlier -- `outcome`/`resolved_at` above were already decided
+    # from the real, uncollapsed three-valued `executed`, so this
+    # simplification can no longer affect what gets persisted.
+    return bool(executed), artifact
 
 
 async def process_negotiation_downstream_job(
@@ -694,7 +826,7 @@ async def process_negotiation_downstream_job(
     # disclosed rather than silently left unexamined.
     executed_count = 0
     for proposal, stakes, verdict in reviewed:
-        executed = await persist_gate_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
+        executed, _artifact = await persist_gate_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
         if executed:
             executed_count += 1
 

@@ -50,7 +50,63 @@ class TasksScreen extends StatelessWidget {
   final List<TaskData> tasks;
   final Future<RiskAssessmentData> Function()? fetchPredictiveRisk;
 
-  const TasksScreen({super.key, required this.tasks, this.fetchPredictiveRisk});
+  /// REAL, DISCLOSED FIX (the redesign's own real bug-fix work): closes
+  /// a real, confirmed-live bug -- the trailing status `Chip` below has
+  /// looked like a button since this screen was written, but had no
+  /// `onPressed`/`onTap` anywhere, and no real backend route existed to
+  /// act on a tap even if it had. Both real, independently optional
+  /// (the same honest "not yet connected" degrade every other real
+  /// fetcher in this app uses): a real open task's row becomes tappable
+  /// the moment either is supplied, offering whichever real action(s)
+  /// are actually wired.
+  final Future<void> Function(String taskId)? onComplete;
+  final Future<void> Function(String taskId)? onCancel;
+
+  const TasksScreen({super.key, required this.tasks, this.fetchPredictiveRisk, this.onComplete, this.onCancel});
+
+  Future<void> _showActionsFor(BuildContext context, TaskData task) async {
+    final messenger = ScaffoldMessenger.of(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(QuorumSpacing.md),
+              child: Text(task.title, style: Theme.of(sheetContext).textTheme.titleMedium),
+            ),
+            if (onComplete != null)
+              ListTile(
+                leading: const QuorumIconBadge(icon: Icons.check_circle, color: QuorumStatusColors.verified),
+                title: const Text('Mark as done'),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  try {
+                    await onComplete!(task.taskId);
+                  } catch (e) {
+                    messenger.showSnackBar(SnackBar(content: Text("Couldn't mark this done: $e")));
+                  }
+                },
+              ),
+            if (onCancel != null)
+              ListTile(
+                leading: const QuorumIconBadge(icon: Icons.cancel, color: QuorumStatusColors.needsAttention),
+                title: const Text('Cancel task'),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  try {
+                    await onCancel!(task.taskId);
+                  } catch (e) {
+                    messenger.showSnackBar(SnackBar(content: Text("Couldn't cancel this task: $e")));
+                  }
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -82,6 +138,7 @@ class TasksScreen extends StatelessWidget {
                 TaskStatus.open => (Icons.radio_button_unchecked, onSurfaceVariant),
                 TaskStatus.cancelled => (Icons.cancel, onSurfaceVariant),
               };
+              final canAct = task.status == TaskStatus.open && (onComplete != null || onCancel != null);
               return Card(
                 child: ListTile(
                   leading: QuorumIconBadge(icon: icon, color: color),
@@ -97,6 +154,7 @@ class TasksScreen extends StatelessWidget {
                     labelStyle: TextStyle(color: color),
                     side: BorderSide.none,
                   ),
+                  onTap: canAct ? () => _showActionsFor(context, task) : null,
                 ),
               );
             },

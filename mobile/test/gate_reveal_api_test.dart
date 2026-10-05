@@ -22,7 +22,10 @@ void main() {
       final client = MockClient((request) async {
         capturedUri = request.url;
         capturedAuth = request.headers['Authorization'];
-        return http.Response(jsonEncode({'stakes': 'S1', 'findings': [], 'objections': []}), 200);
+        return http.Response(
+          jsonEncode({'stakes': 'S1', 'findings': [], 'objections': [], 'action_type': 'create_task', 'gate_decision': 'approve', 'resolved_at': null, 'payload': {}}),
+          200,
+        );
       });
 
       final fetch = createGateRevealFetcher(
@@ -40,7 +43,10 @@ void main() {
       late Uri capturedUri;
       final client = MockClient((request) async {
         capturedUri = request.url;
-        return http.Response(jsonEncode({'stakes': 'S1', 'findings': [], 'objections': []}), 200);
+        return http.Response(
+          jsonEncode({'stakes': 'S1', 'findings': [], 'objections': [], 'action_type': 'create_task', 'gate_decision': 'approve', 'resolved_at': null, 'payload': {}}),
+          200,
+        );
       });
 
       final fetch = createGateRevealFetcher(getAccessToken: () async => 't', client: client, baseUrl: 'https://example.test');
@@ -79,6 +85,10 @@ void main() {
             'objections': [
               {'category': 'tone', 'severity': 'low', 'description': 'Fine.', 'signed_off': true},
             ],
+            'action_type': 'send_email',
+            'gate_decision': 'approve',
+            'resolved_at': null,
+            'payload': {'to': 'real-recipient@example.com', 'subject': 'A real subject', 'body': 'A real body.'},
           }),
           200,
         );
@@ -94,11 +104,21 @@ void main() {
       expect(bundle.findings![1].visualState, EvidenceVisualState.uncertain);
       expect(bundle.objections, hasLength(1));
       expect(bundle.objections![0].signedOff, isTrue);
+      expect(bundle.actionType, 'send_email');
+      expect(bundle.gateDecision, 'approve');
+      expect(bundle.canApprove, isTrue);
+      // REAL, DISCLOSED FIX (CRITICAL-tier cross-model review, HIGH-3):
+      // the real payload a human Approve would execute now parses
+      // through verbatim, not dropped.
+      expect(bundle.payload, {'to': 'real-recipient@example.com', 'subject': 'A real subject', 'body': 'A real body.'});
     });
 
     test('an empty real bundle parses to real empty lists, not a crash', () async {
       final client = MockClient((request) async {
-        return http.Response(jsonEncode({'stakes': 'S1', 'findings': [], 'objections': []}), 200);
+        return http.Response(
+          jsonEncode({'stakes': 'S1', 'findings': [], 'objections': [], 'action_type': 'create_task', 'gate_decision': 'approve', 'resolved_at': null, 'payload': {}}),
+          200,
+        );
       });
 
       final fetch = createGateRevealFetcher(getAccessToken: () async => 't', client: client);
@@ -110,7 +130,10 @@ void main() {
 
     test('a real, null findings/objections (a pre-Gate-Reveal action) parses to a real null, never a fabricated empty list', () async {
       final client = MockClient((request) async {
-        return http.Response(jsonEncode({'stakes': 'S1', 'findings': null, 'objections': null}), 200);
+        return http.Response(
+          jsonEncode({'stakes': 'S1', 'findings': null, 'objections': null, 'action_type': 'create_task', 'gate_decision': 'approve', 'resolved_at': '2026-10-01T10:00:00Z', 'payload': {'title': 'A real task'}}),
+          200,
+        );
       });
 
       final fetch = createGateRevealFetcher(getAccessToken: () async => 't', client: client);
@@ -118,6 +141,7 @@ void main() {
 
       expect(bundle.findings, isNull);
       expect(bundle.objections, isNull);
+      expect(bundle.isPending, isFalse);
     });
 
     test('an S2 bundle with a real, honestly empty objections list still reports its real stakes -- not conflated with Stage B never running', () async {
@@ -129,6 +153,10 @@ void main() {
               {'validator': 'AvailabilityCheck', 'claim': 'Slot is free', 'evidence_state': 'verified_true'},
             ],
             'objections': [],
+            'action_type': 'create_calendar_event_local',
+            'gate_decision': 'approve',
+            'resolved_at': null,
+            'payload': {'start': '2026-10-01T10:00:00Z', 'end': '2026-10-01T11:00:00Z', 'title': 'A real meeting'},
           }),
           200,
         );
@@ -139,6 +167,10 @@ void main() {
 
       expect(bundle.stakes, 'S2');
       expect(bundle.objections, isEmpty);
+      // A real, deliberate scope boundary: create_calendar_event_local
+      // has no real execution target, so canApprove stays false even
+      // though the Gate itself did approve it.
+      expect(bundle.canApprove, isFalse);
     });
 
     test('a real 404 throws a real, distinct ApiException', () async {

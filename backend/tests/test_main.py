@@ -139,9 +139,20 @@ def test_trust_endpoint_runs_the_real_default_scenario_suite_against_the_real_ga
     assert len(body["results"]) == 3
 
     for result in body["results"]:
-        assert set(result.keys()) == {"scenario_id", "expected", "actual", "passed"}
+        # `verdict` added `DEC-193` -- real, disclosed correction: the
+        # spec's own example for this route literally reads "every
+        # ScenarioResult, never filtered," and `self_test_harness.py`'s
+        # own docstring already said the same thing; this route had
+        # been the one real, unforced deviation from both. See
+        # `_serialize_scenario_result()`'s own docstring for the full
+        # account.
+        assert set(result.keys()) == {"scenario_id", "expected", "actual", "passed", "verdict"}
         assert result["passed"] is True
         assert result["expected"] == result["actual"]
+        # The real, full Gate verdict behind this scenario -- genuinely
+        # present, not an empty placeholder.
+        assert result["verdict"]["decision"] in ("approve", "revise", "reject", "escalate_to_human")
+        assert "trace_id" in result["verdict"]
 
     scenario_ids = {r["scenario_id"] for r in body["results"]}
     assert scenario_ids == {"S0_clean_approval", "S2_stage_a_hard_fail", "S3_real_critic_objection_escalates"}
@@ -1015,6 +1026,65 @@ def test_today_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
             app.state.db_pool = real_pool
 
 
+async def test_today_summary_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
+    """Real, end-to-end: real-provisions a real user, inserts one real
+    row in each of the four real source tables, confirms `GET /today/
+    summary` genuinely round-trips through `fetch_week_summary()`."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    task_id = uuid.uuid4()
+    expense_id = uuid.uuid4()
+    application_id = uuid.uuid4()
+    try:
+        await pool.execute(
+            "INSERT INTO tasks (task_id, user_id, title, estimated_hours, deadline, status) VALUES ($1, $2, $3, $4, now() + interval '2 days', 'open')",
+            task_id, uuid.UUID(internal_user_id), "A real end-to-end due-soon task", 1.0,
+        )
+        await pool.execute(
+            "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, now(), 'manual')",
+            expense_id, uuid.UUID(internal_user_id), "A real end-to-end payee", 250.0,
+        )
+        await pool.execute(
+            "INSERT INTO applications (application_id, user_id, company, role, status) VALUES ($1, $2, $3, $4, 'applied')",
+            application_id, uuid.UUID(internal_user_id), "A real end-to-end company", "Engineer",
+        )
+
+        with TestClient(app) as client:
+            response = client.get("/today/summary", headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body.keys()) == {
+            "tasks_due_this_week", "month_to_date_spend", "monthly_budget_limit",
+            "applications_in_progress", "waiting_on_count",
+        }
+        assert body["tasks_due_this_week"] == 1
+        assert body["month_to_date_spend"] == 250.0
+        assert body["monthly_budget_limit"] > 0
+        assert body["applications_in_progress"] == 1
+        assert body["waiting_on_count"] == 0
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE task_id = $1", task_id)
+        await pool.execute("DELETE FROM expenses WHERE expense_id = $1", expense_id)
+        await pool.execute("DELETE FROM applications WHERE application_id = $1", application_id)
+
+
+def test_today_summary_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.get("/today/summary")
+    assert response.status_code == 401
+
+
+def test_today_summary_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
+    with TestClient(app) as client:
+        real_pool = app.state.db_pool
+        app.state.db_pool = None
+        try:
+            response = client.get("/today/summary", headers=_auth_header())
+            assert response.status_code == 503
+        finally:
+            app.state.db_pool = real_pool
+
+
 async def test_negotiation_detail_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
     """Real, end-to-end: real-provisions a real user, inserts a real
     negotiation row with real, persisted positions/options, confirms
@@ -1151,11 +1221,22 @@ async def test_gate_reveal_endpoint_is_real_and_live_not_mocked_with_a_real_vali
 
         assert response.status_code == 200
         body = response.json()
-        assert set(body.keys()) == {"stakes", "findings", "objections"}
+        # REAL, DISCLOSED EXTENSION (the redesign's own real Approve/
+        # Reject work): `action_type`/`gate_decision`/`resolved_at` are
+        # new, real, needed fields -- the mobile client uses them to
+        # decide whether to show real Approve/Reject controls at all.
+        # `payload` joined them (CRITICAL-tier review, HIGH-3): the real
+        # payload a human "Approve" tap would execute, surfaced so a
+        # user can actually see what they're approving before they do.
+        assert set(body.keys()) == {"stakes", "findings", "objections", "action_type", "gate_decision", "resolved_at", "payload"}
         assert body["stakes"] == "S1"
         assert len(body["findings"]) == 1
         assert body["findings"][0]["validator"] == "ProvenanceCheck"
         assert body["objections"] == []
+        assert body["action_type"] == "create_task"
+        assert body["gate_decision"] == "approve"
+        assert body["resolved_at"] is not None
+        assert body["payload"] == {"title": "A real end-to-end task"}
     finally:
         await pool.execute("DELETE FROM action_events WHERE proposal_id = $1", proposal_id)
 
@@ -1202,6 +1283,244 @@ def test_gate_reveal_endpoint_returns_503_not_a_crash_when_the_real_pool_is_unav
             assert health_response.status_code == 200
         finally:
             app.state.db_pool = real_pool
+
+
+async def test_approve_action_endpoint_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.post(f"/actions/{uuid.uuid4()}/approve")
+    assert response.status_code == 401
+
+
+def test_approve_action_endpoint_a_real_syntactically_invalid_id_is_a_real_404_not_a_500():
+    with TestClient(app) as client:
+        response = client.post("/actions/not-a-real-uuid/approve", headers=_auth_header())
+    assert response.status_code == 404
+
+
+async def test_approve_action_endpoint_returns_404_for_a_real_nonexistent_proposal(pool, provisioned_users):
+    headers, _user_id = await _provisioned_auth_header(pool, provisioned_users)
+    with TestClient(app) as client:
+        response = client.post(f"/actions/{uuid.uuid4()}/approve", headers=headers)
+    assert response.status_code == 404
+
+
+async def test_approve_action_endpoint_returns_409_when_the_gate_never_approved_it(pool, provisioned_users):
+    """Real, end-to-end: a `revise` verdict genuinely has nothing for a
+    human approval to execute -- confirmed through the real route, not
+    just the lower-level `action_approval.py` function."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        proposal_id, "send_email", "S3", '{"to": "test@example.com", "body": "hi"}', "revise", "caught_by_gate",
+        f"trace-{proposal_id}", uuid.UUID(internal_user_id), datetime.now(timezone.utc),
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(f"/actions/{proposal_id}/approve", headers=headers)
+        assert response.status_code == 409
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = $1", proposal_id)
+
+
+async def test_approve_action_endpoint_returns_409_for_an_action_type_with_no_execution_path(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        proposal_id, "create_calendar_event_local", "S2",
+        '{"start": "2026-10-01T10:00:00Z", "end": "2026-10-01T11:00:00Z", "title": "A real meeting"}',
+        "approve", None, f"trace-{proposal_id}", uuid.UUID(internal_user_id), None,
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(f"/actions/{proposal_id}/approve", headers=headers)
+        assert response.status_code == 409
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = $1", proposal_id)
+
+
+async def test_approve_action_endpoint_returns_502_with_an_honest_detail_when_execution_fails(pool, provisioned_users):
+    """This real, freshly-provisioned test user has no real Google
+    account connected -- a real, honest execution failure, surfaced as
+    a real `502` with the specific real reason, never a fabricated
+    success."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        proposal_id, "send_email", "S3", '{"to": "test@example.com", "body": "hi"}', "approve", None,
+        f"trace-{proposal_id}", uuid.UUID(internal_user_id), None,
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(f"/actions/{proposal_id}/approve", headers=headers)
+        assert response.status_code == 502
+        assert "google" in response.json()["detail"].lower()
+        row = await pool.fetchrow("SELECT resolved_at FROM action_events WHERE proposal_id = $1", proposal_id)
+        assert row["resolved_at"] is None
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = $1", proposal_id)
+
+
+async def test_reject_action_endpoint_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.post(f"/actions/{uuid.uuid4()}/reject")
+    assert response.status_code == 401
+
+
+async def test_reject_action_endpoint_returns_404_for_a_real_nonexistent_proposal(pool, provisioned_users):
+    headers, _user_id = await _provisioned_auth_header(pool, provisioned_users)
+    with TestClient(app) as client:
+        response = client.post(f"/actions/{uuid.uuid4()}/reject", headers=headers)
+    assert response.status_code == 404
+
+
+async def test_reject_action_endpoint_resolves_a_real_pending_row_end_to_end(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        proposal_id, "send_email", "S3", '{"to": "test@example.com", "body": "hi"}', "approve", None,
+        f"trace-{proposal_id}", uuid.UUID(internal_user_id), None,
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(f"/actions/{proposal_id}/reject", headers=headers)
+        assert response.status_code == 200
+        assert response.json() == {"status": "rejected"}
+        row = await pool.fetchrow("SELECT outcome, resolved_at FROM action_events WHERE proposal_id = $1", proposal_id)
+        assert row["outcome"] == "rejected_by_user"
+        assert row["resolved_at"] is not None
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = $1", proposal_id)
+
+
+async def test_reject_action_endpoint_returns_409_when_already_resolved(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        proposal_id, "create_task", "S1", '{"title": "A real task"}', "approve", "approved_unchanged",
+        f"trace-{proposal_id}", uuid.UUID(internal_user_id), datetime.now(timezone.utc),
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(f"/actions/{proposal_id}/reject", headers=headers)
+        assert response.status_code == 409
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = $1", proposal_id)
+
+
+async def _seed_real_task(pool, *, user_id: str, status: str = "open") -> uuid.UUID:
+    task_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO tasks (task_id, user_id, title, estimated_hours, deadline, status) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
+        task_id, uuid.UUID(user_id), "A real end-to-end task", 1.0, None, status,
+    )
+    return task_id
+
+
+def test_complete_task_endpoint_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.post(f"/tasks/{uuid.uuid4()}/complete")
+    assert response.status_code == 401
+
+
+def test_complete_task_endpoint_a_real_syntactically_invalid_id_is_a_real_404_not_a_500():
+    with TestClient(app) as client:
+        response = client.post("/tasks/not-a-real-uuid/complete", headers=_auth_header())
+    assert response.status_code == 404
+
+
+async def test_complete_task_endpoint_returns_404_for_a_real_nonexistent_task(pool, provisioned_users):
+    headers, _internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    with TestClient(app) as client:
+        response = client.post(f"/tasks/{uuid.uuid4()}/complete", headers=headers)
+    assert response.status_code == 404
+
+
+async def test_complete_task_endpoint_marks_a_real_open_task_done_end_to_end(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    task_id = await _seed_real_task(pool, user_id=internal_user_id)
+    try:
+        with TestClient(app) as client:
+            response = client.post(f"/tasks/{task_id}/complete", headers=headers)
+        assert response.status_code == 200
+        assert response.json() == {"status": "done"}
+        row = await pool.fetchrow("SELECT status FROM tasks WHERE task_id = $1", task_id)
+        assert row["status"] == "done"
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE task_id = $1", task_id)
+
+
+async def test_complete_task_endpoint_returns_409_when_already_done(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    task_id = await _seed_real_task(pool, user_id=internal_user_id, status="done")
+    try:
+        with TestClient(app) as client:
+            response = client.post(f"/tasks/{task_id}/complete", headers=headers)
+        assert response.status_code == 409
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE task_id = $1", task_id)
+
+
+async def test_complete_task_endpoint_never_lets_one_real_user_complete_anothers_task(pool, provisioned_users):
+    headers_a, _user_a = await _provisioned_auth_header(pool, provisioned_users)
+    _headers_b, user_b = await _provisioned_auth_header(pool, provisioned_users)
+    task_id = await _seed_real_task(pool, user_id=user_b)
+    try:
+        with TestClient(app) as client:
+            response = client.post(f"/tasks/{task_id}/complete", headers=headers_a)
+        assert response.status_code == 404
+        row = await pool.fetchrow("SELECT status FROM tasks WHERE task_id = $1", task_id)
+        assert row["status"] == "open"
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE task_id = $1", task_id)
+
+
+def test_cancel_task_endpoint_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.post(f"/tasks/{uuid.uuid4()}/cancel")
+    assert response.status_code == 401
+
+
+async def test_cancel_task_endpoint_returns_404_for_a_real_nonexistent_task(pool, provisioned_users):
+    headers, _internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    with TestClient(app) as client:
+        response = client.post(f"/tasks/{uuid.uuid4()}/cancel", headers=headers)
+    assert response.status_code == 404
+
+
+async def test_cancel_task_endpoint_marks_a_real_open_task_cancelled_end_to_end(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    task_id = await _seed_real_task(pool, user_id=internal_user_id)
+    try:
+        with TestClient(app) as client:
+            response = client.post(f"/tasks/{task_id}/cancel", headers=headers)
+        assert response.status_code == 200
+        assert response.json() == {"status": "cancelled"}
+        row = await pool.fetchrow("SELECT status FROM tasks WHERE task_id = $1", task_id)
+        assert row["status"] == "cancelled"
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE task_id = $1", task_id)
+
+
+async def test_cancel_task_endpoint_returns_409_when_already_cancelled(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    task_id = await _seed_real_task(pool, user_id=internal_user_id, status="cancelled")
+    try:
+        with TestClient(app) as client:
+            response = client.post(f"/tasks/{task_id}/cancel", headers=headers)
+        assert response.status_code == 409
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE task_id = $1", task_id)
 
 
 _CHOOSE_TEST_OPTIONS = [
@@ -1855,6 +2174,65 @@ def test_finance_subscriptions_returns_503_not_a_crash_when_the_real_pool_is_una
             health_response = client.get("/health")
             assert finance_response.status_code == 503
             assert health_response.status_code == 200
+        finally:
+            app.state.db_pool = real_pool
+
+
+def test_finance_expenses_requires_real_auth_missing_header_is_401():
+    with TestClient(app) as client:
+        response = client.get("/finance/expenses")
+    assert response.status_code == 401
+
+
+async def test_finance_expenses_endpoint_is_real_and_live_not_mocked_with_a_real_valid_token(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    expense_id = uuid.uuid4()
+    try:
+        await pool.execute(
+            "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, now(), 'manual')",
+            expense_id, uuid.UUID(internal_user_id), "A real end-to-end payee", 123.0,
+        )
+
+        with TestClient(app) as client:
+            response = client.get("/finance/expenses", headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body) == 1
+        assert set(body[0].keys()) == {"expense_id", "payee", "amount", "occurred_at"}
+        assert body[0]["expense_id"] == str(expense_id)
+        assert body[0]["payee"] == "A real end-to-end payee"
+        assert body[0]["amount"] == 123.0
+    finally:
+        await pool.execute("DELETE FROM expenses WHERE expense_id = $1", expense_id)
+
+
+async def test_finance_expenses_never_leaks_another_real_users_rows(pool, provisioned_users):
+    headers_a, _user_a = await _provisioned_auth_header(pool, provisioned_users)
+    _headers_b, user_b = await _provisioned_auth_header(pool, provisioned_users)
+    expense_id = uuid.uuid4()
+    try:
+        await pool.execute(
+            "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, now(), 'manual')",
+            expense_id, uuid.UUID(user_b), "User B's real payee", 55.0,
+        )
+
+        with TestClient(app) as client:
+            response = client.get("/finance/expenses", headers=headers_a)
+
+        assert response.status_code == 200
+        assert response.json() == []
+    finally:
+        await pool.execute("DELETE FROM expenses WHERE expense_id = $1", expense_id)
+
+
+def test_finance_expenses_returns_503_not_a_crash_when_the_real_pool_is_unavailable():
+    with TestClient(app) as client:
+        real_pool = app.state.db_pool
+        app.state.db_pool = None
+        try:
+            response = client.get("/finance/expenses", headers=_auth_header())
+            assert response.status_code == 503
         finally:
             app.state.db_pool = real_pool
 
@@ -2984,3 +3362,205 @@ def test_follow_up_route_real_secret_and_matching_header_reaches_the_real_route_
         }
     finally:
         get_settings.cache_clear()
+
+
+# --- _quick_capture_result_to_dict: pure, no live model needed ---
+
+
+def test_quick_capture_result_to_dict_serializes_every_field_on_the_dataclass():
+    """THE REAL REGRESSION GUARD for the `DEC-189` bug, and the reason
+    it is structural rather than a list of expected keys.
+
+    `_quick_capture_result_to_dict()` silently omitted `email_recipient`
+    and `email_action` while serializing all 16 of their siblings. The
+    backend genuinely computed both. Every real email-domain capture
+    therefore reached the client as `domain: "email"` with every email
+    field null -- a confirmed direct cause of the real user-reported
+    symptom "I never saw the app do real-time Gmail drafting."
+
+    It survived because the ONLY tests exercising this function were
+    live end-to-end ones that depend on a real Gemini extraction call,
+    so they skip or fail for unrelated external reasons and nobody
+    noticed the shape was wrong. This test needs no model, no network
+    and no database.
+
+    Asserting against `dataclasses.fields()` rather than a hardcoded
+    key list is deliberate: it means ADDING a field to
+    `QuickCaptureResult` and forgetting the serializer fails here
+    immediately, which is exactly the mistake that was made. A
+    hardcoded list would have to be updated by the same person making
+    the same omission, and would not have caught this."""
+    import dataclasses
+
+    from quorum_backend.features.quick_capture import QuickCaptureResult
+    from quorum_backend.main import _quick_capture_result_to_dict
+
+    result = QuickCaptureResult(
+        executed=False,
+        decision="approve",
+        stakes="S3",
+        domain="email",
+        operation="create",
+        email_recipient="someone@example.com",
+        email_action="send_email",
+    )
+
+    serialized = _quick_capture_result_to_dict(result)
+    declared = {f.name for f in dataclasses.fields(QuickCaptureResult)}
+
+    missing = declared - set(serialized)
+    assert not missing, f"fields computed by the backend but dropped at the HTTP boundary: {sorted(missing)}"
+
+    extra = set(serialized) - declared
+    assert not extra, f"serializer invents keys with no backing field: {sorted(extra)}"
+
+
+def test_quick_capture_result_to_dict_carries_the_real_email_fields_through():
+    """The specific values, not just the key presence -- a serializer
+    that emitted the keys as hardcoded `None` would pass the
+    exhaustiveness test above while reproducing the original defect
+    exactly."""
+    from quorum_backend.features.quick_capture import QuickCaptureResult
+    from quorum_backend.main import _quick_capture_result_to_dict
+
+    serialized = _quick_capture_result_to_dict(
+        QuickCaptureResult(
+            executed=False,
+            decision="approve",
+            stakes="S3",
+            domain="email",
+            operation="create",
+            email_recipient="sarah@example.com",
+            email_action="send_email",
+        )
+    )
+
+    assert serialized["email_recipient"] == "sarah@example.com"
+    assert serialized["email_action"] == "send_email"
+    assert serialized["domain"] == "email"
+
+
+def test_quick_capture_result_to_dict_returns_json_serializable_output():
+    """`findings`/`objections` are real Pydantic models and must already
+    be dumped to plain JSON types by the time they leave this function
+    -- FastAPI returns this dict directly."""
+    from quorum_backend.features.quick_capture import QuickCaptureResult
+    from quorum_backend.main import _quick_capture_result_to_dict
+
+    serialized = _quick_capture_result_to_dict(
+        QuickCaptureResult(executed=True, decision="approve", stakes="S0", domain="tasks", operation="create")
+    )
+    json.dumps(serialized)  # must not raise
+
+
+# --- GET /agents (`DEC-192`, product rebuild Block D) ---
+
+
+def test_agents_endpoint_requires_real_auth():
+    with TestClient(app) as client:
+        response = client.get("/agents")
+    assert response.status_code == 401
+
+
+async def test_agents_endpoint_returns_all_five_real_domain_agents_even_with_zero_activity(pool, provisioned_users):
+    headers, _ = await _provisioned_auth_header(pool, provisioned_users)
+    with TestClient(app) as client:
+        response = client.get("/agents", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    domains = {agent["domain"] for agent in body["agents"]}
+    assert domains == {"email", "calendar", "tasks", "finance", "career"}
+    # A genuinely inactive agent renders as an honest zero, never absent.
+    for agent in body["agents"]:
+        assert agent["lifetime_actions"] == 0
+        assert agent["last_activity"] is None
+        assert agent["success_rate"] is None
+
+
+async def test_agents_endpoint_reflects_a_real_resolved_action(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        proposal_id, "create_task", "S1", "{}", "approve", "approved_unchanged",
+        str(proposal_id), uuid.UUID(internal_user_id), datetime.now(timezone.utc),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/agents", headers=headers)
+
+    body = response.json()
+    tasks = next(a for a in body["agents"] if a["domain"] == "tasks")
+    assert tasks["lifetime_actions"] == 1
+    assert tasks["success_count"] == 1
+    assert tasks["success_rate"] == 1.0
+    assert tasks["last_activity"] is not None
+
+
+# --- GET /gate/validators (`DEC-193`, product rebuild Block E) ---
+
+
+def test_gate_validators_endpoint_requires_real_auth():
+    with TestClient(app) as client:
+        response = client.get("/gate/validators")
+    assert response.status_code == 401
+
+
+def test_gate_validators_endpoint_returns_all_nine_real_validators():
+    with TestClient(app) as client:
+        response = client.get("/gate/validators", headers=_auth_header())
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["validators"]) == 9
+    names = {v["name"] for v in body["validators"]}
+    assert "ProvenanceCheck" in names
+    assert "DeadlineConflictCheck" in names
+    wired = {v["name"] for v in body["validators"] if v["wired"]}
+    assert wired == {"ProvenanceCheck", "DeadlineConflictCheck"}
+
+
+# --- GET /gate/stats (`DEC-193`, product rebuild Block E) ---
+
+
+def test_gate_stats_endpoint_requires_real_auth():
+    with TestClient(app) as client:
+        response = client.get("/gate/stats")
+    assert response.status_code == 401
+
+
+async def test_gate_stats_endpoint_returns_honest_zeros_for_a_real_user_with_no_activity(pool, provisioned_users):
+    headers, _ = await _provisioned_auth_header(pool, provisioned_users)
+    with TestClient(app) as client:
+        response = client.get("/gate/stats", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_resolved"] == 0
+    assert body["stakes_counts"] == {}
+    assert body["catch_rate"] is None
+    # Real quota headroom -- present and bounded by the real daily
+    # limit whenever Upstash is genuinely configured.
+    if body["quota_used"] is not None:
+        assert 0 <= body["quota_used"] <= body["quota_limit"]
+
+
+async def test_gate_stats_endpoint_reflects_a_real_resolved_action(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        proposal_id, "create_task", "S1", "{}", "approve", "approved_unchanged",
+        str(proposal_id), uuid.UUID(internal_user_id), datetime.now(timezone.utc),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/gate/stats", headers=headers)
+
+    body = response.json()
+    assert body["total_resolved"] == 1
+    assert body["stakes_counts"] == {"S1": 1}
+    assert body["success_count"] == 1
+    assert body["catch_rate"] == 0.0
