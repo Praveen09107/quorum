@@ -118,6 +118,7 @@ import 'package:quorum_mobile/api/tasks_api.dart';
 import 'package:quorum_mobile/api/today_api.dart';
 import 'package:quorum_mobile/api/trust_api.dart';
 import 'package:quorum_mobile/api/create_application_api.dart';
+import 'package:quorum_mobile/api/schedule_interview_api.dart';
 import 'package:quorum_mobile/api/gate_showcase_api.dart';
 import 'package:quorum_mobile/api/trust_digest_api.dart';
 import 'package:quorum_mobile/api/waiting_on_api.dart';
@@ -320,6 +321,12 @@ class _QuorumAppState extends State<QuorumApp> {
             // write path Career has ever had: a "+ New application"
             // form on the Career pipeline screen.
             createApplication: createCreateApplicationFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-195` (product rebuild Block F, remainder) -- the
+            // Career pipeline's second real write control.
+            scheduleInterview: createScheduleInterviewFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),

@@ -25,9 +25,11 @@ from quorum_backend.features.retry_queue_drainer import (
     available_hours_before_deadline,
     drain_due_jobs,
     map_verdict_to_outcome,
+    process_interview_prep_tasks_job,
     validate_and_build_application_proposal,
     validate_and_build_calendar_proposal,
     validate_and_build_finance_proposal,
+    validate_and_build_interview_proposal,
     validate_and_build_task_proposal,
 )
 from quorum_backend.gate.schemas import (
@@ -210,6 +212,36 @@ def test_validate_and_build_application_proposal_rejects_an_overlong_company():
 def test_validate_and_build_application_proposal_rejects_an_empty_role_when_present():
     with pytest.raises(DownstreamTranslationError):
         validate_and_build_application_proposal({"company": "Stripe", "role": "   "})
+
+
+# --- `validate_and_build_interview_proposal` (`DEC-195`, product
+# rebuild Block F remainder) ---
+
+
+def test_validate_and_build_interview_proposal_produces_the_real_action_type():
+    proposal = validate_and_build_interview_proposal({"application_id": "app_1"})
+    assert proposal.action_type == ActionType.CREATE_INTERVIEW
+    assert proposal.payload["application_id"] == "app_1"
+    assert proposal.payload["scheduled_at"] is None
+    assert proposal.payload["format"] is None
+
+
+def test_validate_and_build_interview_proposal_parses_a_real_scheduled_at_and_keeps_format():
+    proposal = validate_and_build_interview_proposal(
+        {"application_id": "app_1", "scheduled_at_iso": "2027-03-01T10:00:00+00:00", "format": "video"}
+    )
+    assert proposal.payload["scheduled_at"] == "2027-03-01T10:00:00+00:00"
+    assert proposal.payload["format"] == "video"
+
+
+def test_validate_and_build_interview_proposal_rejects_an_empty_application_id():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_interview_proposal({"application_id": "   "})
+
+
+def test_validate_and_build_interview_proposal_rejects_an_unrecognized_format():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_interview_proposal({"application_id": "app_1", "format": "carrier_pigeon"})
 
 
 def test_validate_and_build_task_proposal_rejects_non_positive_hours():
@@ -862,3 +894,114 @@ async def test_drain_due_jobs_deadline_conflict_check_genuinely_uses_real_commit
     event = await pool.fetchrow("SELECT gate_decision, outcome FROM action_events WHERE user_id = $1", uuid.UUID(user_id))
     assert event["gate_decision"] == "revise"
     assert event["outcome"] == "caught_by_gate"
+
+
+# --- `process_interview_prep_tasks_job` / the real `interview_prep_tasks`
+# drain dispatch (`DEC-195`, product rebuild Block F remainder) ---
+
+
+@pytest_asyncio.fixture
+async def application_id(pool, user_id):
+    app_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company) VALUES ($1, $2, $3)",
+        app_id, uuid.UUID(user_id), "Stripe",
+    )
+    yield str(app_id)
+    await pool.execute("DELETE FROM applications WHERE application_id = $1", app_id)
+
+
+@pytest_asyncio.fixture
+async def interview_id(pool, application_id):
+    interview_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO interviews (interview_id, application_id, format) VALUES ($1, $2, $3)",
+        interview_id, uuid.UUID(application_id), "video",
+    )
+    yield str(interview_id)
+    await pool.execute("DELETE FROM interviews WHERE interview_id = $1", interview_id)
+
+
+async def test_process_interview_prep_tasks_job_creates_three_real_approved_tasks_and_links_them(pool, user_id, interview_id):
+    async with pool.acquire() as conn:
+        produced, executed = await process_interview_prep_tasks_job(
+            conn,
+            {"user_id": user_id, "interview_id": interview_id, "company": "Stripe", "format": "video"},
+            critic_call=_fake_critic_call,
+            judge_call=_fake_judge_approve,
+        )
+    assert (produced, executed) == (3, 3)
+
+    tasks = await pool.fetch("SELECT task_id, title FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    assert len(tasks) == 3
+    assert any("Stripe" in t["title"] for t in tasks)
+    assert any("video" in t["title"] for t in tasks)
+
+    row = await pool.fetchrow("SELECT prep_task_ids FROM interviews WHERE interview_id = $1", uuid.UUID(interview_id))
+    real_task_ids = {t["task_id"] for t in tasks}
+    assert set(row["prep_task_ids"]) == real_task_ids
+
+
+async def test_process_interview_prep_tasks_job_each_real_prep_task_is_genuinely_stakes_s1_never_reaching_the_judge(pool, user_id, interview_id):
+    """`CREATE_TASK` is real `Stakes.S1` -- `gate.orchestration.run_
+    stage_b()`'s own structural rule means the real Judge (and Critic)
+    are NEVER invoked for it, so a genuine Gate "reject" is not a real,
+    reachable outcome for one of these prep tasks (Stage A here is
+    just `provenance_check`, hardcoded to always pass). What IS real
+    and worth proving: this new code path honors that same structural
+    guarantee, matching this project's own established "prove Stage
+    B's zero-invocation by call count" precedent (`DEC-191`) -- a
+    `judge_call` that raises if ever actually called must never fire."""
+    async def judge_should_not_be_called(proposal, findings, objections):
+        raise AssertionError("the real Judge must never be invoked for a Stakes.S1 CREATE_TASK proposal")
+
+    async def critic_should_not_be_called(proposal, findings):
+        raise AssertionError("the real Critic must never be invoked for a Stakes.S1 CREATE_TASK proposal")
+
+    async with pool.acquire() as conn:
+        produced, executed = await process_interview_prep_tasks_job(
+            conn,
+            {"user_id": user_id, "interview_id": interview_id, "company": "Stripe", "format": "video"},
+            critic_call=critic_should_not_be_called,
+            judge_call=judge_should_not_be_called,
+        )
+    assert (produced, executed) == (3, 3)
+
+
+async def test_process_interview_prep_tasks_job_handles_a_real_null_format_honestly(pool, user_id, interview_id):
+    async with pool.acquire() as conn:
+        produced, executed = await process_interview_prep_tasks_job(
+            conn,
+            {"user_id": user_id, "interview_id": interview_id, "company": "Stripe", "format": None},
+            critic_call=_fake_critic_call,
+            judge_call=_fake_judge_approve,
+        )
+    assert (produced, executed) == (3, 3)
+    titles = {t["title"] for t in await pool.fetch("SELECT title FROM tasks WHERE user_id = $1", uuid.UUID(user_id))}
+    assert any("common interview questions" in t for t in titles)  # no dangling "None " prefix
+
+
+async def test_drain_due_jobs_dispatches_a_real_interview_prep_tasks_job(pool, user_id, interview_id):
+    """The real, live proof that `drain_due_jobs()`'s own dispatch
+    actually routes this real `job_type` to the real processor above --
+    not just that the processor works when called directly."""
+    await pool.execute(
+        "INSERT INTO retry_queue (retry_id, job_type, payload) VALUES ($1, $2, $3::jsonb)",
+        uuid.uuid4(), "interview_prep_tasks",
+        json.dumps({"user_id": user_id, "interview_id": interview_id, "company": "Stripe", "format": "phone"}),
+    )
+
+    async def translation_call_never_needed(domain, description):
+        raise AssertionError("an interview_prep_tasks job must never call the real translation function")
+
+    result = await drain_due_jobs(
+        pool, translation_call=translation_call_never_needed, critic_call=_fake_critic_call, judge_call=_fake_judge_approve
+    )
+
+    assert result.jobs_succeeded == 1
+    assert result.jobs_failed == 0
+    assert result.downstream_actions_produced == 3
+    assert result.downstream_actions_executed == 3
+    assert await pool.fetchrow("SELECT 1 FROM retry_queue") is None
+    tasks = await pool.fetch("SELECT 1 FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    assert len(tasks) == 3

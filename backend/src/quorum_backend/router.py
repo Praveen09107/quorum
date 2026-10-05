@@ -127,6 +127,9 @@ STAKES_TABLE: dict[ActionType, Stakes] = {
     # `S1` (`gate.orchestration.run_stage_b()`), so a real application
     # is created the moment Stage A clears it, no separate approval.
     ActionType.CREATE_APPLICATION: Stakes.S1,
+    # `DEC-195`. `S1`, the identical real reasoning as `CREATE_APPLICATION`
+    # immediately above.
+    ActionType.CREATE_INTERVIEW: Stakes.S1,
 }
 
 

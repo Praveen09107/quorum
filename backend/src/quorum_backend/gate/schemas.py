@@ -85,6 +85,12 @@ class ActionType(str, Enum):
     # profile. See `router.STAKES_TABLE` for the stakes value this
     # earns from that distinction.
     CREATE_APPLICATION = "create_application"
+    # `DEC-195` (product rebuild Block F, remainder). The real, first
+    # `ActionType` for the `interviews` table -- unused by any code in
+    # this backend's history since migration `0001`. `S1`, matching
+    # `CREATE_APPLICATION`/`CREATE_TASK`'s own precedent: a fresh,
+    # additive create of a purely internal row.
+    CREATE_INTERVIEW = "create_interview"
 
 
 class EvidenceRef(BaseModel):

@@ -565,6 +565,89 @@ async def test_create_application_endpoint_rejects_an_empty_company_with_a_real_
     assert response.status_code == 502
 
 
+# --- POST /interviews (`DEC-195`, product rebuild Block F remainder) ---
+
+
+def test_schedule_interview_endpoint_requires_real_auth():
+    with TestClient(app) as client:
+        response = client.post("/interviews", json={"application_id": "app_1"})
+    assert response.status_code == 401
+
+
+async def test_schedule_interview_endpoint_is_real_and_live_schedules_a_real_interview_end_to_end(pool, provisioned_users):
+    """The real, first end-to-end proof that the `interviews` table
+    (unused since migration `0001`) can genuinely be written to at
+    all. `CREATE_INTERVIEW` is real `Stakes.S1` -- no real Gemini/Groq
+    key is needed for this to pass, matching `POST /applications`'s
+    own identical real precedent."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    application_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company) VALUES ($1, $2, $3)",
+        application_id, uuid.UUID(internal_user_id), "Stripe",
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/interviews",
+                json={"application_id": str(application_id), "scheduled_at_iso": "2027-03-01T10:00:00+00:00", "format": "video"},
+                headers=headers,
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["stakes"] == "S1"
+        assert body["domain"] == "career"
+        assert body["operation"] == "create"
+        assert body["executed"] is True
+        assert body["decision"] == "approve"
+
+        row = await pool.fetchrow("SELECT format, status FROM interviews WHERE application_id = $1", application_id)
+        assert row is not None
+        assert row["format"] == "video"
+        assert row["status"] == "scheduled"
+
+        job = await pool.fetchrow("SELECT job_type FROM retry_queue")
+        assert job is not None
+        assert job["job_type"] == "interview_prep_tasks"
+    finally:
+        await pool.execute("DELETE FROM retry_queue")
+        await pool.execute("DELETE FROM interviews WHERE application_id = $1", application_id)
+        await pool.execute("DELETE FROM applications WHERE application_id = $1", application_id)
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
+async def test_schedule_interview_endpoint_rejects_an_unowned_application_with_an_honest_non_execution(pool, provisioned_users):
+    """A real, structural ownership check, not an HTTP-layer guess --
+    the Gate genuinely approves the proposal (nothing about it looks
+    malformed), and `action_executor.py`'s own real `CREATE_INTERVIEW`
+    branch is what refuses to execute against an application this
+    user does not own. Matches this backend's own established "fail
+    safely, not loudly" contract."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    other_sub = f"test-interview-other-{uuid.uuid4()}"
+    other_user_id = await get_or_create_user(pool, google_sub=other_sub, email=None)
+    application_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company) VALUES ($1, $2, $3)",
+        application_id, uuid.UUID(other_user_id), "Someone Else's Company",
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.post("/interviews", json={"application_id": str(application_id)}, headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["executed"] is False
+        assert await pool.fetchrow("SELECT 1 FROM interviews WHERE application_id = $1", application_id) is None
+    finally:
+        await pool.execute("DELETE FROM applications WHERE application_id = $1", application_id)
+        await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(other_user_id))
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
 @pytest.mark.skipif(get_settings().gemini_api_key is None, reason="no real GEMINI_API_KEY configured in this environment")
 async def test_quick_capture_endpoint_is_real_and_live_creates_a_real_expense_end_to_end(pool, provisioned_users):
     """The real, live, end-to-end Finance-domain proof `QUORUM_FINAL_

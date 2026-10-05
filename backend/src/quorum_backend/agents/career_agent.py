@@ -155,6 +155,27 @@ def build_create_application_proposal(
     )
 
 
+def build_schedule_interview_proposal(
+    application_id: str, scheduled_at: datetime | None = None, format: str | None = None
+) -> ActionProposal:
+    """`DEC-195` (product rebuild Block F, remainder) -- the real,
+    first proposal builder for the `interviews` table, unused by any
+    code in this backend's history since migration `0001`. Ownership
+    of `application_id` is verified later, in `action_executor.py`'s
+    own real `CREATE_INTERVIEW` branch (the real database connection
+    this function deliberately never receives) -- matches `build_
+    status_update_proposal()`'s own identical division of labor."""
+    authorize_tool_call("career.schedule_interview", calling_agent_domain="career")
+    return ActionProposal(
+        action_type=ActionType.CREATE_INTERVIEW,
+        payload={
+            "application_id": application_id,
+            "scheduled_at": scheduled_at.isoformat() if scheduled_at else None,
+            "format": format,
+        },
+    )
+
+
 def make_update_status_node():
     def update_status_node(state: CareerAgentState) -> dict:
         proposal = build_status_update_proposal(state["application_id"], state["new_status"])

@@ -419,6 +419,7 @@ from quorum_backend.features.retry_queue_drainer import (
     persist_gate_verdict,
     validate_and_build_application_proposal,
     validate_and_build_finance_proposal,
+    validate_and_build_interview_proposal,
     validate_and_build_task_proposal,
 )
 from quorum_backend.gate.orchestration import CriticCall, JudgeCall, review
@@ -2056,6 +2057,15 @@ async def capture_action_from_extracted_args(
             proposal = validate_and_build_application_proposal(args)
         except (DownstreamTranslationError, KeyError, ValueError, TypeError) as exc:
             raise QuickCaptureError(f"Real extraction produced an unusable application: {exc}") from exc
+    elif domain == "career" and operation == "schedule_interview":
+        # `DEC-195` (product rebuild Block F, remainder). Also a pure
+        # create -- application ownership is verified later, in
+        # `action_executor.py`, the first point this real pipeline
+        # actually has a database connection open against this proposal.
+        try:
+            proposal = validate_and_build_interview_proposal(args)
+        except (DownstreamTranslationError, KeyError, ValueError, TypeError) as exc:
+            raise QuickCaptureError(f"Real extraction produced an unusable interview: {exc}") from exc
     elif domain == "email" and operation == "create":
         if draft_call is None:
             raise QuickCaptureError("Real email drafting is not currently available -- no draft_call was configured for this request.")
@@ -2274,6 +2284,22 @@ async def capture_action_from_extracted_args(
                 domain=domain,
                 operation="create",
                 company=final_payload.get("company") if executed else None,
+                findings=verdict.findings,
+                objections=verdict.objections,
+            )
+        if action_type_value == "create_interview":
+            # `DEC-195`. The real resolved `company` isn't available
+            # here -- it's looked up inside `action_executor.py`'s own
+            # `CREATE_INTERVIEW` branch, from the real database, never
+            # part of this proposal's own payload. An honest absence,
+            # not a fabricated echo of a value this layer never had.
+            return QuickCaptureResult(
+                executed=bool(executed),
+                artifact=artifact,
+                decision=verdict.decision,
+                stakes=stakes.value,
+                domain=domain,
+                operation="create",
                 findings=verdict.findings,
                 objections=verdict.objections,
             )

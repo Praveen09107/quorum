@@ -40,6 +40,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/api/create_application_api.dart';
+import 'package:quorum_mobile/api/schedule_interview_api.dart';
 import 'package:quorum_mobile/db/database.dart';
 import 'package:quorum_mobile/features/calendar/calendar_screen.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
@@ -73,6 +74,12 @@ class YouScreen extends StatefulWidget {
   /// application" action only appears on `CareerPipelineScreen` when
   /// this is genuinely supplied.
   final CreateApplicationFetcher? createApplication;
+
+  /// `DEC-195` (product rebuild Block F remainder) -- the Career
+  /// pipeline's second real write control: scheduling an interview
+  /// against an existing application. Optional and additive, same
+  /// honest-gating pattern as `createApplication` above.
+  final ScheduleInterviewFetcher? scheduleInterview;
   final Future<List<DetectedSubscriptionData>> Function()? fetchFinance;
 
   /// REAL, NEW (the redesign's own real "Finance hub" work) -- see
@@ -105,6 +112,7 @@ class YouScreen extends StatefulWidget {
     this.fetchCareerApplications,
     this.fetchCareerDigest,
     this.createApplication,
+    this.scheduleInterview,
     this.fetchFinance,
     this.fetchExpenses,
     this.fetchWaitingOn,
@@ -214,6 +222,7 @@ class _YouScreenState extends State<YouScreen> {
                         fetch: widget.fetchCareerApplications!,
                         fetchDigest: widget.fetchCareerDigest,
                         createApplication: widget.createApplication,
+                        scheduleInterview: widget.scheduleInterview,
                       ),
                     ),
                   ),
@@ -518,8 +527,14 @@ class _CareerPipelineLoader extends StatefulWidget {
   final Future<List<CareerApplication>> Function() fetch;
   final Future<CompanyDigestData> Function(String applicationId)? fetchDigest;
   final CreateApplicationFetcher? createApplication;
+  final ScheduleInterviewFetcher? scheduleInterview;
 
-  const _CareerPipelineLoader({required this.fetch, this.fetchDigest, this.createApplication});
+  const _CareerPipelineLoader({
+    required this.fetch,
+    this.fetchDigest,
+    this.createApplication,
+    this.scheduleInterview,
+  });
 
   @override
   State<_CareerPipelineLoader> createState() => _CareerPipelineLoaderState();
@@ -567,6 +582,22 @@ class _CareerPipelineLoaderState extends State<_CareerPipelineLoader> {
     );
   }
 
+  Future<void> _openScheduleInterviewSheet(CareerApplication application) async {
+    final scheduleInterview = widget.scheduleInterview;
+    if (scheduleInterview == null) return;
+    final result = await showModalBottomSheet<ScheduleInterviewResult>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _ScheduleInterviewSheet(scheduleInterview: scheduleInterview, application: application),
+    );
+    if (result == null || !mounted) return;
+    await _refresh();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result.executed ? 'Interview scheduled with ${application.company}.' : 'The Gate declined to schedule that interview.')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -597,6 +628,7 @@ class _CareerPipelineLoaderState extends State<_CareerPipelineLoader> {
                         ),
                       ),
                     ),
+            onScheduleInterview: widget.scheduleInterview == null ? null : _openScheduleInterviewSheet,
           );
         },
         ),
@@ -686,6 +718,148 @@ class _NewApplicationSheetState extends State<_NewApplicationSheet> {
               child: _submitting
                   ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Text('Add application'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// `DEC-195` (product rebuild Block F remainder) -- the real form
+/// behind the Career pipeline's second write control. `format` is
+/// optional (matching `interviews.format`'s own real, nullable
+/// schema) -- "Not sure yet" is a genuinely honest choice, not a
+/// missing one.
+class _ScheduleInterviewSheet extends StatefulWidget {
+  final ScheduleInterviewFetcher scheduleInterview;
+  final CareerApplication application;
+
+  const _ScheduleInterviewSheet({required this.scheduleInterview, required this.application});
+
+  @override
+  State<_ScheduleInterviewSheet> createState() => _ScheduleInterviewSheetState();
+}
+
+class _ScheduleInterviewSheetState extends State<_ScheduleInterviewSheet> {
+  static const _formats = <String?>[null, 'phone', 'video', 'onsite'];
+
+  DateTime? _date;
+  TimeOfDay? _time;
+  String? _format;
+  bool _submitting = false;
+  String? _error;
+
+  String _formatLabel(String? format) {
+    switch (format) {
+      case 'phone':
+        return 'Phone';
+      case 'video':
+        return 'Video';
+      case 'onsite':
+        return 'Onsite';
+      default:
+        return 'Not sure yet';
+    }
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date ?? now,
+      firstDate: now.subtract(const Duration(days: 1)),
+      lastDate: now.add(const Duration(days: 365)),
+    );
+    if (picked != null) setState(() => _date = picked);
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(context: context, initialTime: _time ?? TimeOfDay.now());
+    if (picked != null) setState(() => _time = picked);
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    final date = _date;
+    final time = _time;
+    final scheduledAt = (date != null && time != null)
+        ? DateTime(date.year, date.month, date.day, time.hour, time.minute)
+        : null;
+    try {
+      final result = await widget.scheduleInterview(
+        applicationId: widget.application.applicationId,
+        scheduledAt: scheduledAt,
+        format: _format,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(result);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16, right: 16, top: 16,
+        bottom: 16 + MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Schedule interview -- ${widget.application.company}', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            children: [
+              for (final format in _formats)
+                ChoiceChip(
+                  label: Text(_formatLabel(format)),
+                  selected: _format == format,
+                  onSelected: (_) => setState(() => _format = format),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _pickDate,
+                  child: Text(_date == null ? 'Pick a date' : '${_date!.year}-${_date!.month.toString().padLeft(2, '0')}-${_date!.day.toString().padLeft(2, '0')}'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _pickTime,
+                  child: Text(_time == null ? 'Pick a time' : _time!.format(context)),
+                ),
+              ),
+            ],
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ],
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: _submitting ? null : _submit,
+              child: _submitting
+                  ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('Schedule'),
             ),
           ),
         ],

@@ -99,7 +99,7 @@ import asyncpg
 import httpx
 
 from quorum_backend.agents.calendar_agent import build_event_proposal
-from quorum_backend.agents.career_agent import build_create_application_proposal
+from quorum_backend.agents.career_agent import build_create_application_proposal, build_schedule_interview_proposal
 from quorum_backend.agents.finance_agent import build_finance_proposal
 from quorum_backend.agents.tasks_agent import build_task_proposal
 from quorum_backend.features.action_executor import ExecutionResult, execute_approved_action
@@ -130,6 +130,10 @@ MAX_RETRY_ATTEMPTS = 5
 RETRY_BACKOFF_MINUTES = 10
 
 _NEGOTIATION_DOWNSTREAM_JOB_TYPE = "negotiation_downstream_action"
+# `DEC-195` (product rebuild Block F, remainder) -- the real, second
+# `job_type` this drainer has ever known how to process, enqueued by
+# `action_executor.py`'s own new `CREATE_INTERVIEW` branch.
+_INTERVIEW_PREP_TASKS_JOB_TYPE = "interview_prep_tasks"
 
 
 class DownstreamDrainError(Exception):
@@ -472,6 +476,26 @@ def validate_and_build_application_proposal(args: dict) -> ActionProposal:
     deadline_iso = args.get("deadline_iso")
     deadline = datetime.fromisoformat(deadline_iso) if deadline_iso else None
     return build_create_application_proposal(company=company, role=role, deadline=deadline)
+
+
+_REAL_INTERVIEW_FORMATS = ("phone", "video", "onsite")
+
+
+def validate_and_build_interview_proposal(args: dict) -> ActionProposal:
+    """`DEC-195` (product rebuild Block F, remainder). A pure create,
+    no existing row to resolve -- ownership of `application_id` is
+    verified later, in `action_executor.py`'s own real `CREATE_
+    INTERVIEW` branch, which is the first point this function's own
+    caller actually has a real database connection."""
+    application_id = args["application_id"]
+    if not isinstance(application_id, str) or not application_id.strip():
+        raise DownstreamTranslationError(f"A real interview needs a real, non-empty application_id, got {application_id!r}")
+    scheduled_at_iso = args.get("scheduled_at_iso")
+    scheduled_at = datetime.fromisoformat(scheduled_at_iso) if scheduled_at_iso else None
+    interview_format = args.get("format")
+    if interview_format is not None and interview_format not in _REAL_INTERVIEW_FORMATS:
+        raise DownstreamTranslationError(f"Real interview format must be one of {_REAL_INTERVIEW_FORMATS} or null, got {interview_format!r}")
+    return build_schedule_interview_proposal(application_id=application_id, scheduled_at=scheduled_at, format=interview_format)
 
 
 def validate_and_build_calendar_proposal(args: dict) -> ActionProposal:
@@ -863,6 +887,73 @@ async def process_negotiation_downstream_job(
     return len(reviewed), executed_count
 
 
+# Real, fixed, deterministic prep-task titles -- `CLAUDE.md`'s own
+# drift pattern #1 ("never reach for an LLM to do something checkable
+# in code") applies here too: three real, generically-useful interview
+# prep tasks genuinely don't need a model call to generate, and a
+# fixed, code-authored set is honest about being a template, never
+# dressed up as a personalized real recommendation it isn't.
+def _real_prep_task_titles(company: str, interview_format: str | None) -> list[str]:
+    format_phrase = f"{interview_format} " if interview_format else ""
+    return [
+        f"Research {company} before the interview",
+        "Review your resume and recent projects",
+        f"Prepare answers for common {format_phrase}interview questions",
+    ]
+
+
+async def process_interview_prep_tasks_job(
+    conn: asyncpg.Connection,
+    payload: dict,
+    *,
+    critic_call: CriticCall,
+    judge_call: JudgeCall,
+) -> tuple[int, int]:
+    """`DEC-195` (product rebuild Block F, remainder) -- the real,
+    async consumer `action_executor.py`'s own `CREATE_INTERVIEW` branch
+    queues a job for. Each real prep task is its own real, independently
+    Gate-reviewed `CREATE_TASK` proposal (`Stakes.S1`, Stage B never
+    runs) -- not a same-transaction multi-row write, matching this
+    module's own established `process_negotiation_downstream_job()`
+    precedent for "one domain's action triggers real work in another."
+
+    Returns real `(tasks_produced, tasks_executed)` counts, reused
+    directly into `DrainResult`'s own existing, generically-named
+    `downstream_actions_produced`/`_executed` fields -- no new response
+    shape needed for `POST /internal/drain-retry-queue`.
+
+    Each real created task's own id is known AHEAD of its own Gate
+    review (`uuid.uuid4()`, passed through `new_task_id`) specifically
+    so this function can write it onto `interviews.prep_task_ids` the
+    moment -- and only when -- that task's own review genuinely
+    approved and executed it; a task the Gate declined is correctly
+    left out of that array."""
+    user_id = payload["user_id"]
+    interview_id = payload["interview_id"]
+    company = payload["company"]
+    interview_format = payload.get("format")
+
+    titles = _real_prep_task_titles(company, interview_format)
+    executed_task_ids: list[uuid.UUID] = []
+    for title in titles:
+        new_task_id = uuid.uuid4()
+        proposal = build_task_proposal(title=title, estimated_hours=1.0, new_task_id=str(new_task_id))
+        stakes = get_stakes(proposal.action_type)
+        stage_a_checks = await build_stage_a_checks_for_domain(conn, domain="tasks", proposal=proposal, user_id=user_id)
+        verdict = await review(proposal, stakes, stage_a_checks, critic_call, judge_call)
+        executed, _artifact = await persist_gate_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
+        if executed:
+            executed_task_ids.append(new_task_id)
+
+    if executed_task_ids:
+        await conn.execute(
+            "UPDATE interviews SET prep_task_ids = $1 WHERE interview_id = $2",
+            executed_task_ids, uuid.UUID(interview_id),
+        )
+
+    return len(titles), len(executed_task_ids)
+
+
 async def _mark_job_failed(conn: asyncpg.Connection, retry_id, error_message: str) -> None:
     await conn.execute(
         "UPDATE retry_queue SET attempt_count = attempt_count + 1, "
@@ -957,21 +1048,26 @@ async def drain_due_jobs(
                     else:
                         jobs_seen += 1
                         retry_id = row["retry_id"]
+                        payload = json.loads(row["payload"])
 
-                        if row["job_type"] != _NEGOTIATION_DOWNSTREAM_JOB_TYPE:
-                            # A real, exhaustive, disclosed guard -- this
-                            # drainer only knows how to process the one
-                            # real job_type any code in this backend has
-                            # ever enqueued. Raised, not handled inline,
-                            # so it flows through the exact same real
-                            # recovery path every other real failure
-                            # below does.
+                        # A real, exhaustive, disclosed dispatch -- this
+                        # drainer only knows how to process these two
+                        # real job types (`DEC-195` added the second).
+                        # An unrecognized value raises, not handled
+                        # inline, so it flows through the exact same
+                        # real recovery path every other real failure
+                        # below does.
+                        if row["job_type"] == _NEGOTIATION_DOWNSTREAM_JOB_TYPE:
+                            produced, executed = await process_negotiation_downstream_job(
+                                conn, payload, translation_call=translation_call, critic_call=critic_call, judge_call=judge_call
+                            )
+                        elif row["job_type"] == _INTERVIEW_PREP_TASKS_JOB_TYPE:
+                            produced, executed = await process_interview_prep_tasks_job(
+                                conn, payload, critic_call=critic_call, judge_call=judge_call
+                            )
+                        else:
                             raise DownstreamDrainError(f"Unknown job_type: {row['job_type']!r}")
 
-                        payload = json.loads(row["payload"])
-                        produced, executed = await process_negotiation_downstream_job(
-                            conn, payload, translation_call=translation_call, critic_call=critic_call, judge_call=judge_call
-                        )
                         await conn.execute("DELETE FROM retry_queue WHERE retry_id = $1", retry_id)
                         jobs_succeeded += 1
                         downstream_actions_produced += produced

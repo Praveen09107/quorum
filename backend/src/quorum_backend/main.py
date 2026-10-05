@@ -515,6 +515,17 @@ class CreateApplicationRequest(BaseModel):
     deadline_iso: str | None = None
 
 
+class ScheduleInterviewRequest(BaseModel):
+    """`DEC-195` (product rebuild Block F, remainder) -- the real
+    request shape for `POST /interviews`, the first real write path
+    the `interviews` table has ever had. Same dedicated, structured
+    (never Gemini-extracted) pattern as `CreateApplicationRequest`."""
+
+    application_id: str
+    scheduled_at_iso: str | None = None
+    format: str | None = None
+
+
 class TokenPairResponse(BaseModel):
     access_token: str
     refresh_token: str
@@ -1426,6 +1437,50 @@ async def create_application_endpoint(
         raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
     except asyncpg.PostgresError as exc:
         raise HTTPException(status_code=502, detail="Couldn't create that application -- please try again.") from exc
+
+    return _quick_capture_result_to_dict(result)
+
+
+@app.post("/interviews")
+async def schedule_interview_endpoint(
+    body: ScheduleInterviewRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """`DEC-195` (product rebuild Block F, remainder) -- real, new. The
+    `interviews` table (migration `0001`) has never been read or
+    written by any code in this backend's history until this route.
+
+    `CREATE_INTERVIEW` is real `Stakes.S1`, so this executes the
+    moment Stage A clears it -- no separate human approval, the same
+    as `POST /applications`. On a genuine execution, `action_executor.
+    py`'s own `CREATE_INTERVIEW` branch also queues a real, async
+    `interview_prep_tasks` job (`features/retry_queue_drainer.py::
+    process_interview_prep_tasks_job()`), drained on the same real
+    5-minute `pg_cron` schedule `/internal/drain-retry-queue` already
+    runs on -- three real, individually Gate-reviewed prep tasks, not
+    a same-transaction write that would bypass that review."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    settings = get_settings()
+    critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
+    judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                result = await capture_action_from_extracted_args(
+                    conn,
+                    user_id=internal_user_id,
+                    args={"domain": "career", "operation": "schedule_interview", **body.model_dump()},
+                    critic_call=critic_call,
+                    judge_call=judge_call,
+                )
+    except QuickCaptureError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except InfrastructureFailure as exc:
+        raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
+    except asyncpg.PostgresError as exc:
+        raise HTTPException(status_code=502, detail="Couldn't schedule that interview -- please try again.") from exc
 
     return _quick_capture_result_to_dict(result)
 

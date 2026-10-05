@@ -31,7 +31,14 @@ class CareerPipelineScreen extends StatelessWidget {
   /// state).
   final void Function(CareerApplication application)? onTapApplication;
 
-  const CareerPipelineScreen({super.key, required this.applications, this.onTapApplication});
+  /// `DEC-195` (product rebuild Block F remainder) -- the real, first
+  /// write control on this screen beyond creating a new application.
+  /// Optional and additive, same honest-gating pattern as every other
+  /// real write in this app: the per-row "Schedule interview" action
+  /// only appears when this is genuinely supplied.
+  final void Function(CareerApplication application)? onScheduleInterview;
+
+  const CareerPipelineScreen({super.key, required this.applications, this.onTapApplication, this.onScheduleInterview});
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +53,12 @@ class CareerPipelineScreen extends StatelessWidget {
       padding: const EdgeInsets.all(QuorumSpacing.md),
       children: [
         for (final status in orderedKeys)
-          _StatusSection(status: status, applications: grouped[status]!, onTap: onTapApplication),
+          _StatusSection(
+            status: status,
+            applications: grouped[status]!,
+            onTap: onTapApplication,
+            onScheduleInterview: onScheduleInterview,
+          ),
       ],
     );
   }
@@ -56,8 +68,9 @@ class _StatusSection extends StatelessWidget {
   final String status;
   final List<CareerApplication> applications;
   final void Function(CareerApplication application)? onTap;
+  final void Function(CareerApplication application)? onScheduleInterview;
 
-  const _StatusSection({required this.status, required this.applications, this.onTap});
+  const _StatusSection({required this.status, required this.applications, this.onTap, this.onScheduleInterview});
 
   @override
   Widget build(BuildContext context) {
@@ -90,7 +103,20 @@ class _StatusSection extends StatelessWidget {
                 leading: QuorumIconBadge(icon: Icons.business_center, color: badgeColor),
                 title: Text(applications[i].company),
                 subtitle: applications[i].role == null ? null : Text(applications[i].role!),
-                trailing: onTap == null ? null : const Icon(Icons.chevron_right),
+                trailing: onTap == null && onScheduleInterview == null
+                    ? null
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (onScheduleInterview != null)
+                            IconButton(
+                              icon: const Icon(Icons.event_available_outlined),
+                              tooltip: 'Schedule interview',
+                              onPressed: () => onScheduleInterview!(applications[i]),
+                            ),
+                          if (onTap != null) const Icon(Icons.chevron_right),
+                        ],
+                      ),
                 onTap: onTap == null ? null : () => onTap!(applications[i]),
               ),
             ),

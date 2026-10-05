@@ -33,7 +33,11 @@ DOMAIN_TOOL_MAP: dict[str, set[str]] = {
     # a NEW row, never a mutation of an existing one -- deliberately
     # its own allowlist entry, matching `tasks.delete`'s own precedent
     # of not folding a genuinely distinct capability into an existing one.
-    "career": {"career.update_application_status", "career.create_application", "career.read"},
+    # `career.schedule_interview` (`DEC-195`): a real, new, genuinely
+    # distinct capability from this domain's other two -- scheduling an
+    # interview against an existing application, never a create/update
+    # of the application row itself.
+    "career": {"career.update_application_status", "career.create_application", "career.schedule_interview", "career.read"},
 }
 # All five domain agents now present -- the DOMAIN_TOOL_MAP is
 # feature-complete for the current architecture. Genuinely true as of

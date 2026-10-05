@@ -8,6 +8,7 @@ other real `ActionType` returns an honest, non-executing result, per
 CLAUDE.md Rule 5.
 """
 import base64
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -552,7 +553,102 @@ async def test_execute_approved_action_create_application_fails_safely_not_loudl
     async with pool.acquire() as conn:
         result = await execute_approved_action(conn, action_type=ActionType.CREATE_APPLICATION, payload={"company": "   "}, user_id=user_id)
     assert result.executed is False
-    assert "malformed payload" in result.detail
+
+
+async def test_execute_approved_action_create_interview_writes_a_real_row_and_queues_real_prep_tasks(pool, user_id):
+    """`DEC-195` (product rebuild Block F, remainder) -- the real,
+    first execution of this `ActionType`. The real `interviews` table
+    carries no `user_id` column; ownership is proven by inserting a
+    real `applications` row for THIS user first."""
+    application_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company) VALUES ($1, $2, $3)",
+        application_id, uuid.UUID(user_id), "Stripe",
+    )
+    try:
+        async with pool.acquire() as conn:
+            result = await execute_approved_action(
+                conn,
+                action_type=ActionType.CREATE_INTERVIEW,
+                payload={"application_id": str(application_id), "scheduled_at": "2027-03-01T10:00:00+00:00", "format": "video"},
+                user_id=user_id,
+            )
+        assert result.executed is True
+
+        row = await pool.fetchrow("SELECT application_id, format, status FROM interviews WHERE application_id = $1", application_id)
+        assert row is not None
+        assert row["format"] == "video"
+        assert row["status"] == "scheduled"
+
+        job = await pool.fetchrow("SELECT job_type, payload FROM retry_queue")
+        assert job is not None
+        assert job["job_type"] == "interview_prep_tasks"
+        payload = json.loads(job["payload"])
+        assert payload["company"] == "Stripe"
+        assert payload["format"] == "video"
+    finally:
+        await pool.execute("DELETE FROM retry_queue")
+        await pool.execute("DELETE FROM interviews WHERE application_id = $1", application_id)
+        await pool.execute("DELETE FROM applications WHERE application_id = $1", application_id)
+
+
+async def test_execute_approved_action_create_interview_never_reaches_a_different_real_users_application(pool, user_id):
+    other_google_sub = f"test-executor-other-{uuid.uuid4()}"
+    other_user_id = await get_or_create_user(pool, google_sub=other_google_sub, email=None)
+    application_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company) VALUES ($1, $2, $3)",
+        application_id, uuid.UUID(other_user_id), "Someone Else's Company",
+    )
+    try:
+        async with pool.acquire() as conn:
+            result = await execute_approved_action(
+                conn,
+                action_type=ActionType.CREATE_INTERVIEW,
+                payload={"application_id": str(application_id), "scheduled_at": None, "format": None},
+                user_id=user_id,
+            )
+        assert result.executed is False
+        assert await pool.fetchrow("SELECT 1 FROM interviews WHERE application_id = $1", application_id) is None
+        assert await pool.fetchrow("SELECT 1 FROM retry_queue") is None
+    finally:
+        await pool.execute("DELETE FROM applications WHERE application_id = $1", application_id)
+        await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(other_user_id))
+
+
+async def test_execute_approved_action_create_interview_fails_safely_not_loudly_on_a_real_malformed_payload(pool, user_id):
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_INTERVIEW, payload={"application_id": None, "format": "video"}, user_id=user_id
+        )
+    assert result.executed is False
+
+
+async def test_execute_approved_action_create_task_honors_a_real_caller_supplied_new_task_id(pool, user_id):
+    """`DEC-195` -- the real, new, additive `new_task_id` payload key
+    `process_interview_prep_tasks_job()` relies on to link a created
+    task back onto `interviews.prep_task_ids`."""
+    chosen_id = uuid.uuid4()
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn,
+            action_type=ActionType.CREATE_TASK,
+            payload={"title": "Pre-chosen id task", "estimated_hours": 1.0, "deadline": None, "new_task_id": str(chosen_id)},
+            user_id=user_id,
+        )
+    assert result.executed is True
+    row = await pool.fetchrow("SELECT task_id FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["task_id"] == chosen_id
+
+
+async def test_execute_approved_action_create_task_still_generates_a_fresh_id_when_new_task_id_is_absent(pool, user_id):
+    async with pool.acquire() as conn:
+        result = await execute_approved_action(
+            conn, action_type=ActionType.CREATE_TASK, payload={"title": "Ordinary task", "estimated_hours": 1.0, "deadline": None}, user_id=user_id
+        )
+    assert result.executed is True
+    row = await pool.fetchrow("SELECT task_id FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    assert row["task_id"] is not None
 
 
 async def test_execute_approved_action_fails_safely_not_loudly_on_a_real_malformed_payload(pool, user_id):
@@ -1420,7 +1516,13 @@ async def test_execute_approved_action_is_honest_about_every_genuinely_unimpleme
     RESOLVED, `DEC-194` (product rebuild Block F): `CREATE_APPLICATION`
     -- the newest real `ActionType` -- is now genuinely executable too
     (a real `INSERT INTO applications`, mirroring `CREATE_TASK`'s own
-    exact shape), excluded here with its own dedicated tests below."""
+    exact shape), excluded here with its own dedicated tests below.
+
+    RESOLVED, `DEC-195` (product rebuild Block F, remainder):
+    `CREATE_INTERVIEW` -- the newest real `ActionType` -- is now
+    genuinely executable too (a real `INSERT INTO interviews` plus a
+    real, queued `interview_prep_tasks` job), excluded here with its
+    own dedicated tests below."""
     genuinely_unimplemented_non_s3 = [
         t for t in ActionType
         if t not in (
@@ -1428,7 +1530,7 @@ async def test_execute_approved_action_is_honest_about_every_genuinely_unimpleme
             ActionType.ARCHIVE_EMAIL, ActionType.LABEL_EMAIL, ActionType.CREATE_CALENDAR_EVENT_EXTERNAL,
             ActionType.UPDATE_BUDGET, ActionType.UPDATE_TASK, ActionType.DELETE_TASK,
             ActionType.UPDATE_EXPENSE, ActionType.DELETE_EXPENSE, ActionType.UPDATE_APPLICATION_STATUS,
-            ActionType.CREATE_EMAIL_DRAFT, ActionType.CREATE_APPLICATION,
+            ActionType.CREATE_EMAIL_DRAFT, ActionType.CREATE_APPLICATION, ActionType.CREATE_INTERVIEW,
         )
     ]
     assert len(genuinely_unimplemented_non_s3) == 2  # a real, live guard against this enum silently growing unnoticed

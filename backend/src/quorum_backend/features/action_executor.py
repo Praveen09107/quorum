@@ -214,6 +214,7 @@ place.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import math
 import re
@@ -618,10 +619,18 @@ async def _execute_approved_action_unsafe(
 
     if action_type == ActionType.CREATE_TASK:
         deadline_iso = payload.get("deadline")
+        # `DEC-195` -- `new_task_id`, when a caller genuinely supplied
+        # one (`tasks_agent.py::build_task_proposal()`'s own new,
+        # additive param), is used as this row's real primary key
+        # instead of a freshly generated one. Every existing real
+        # caller leaves this `None`, so `uuid.uuid4()` remains the
+        # real, unchanged behavior for them.
+        new_task_id = payload.get("new_task_id")
+        task_id = uuid.UUID(new_task_id) if new_task_id else uuid.uuid4()
         await conn.execute(
             "INSERT INTO tasks (task_id, user_id, title, estimated_hours, deadline, status) "
             "VALUES ($1, $2, $3, $4, $5, 'open')",
-            uuid.uuid4(),
+            task_id,
             uuid.UUID(user_id),
             payload["title"],
             payload["estimated_hours"],
@@ -892,6 +901,58 @@ async def _execute_approved_action_unsafe(
             datetime.fromisoformat(deadline_iso) if deadline_iso else None,
         )
         return ExecutionResult(executed=True, detail="Real application row created.")
+
+    if action_type == ActionType.CREATE_INTERVIEW:
+        # `DEC-195` (product rebuild Block F, remainder) -- the real,
+        # first execution branch for the `interviews` table, unused by
+        # any code in this backend's history since migration `0001`.
+        # `interviews` carries no `user_id` column of its own (it
+        # belongs to `applications`, which does) -- ownership is
+        # checked here, directly, the same real "never trust the
+        # Judge-revision-immune identity field alone" discipline
+        # `UPDATE_APPLICATION_STATUS` above already holds itself to,
+        # just expressed as a real `SELECT` instead of a real `UPDATE
+        # ... WHERE user_id = ...` (there is no interview row yet to
+        # scope that way).
+        application_id = payload.get("application_id")
+        interview_format = payload.get("format")
+        if not application_id or (interview_format is not None and interview_format not in ("phone", "video", "onsite")):
+            raise ValueError(f"real CREATE_INTERVIEW payload must carry a real application_id and a real format (phone/video/onsite) or null, got {payload!r}")
+        owner_row = await conn.fetchrow(
+            "SELECT company FROM applications WHERE application_id = $1 AND user_id = $2",
+            uuid.UUID(application_id), uuid.UUID(user_id),
+        )
+        if owner_row is None:
+            raise ValueError(f"real CREATE_INTERVIEW references application_id={application_id!r}, which does not exist or is not owned by user_id={user_id!r}")
+        scheduled_at_iso = payload.get("scheduled_at")
+        interview_id = uuid.uuid4()
+        await conn.execute(
+            "INSERT INTO interviews (interview_id, application_id, scheduled_at, format) VALUES ($1, $2, $3, $4)",
+            interview_id,
+            uuid.UUID(application_id),
+            datetime.fromisoformat(scheduled_at_iso) if scheduled_at_iso else None,
+            interview_format,
+        )
+        # Real prep tasks are deliberately NOT created inline, in this
+        # same transaction -- each one earns its own real, independent
+        # Gate review (Stage A at minimum), matching this backend's own
+        # established `negotiation_downstream_action` precedent for
+        # "one domain action triggers real work in another domain,"
+        # never a same-transaction multi-row write that would bypass
+        # that review. Queued here; `retry_queue_drainer.py::process_
+        # interview_prep_tasks_job()` is the real, async consumer.
+        await conn.execute(
+            "INSERT INTO retry_queue (retry_id, job_type, payload) VALUES ($1, $2, $3::jsonb)",
+            uuid.uuid4(),
+            "interview_prep_tasks",
+            json.dumps({
+                "user_id": user_id,
+                "interview_id": str(interview_id),
+                "company": owner_row["company"],
+                "format": interview_format,
+            }),
+        )
+        return ExecutionResult(executed=True, detail="Real interview row created; real prep tasks queued.")
 
     if action_type == ActionType.SEND_EMAIL:
         if google_access_token is None:
