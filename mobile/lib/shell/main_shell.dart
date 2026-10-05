@@ -252,6 +252,16 @@ class MainShell extends ConsumerStatefulWidget {
   /// wall-clock seconds.
   final Duration healthCheckInterval;
 
+  /// `DEC-196` (product rebuild Block G) -- the real hand-off
+  /// `features/onboarding/onboarding_screen.dart`'s own "Get started"
+  /// button triggers: auto-opens the same real capture flow the FAB
+  /// already offers, on this shell's own first frame, so a brand-new
+  /// user's very next real moment in the app is the Gate pipeline
+  /// genuinely running -- never a fourth onboarding slide describing
+  /// it. `false` (the ordinary case) changes nothing: this shell opens
+  /// exactly as it always has.
+  final bool startWithCapture;
+
   const MainShell({
     super.key,
     this.fetchToday,
@@ -291,6 +301,7 @@ class MainShell extends ConsumerStatefulWidget {
     this.onSignOut,
     this.healthCheck,
     this.healthCheckInterval = const Duration(seconds: 20),
+    this.startWithCapture = false,
   });
 
   @override
@@ -332,6 +343,12 @@ class _MainShellState extends ConsumerState<MainShell> {
     final healthCheck = widget.healthCheck;
     if (healthCheck != null) {
       _healthCheckTimer = Timer.periodic(widget.healthCheckInterval, (_) => _pollHealth(healthCheck));
+    }
+
+    if (widget.startWithCapture) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _openCapture(context);
+      });
     }
   }
 
@@ -376,29 +393,35 @@ class _MainShellState extends ConsumerState<MainShell> {
   /// disappearing, so this shell is never worse off than before this
   /// block existed; and the FAB is hidden entirely (never
   /// disabled/greyed) only when NEITHER is configured.
-  Widget? _buildCaptureFab(BuildContext context) {
+  /// The one real place this shell actually opens the capture flow --
+  /// both the FAB's own `onPressed` and `startWithCapture`'s real
+  /// post-frame auto-open (`DEC-196`) call this, so the two can never
+  /// drift into opening two different real screens.
+  void _openCapture(BuildContext context) {
     if (widget.captureStream != null && widget.onApproveAction != null && widget.onRejectAction != null) {
-      return FloatingActionButton(
-        onPressed: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => GatePipelineScreen(
-              captureStream: widget.captureStream!,
-              onApprove: widget.onApproveAction!,
-              onReject: widget.onRejectAction!,
-              onCreateLocalEvent: widget.onCreateLocalEvent,
-            ),
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => GatePipelineScreen(
+            captureStream: widget.captureStream!,
+            onApprove: widget.onApproveAction!,
+            onReject: widget.onRejectAction!,
+            onCreateLocalEvent: widget.onCreateLocalEvent,
           ),
         ),
-        child: const Icon(Icons.bolt_rounded),
       );
+      return;
     }
     if (widget.captureTask != null) {
-      return FloatingActionButton(
-        onPressed: () => Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => QuickCaptureScreen(capture: widget.captureTask!)),
-        ),
-        child: const Icon(Icons.add),
-      );
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => QuickCaptureScreen(capture: widget.captureTask!)));
+    }
+  }
+
+  Widget? _buildCaptureFab(BuildContext context) {
+    if (widget.captureStream != null && widget.onApproveAction != null && widget.onRejectAction != null) {
+      return FloatingActionButton(onPressed: () => _openCapture(context), child: const Icon(Icons.bolt_rounded));
+    }
+    if (widget.captureTask != null) {
+      return FloatingActionButton(onPressed: () => _openCapture(context), child: const Icon(Icons.add));
     }
     return null;
   }

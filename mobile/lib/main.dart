@@ -120,6 +120,8 @@ import 'package:quorum_mobile/api/trust_api.dart';
 import 'package:quorum_mobile/api/create_application_api.dart';
 import 'package:quorum_mobile/api/schedule_interview_api.dart';
 import 'package:quorum_mobile/api/gate_showcase_api.dart';
+import 'package:quorum_mobile/features/onboarding/onboarding_screen.dart';
+import 'package:quorum_mobile/features/onboarding/onboarding_store.dart';
 import 'package:quorum_mobile/api/trust_digest_api.dart';
 import 'package:quorum_mobile/api/waiting_on_api.dart';
 import 'package:quorum_mobile/api/week_summary_api.dart';
@@ -147,7 +149,7 @@ class QuorumApp extends StatefulWidget {
   State<QuorumApp> createState() => _QuorumAppState();
 }
 
-enum _SessionState { checking, signedOut, signedIn }
+enum _SessionState { checking, signedOut, onboarding, signedIn }
 
 class _QuorumAppState extends State<QuorumApp> {
   // One real, shared, long-lived client for the whole app's session --
@@ -170,6 +172,14 @@ class _QuorumAppState extends State<QuorumApp> {
   // exactly.
   final QuorumDatabase _db = QuorumDatabase();
   late final CalendarSync _calendarSync;
+
+  // `DEC-196` (product rebuild Block G) -- real, on-device record of
+  // whether this account has ever completed onboarding, and whether
+  // the real `MainShell` about to open should auto-launch the capture
+  // flow (true only immediately after THIS session's own onboarding
+  // completion -- see `_proceedPastLogin()`).
+  final _onboardingStore = const OnboardingStore();
+  bool _startWithCapture = false;
 
   @override
   void initState() {
@@ -205,7 +215,36 @@ class _QuorumAppState extends State<QuorumApp> {
   Future<void> _checkForRealExistingSession() async {
     final token = await _authController.getValidAccessToken();
     if (!mounted) return;
-    setState(() => _sessionState = token != null ? _SessionState.signedIn : _SessionState.signedOut);
+    if (token == null) {
+      setState(() => _sessionState = _SessionState.signedOut);
+      return;
+    }
+    await _proceedPastLogin();
+  }
+
+  /// `DEC-196` -- the real, shared decision both `_checkForRealExisting
+  /// Session()` (an already-valid stored token) and `LoginScreen`'s own
+  /// `onSignedIn` (a brand-new real sign-in) route through: has this
+  /// real account ever completed onboarding? If not, show it now,
+  /// before `MainShell` -- if so, skip straight to `MainShell`, with
+  /// `_startWithCapture` correctly `false` (this is an ordinary return
+  /// visit, not the moment right after finishing onboarding).
+  Future<void> _proceedPastLogin() async {
+    final hasSeenOnboarding = await _onboardingStore.hasSeenOnboarding();
+    if (!mounted) return;
+    setState(() {
+      _startWithCapture = false;
+      _sessionState = hasSeenOnboarding ? _SessionState.signedIn : _SessionState.onboarding;
+    });
+  }
+
+  Future<void> _completeOnboarding() async {
+    await _onboardingStore.markSeen();
+    if (!mounted) return;
+    setState(() {
+      _startWithCapture = true;
+      _sessionState = _SessionState.signedIn;
+    });
   }
 
   Future<void> _handleSignOut() async {
@@ -261,9 +300,11 @@ class _QuorumAppState extends State<QuorumApp> {
         _SessionState.checking => const _SplashScreen(),
         _SessionState.signedOut => LoginScreen(
             authController: _authController,
-            onSignedIn: () => setState(() => _sessionState = _SessionState.signedIn),
+            onSignedIn: () => _proceedPastLogin(),
           ),
+        _SessionState.onboarding => OnboardingScreen(onDone: _completeOnboarding),
         _SessionState.signedIn => MainShell(
+            startWithCapture: _startWithCapture,
             fetchToday: createTodayFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,

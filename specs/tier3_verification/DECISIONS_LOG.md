@@ -4757,4 +4757,20 @@ Gemini quota consumed by this verification was checked before spending it (11 of
 
 ---
 
-*Next entry: DEC-196*
+## DEC-196: the ground-up product rebuild -- Block G (partial), real onboarding
+
+**Mobile-only, no backend change** -- the first block in this rebuild's whole history that genuinely needed none. Closes a real, standing gap: `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md` §12.5 specified onboarding and it had never been built -- a brand-new real user's very first screen, before this entry, was `LoginScreen`, with zero explanation of what the five agents do or why the Gate exists.
+
+**Three real, swipeable glass cards** (`features/onboarding/onboarding_screen.dart`, new) over the same real ambient background every other dark-theme screen already uses -- "Five agents work on your behalf" (showing all five real `AgentBadge`s, not a description), "A Gate verifies every one of them," "Anything irreversible always waits for you." `flutter_animate` -- a real, resolved dependency since an earlier block, confirmed never actually used anywhere in this codebase until this entry -- provides the real fade/slide entry on each card.
+
+**The real point, per the plan's own words ("show, don't tell"):** "Get started" on the last card doesn't land on a fourth slide or the plain Today screen -- it hands off directly into the real capture flow, so the first thing a genuinely new user ever does is watch the Gate pipeline run for real. `MainShell` gained a real `startWithCapture` flag (default `false`, every existing real caller unaffected) that auto-opens the identical real capture screen the FAB already offers, via a real post-frame callback -- the FAB's own `onPressed` and this auto-open now both call one shared `_openCapture()` method, so the two paths can never silently drift apart.
+
+**`OnboardingStore`** (new) -- real, on-device, per-account "has this user ever completed onboarding" persistence. **A real, deliberate choice, not a default:** backed by `flutter_secure_storage` (already a direct, already-building dependency) rather than adding `shared_preferences` -- confirmed directly that it does not exist anywhere in `pubspec.lock`, even transitively, before deciding, matching this project's own standing, disclosed caution (`main.dart`'s own header comment) that a new package carrying native Android build config is a real, previously-realized toolchain risk on this exact project. A non-secret boolean living in Keystore-backed storage is harmless overkill, not a security concern.
+
+**Verification.** `flutter analyze` zero issues. `flutter test`: **800 passed** (up from 793 at the Block F checkpoint -- 7 new: 5 for the real onboarding carousel, 2 for `MainShell`'s new `startWithCapture` behavior). No backend tests apply -- confirmed directly that this entry touches zero backend files, not assumed from the absence of backend edits.
+
+**Not done, named rather than assumed:** `OnboardingStore` itself has no dedicated unit test, matching this codebase's own existing, standing precedent (`auth/token_store.dart` -- the sibling class this one's own docstring explicitly mirrors -- has never had one either, since exercising real `flutter_secure_storage` behavior needs platform-channel mocking this project has never invested in for this exact class). The rest of Block G (polish, full verification, demo rehearsal) is not started. Nothing from this block is deployed or witnessed on a real device -- unlike every other open item in that category, this one specifically CAN'T be meaningfully device-verified without a real device in hand regardless of the merge-blocked PRs, since onboarding's own real value (does it look and feel right) is exactly the kind of thing a local `flutter test` run cannot confirm.
+
+---
+
+*Next entry: DEC-197*

@@ -263,6 +263,7 @@ Future<WeekSummaryData> _fakeFetchWeekSummary() async {
 Widget _harness({
   Future<List<CalendarMirrorData>> Function()? fetchCalendarEvents,
   Future<TodayScreenData> Function()? fetchToday,
+  bool startWithCapture = false,
 }) {
   return ProviderScope(
     child: MaterialApp(
@@ -287,6 +288,7 @@ Widget _harness({
         fetchCalendarEvents: fetchCalendarEvents ?? _fakeFetchCalendarEvents,
         captureTask: _fakeCaptureTask,
         confirmDelete: () async => throw UnimplementedError(),
+        startWithCapture: startWithCapture,
       ),
     ),
   );
@@ -805,5 +807,19 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.add), findsOneWidget);
+  });
+
+  testWidgets('startWithCapture genuinely auto-opens the real capture flow on first frame, the real DEC-196 onboarding hand-off', (tester) async {
+    await tester.pumpWidget(_harness(startWithCapture: true));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Quick capture'), findsOneWidget);
+  });
+
+  testWidgets('startWithCapture false (the ordinary case) never auto-opens anything', (tester) async {
+    await tester.pumpWidget(_harness());
+    await tester.pumpAndSettle();
+
+    expect(find.text('Quick capture'), findsNothing);
   });
 }
