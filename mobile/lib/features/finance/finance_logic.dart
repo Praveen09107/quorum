@@ -75,3 +75,21 @@ List<DetectedSubscriptionData> sortByAmountDesc(List<DetectedSubscriptionData> s
   sorted.sort((a, b) => b.averageAmount.compareTo(a.averageAmount));
   return sorted;
 }
+
+/// REAL, NEW (the redesign's own real "Finance hub" work) -- backs
+/// `GET /finance/expenses` (`features/expenses.py`). A real, honest
+/// recent-activity record -- the actual `expenses` row, not the derived
+/// subscription pattern `DetectedSubscriptionData` above represents.
+class ExpenseData {
+  final String expenseId;
+  final String payee;
+  final double amount;
+  final DateTime occurredAt;
+
+  const ExpenseData({
+    required this.expenseId,
+    required this.payee,
+    required this.amount,
+    required this.occurredAt,
+  });
+}

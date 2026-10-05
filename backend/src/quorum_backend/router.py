@@ -108,6 +108,25 @@ STAKES_TABLE: dict[ActionType, Stakes] = {
     ActionType.UPDATE_APPLICATION_STATUS: Stakes.S2,
     ActionType.ARCHIVE_EMAIL: Stakes.S1,
     ActionType.LABEL_EMAIL: Stakes.S0,
+    # `DEC-191`. S1, matching `ARCHIVE_EMAIL`'s own real precedent for
+    # "a real Gmail-modifying call that is genuinely reversible" -- a
+    # draft sits in the user's own Gmail account until they act on it
+    # and can be deleted with zero external effect, categorically
+    # different from `SEND_EMAIL`'s real S3 irreversibility. Stage B
+    # never runs for S1 (`gate.orchestration.run_stage_b()`), so this
+    # action executes autonomously the moment Stage A clears it -- by
+    # design, per this block's own real product goal: making the agent
+    # VISIBLY work on its own, rather than sitting behind an approval
+    # that may never be given.
+    ActionType.CREATE_EMAIL_DRAFT: Stakes.S1,
+    # `DEC-194` (product rebuild Block F). `S1`, matching `CREATE_TASK`/
+    # `LOG_EXPENSE`'s own established precedent exactly: a fresh,
+    # additive create of a purely internal row, not a mutation of an
+    # existing one -- `UPDATE_APPLICATION_STATUS` above sits at `S2`
+    # for the opposite, already-reasoned reason. Stage B never runs for
+    # `S1` (`gate.orchestration.run_stage_b()`), so a real application
+    # is created the moment Stage A clears it, no separate approval.
+    ActionType.CREATE_APPLICATION: Stakes.S1,
 }
 
 

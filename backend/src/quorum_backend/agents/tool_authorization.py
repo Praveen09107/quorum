@@ -23,11 +23,17 @@ reimplementing authorize_tool_call itself.
 from __future__ import annotations
 
 DOMAIN_TOOL_MAP: dict[str, set[str]] = {
-    "email": {"gmail.send", "gmail.read", "gmail.archive", "gmail.label"},
+    "email": {"gmail.send", "gmail.read", "gmail.archive", "gmail.label", "gmail.draft"},
     "calendar": {"calendar.create_local", "calendar.create_external", "calendar.read"},
     "tasks": {"tasks.create", "tasks.update", "tasks.delete", "tasks.read"},
     "finance": {"finance.log_expense", "finance.update_expense", "finance.delete_expense", "finance.write_budget", "finance.read"},
-    "career": {"career.update_application_status", "career.read"},
+    # `career.create_application` (`DEC-194`, product rebuild Block F):
+    # a real, new, genuinely distinct capability from this domain's
+    # existing `.update_application_status` tool -- a fresh create of
+    # a NEW row, never a mutation of an existing one -- deliberately
+    # its own allowlist entry, matching `tasks.delete`'s own precedent
+    # of not folding a genuinely distinct capability into an existing one.
+    "career": {"career.update_application_status", "career.create_application", "career.read"},
 }
 # All five domain agents now present -- the DOMAIN_TOOL_MAP is
 # feature-complete for the current architecture. Genuinely true as of

@@ -309,3 +309,41 @@ async def test_search_covers_all_four_real_domains_and_caps_at_ten(pool, user_id
         await pool.execute("DELETE FROM expenses WHERE expense_id = $1", expense_id)
         await pool.execute("DELETE FROM applications WHERE application_id = $1", application_id)
         await pool.execute("DELETE FROM action_events WHERE proposal_id = $1", proposal_id)
+
+
+@_needs_real_key
+async def test_search_shows_a_real_human_readable_decision_text_never_the_raw_jargon_embedding_content(pool, user_id, api_key):
+    """Real, end-to-end regression test for the exact real, confirmed-
+    live bug found during this session's on-device redesign audit: a
+    real search result for a `decision`-type item showed raw jargon
+    (`"update_budget: caught_by_gate"`) verbatim. The real embedding
+    CONTENT (`_content_for_decision()`'s own raw string, still used for
+    ranking) is deliberately left alone -- this proves the real DISPLAY
+    `text` a user actually sees is now built fresh via `honesty_log.py`'s
+    own `describe_action()`, never that raw string."""
+    proposal_id = uuid.uuid4()
+    try:
+        await pool.execute(
+            """
+            INSERT INTO action_events (proposal_id, user_id, action_type, stakes, payload, gate_decision, outcome, trace_id)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
+            """,
+            proposal_id, uuid.UUID(user_id), "log_expense", "S1",
+            '{"payee": "A real distinctive search-test payee", "amount": 42.0}',
+            "approve", "caught_by_gate", f"test-search-decision-{proposal_id}",
+        )
+
+        results = await search(pool, user_id=user_id, query="A real distinctive search-test payee", api_key=api_key)
+
+        decision_results = [r for r in results if r.item_id == str(proposal_id)]
+        assert len(decision_results) == 1
+        text = decision_results[0].text
+        # The real, honest fix: a real, human-readable sentence built
+        # via `describe_action()`, with no raw jargon (the real
+        # `action_type`/`outcome` snake_case/colon shape) anywhere in
+        # it.
+        assert text == "Logged expense: A real distinctive search-test payee ($42.0)"
+        assert "log_expense" not in text
+        assert "caught_by_gate" not in text
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = $1", proposal_id)

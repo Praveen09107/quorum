@@ -13,6 +13,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 import pytest_asyncio
 
@@ -24,6 +25,7 @@ from quorum_backend.features.retry_queue_drainer import (
     available_hours_before_deadline,
     drain_due_jobs,
     map_verdict_to_outcome,
+    validate_and_build_application_proposal,
     validate_and_build_calendar_proposal,
     validate_and_build_finance_proposal,
     validate_and_build_task_proposal,
@@ -116,6 +118,31 @@ def test_map_verdict_to_outcome_a_genuine_approve_that_never_executed_stays_hone
     assert map_verdict_to_outcome(_verdict("approve", revision_count=1), executed=False) == (None, False)
 
 
+def test_map_verdict_to_outcome_a_genuinely_unknown_execution_is_never_confused_with_a_confirmed_non_execution():
+    """`DEC-191` (product rebuild Block C). `executed is None` -- a
+    real, genuine transport-level failure during `CREATE_EMAIL_DRAFT`'s
+    own new autonomous execution -- must be recorded as the real,
+    distinct `outcome_unknown` (migration `0020`) and marked RESOLVED,
+    never left indistinguishable from `escalate_to_human`'s own
+    genuinely different "still awaiting a human decision" `(None,
+    False)` shape, and never silently collapsed into a confirmed `False`
+    the way a bare `bool(None)` would.
+
+    This mirrors `action_approval.py::approve_pending_action()`'s own
+    already-established handling of the identical real
+    `ExecutionResult.executed is None` fact for its own, separate S3
+    approval path (`DEC-188`) -- this test is the proof that the
+    autonomous S1 path this function serves now honors the same real
+    discipline, closing a latent instance of the exact bug class a
+    CRITICAL-tier review already paid to find and fix once."""
+    assert map_verdict_to_outcome(_verdict("approve", revision_count=0), executed=None) == ("outcome_unknown", True)
+    assert map_verdict_to_outcome(_verdict("approve", revision_count=1), executed=None) == ("outcome_unknown", True)
+    # A real `bool(None)` collapse would have produced the UNRESOLVED
+    # shape instead -- asserted explicitly so this test fails loudly if
+    # the fix ever regresses back to that collapse.
+    assert map_verdict_to_outcome(_verdict("approve"), executed=None) != (None, False)
+
+
 def test_validate_and_build_finance_proposal_rejects_a_non_positive_amount():
     with pytest.raises(DownstreamTranslationError):
         validate_and_build_finance_proposal({"action": "log_expense", "amount": 0, "category": "food", "payee": None})
@@ -143,6 +170,46 @@ def test_validate_and_build_finance_proposal_rejects_a_real_null_amount_honestly
     stated) can equally, honestly return `amount: null`."""
     with pytest.raises(DownstreamTranslationError):
         validate_and_build_finance_proposal({"action": "log_expense", "amount": None, "category": "food", "payee": None})
+
+
+# --- `validate_and_build_application_proposal` (`DEC-194`, product
+# rebuild Block F) ---
+
+
+def test_validate_and_build_application_proposal_produces_the_real_action_type():
+    proposal = validate_and_build_application_proposal({"company": "Stripe"})
+    assert proposal.action_type == ActionType.CREATE_APPLICATION
+    assert proposal.payload["company"] == "Stripe"
+    assert proposal.payload["role"] is None
+    assert proposal.payload["deadline"] is None
+
+
+def test_validate_and_build_application_proposal_carries_role_and_parses_deadline():
+    proposal = validate_and_build_application_proposal(
+        {"company": "Stripe", "role": "Backend Engineer", "deadline_iso": "2027-03-01T00:00:00+00:00"}
+    )
+    assert proposal.payload["role"] == "Backend Engineer"
+    assert proposal.payload["deadline"] == "2027-03-01T00:00:00+00:00"
+
+
+def test_validate_and_build_application_proposal_rejects_an_empty_company():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_application_proposal({"company": "   "})
+
+
+def test_validate_and_build_application_proposal_rejects_a_non_string_company():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_application_proposal({"company": None})
+
+
+def test_validate_and_build_application_proposal_rejects_an_overlong_company():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_application_proposal({"company": "x" * 301})
+
+
+def test_validate_and_build_application_proposal_rejects_an_empty_role_when_present():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_application_proposal({"company": "Stripe", "role": "   "})
 
 
 def test_validate_and_build_task_proposal_rejects_non_positive_hours():
@@ -526,6 +593,99 @@ async def test_persist_gate_verdict_writes_real_findings_and_objections_matching
     assert objections[0]["category"] == "tone"
     assert objections[0]["signed_off"] is True
     assert objections[0]["evidence_ref"]["source_type"] == "budget"
+
+
+class _FakeDraftPostClient:
+    """A real, minimal `httpx.AsyncClient.post()` double, local to this
+    test module -- `test_action_executor.py` has its own, this file
+    needed its own real caller too (`persist_gate_verdict()` itself,
+    not `execute_approved_action()` directly)."""
+
+    def __init__(self, *, status_code: int = 200, body: dict | None = None):
+        self.status_code = status_code
+        self.body = body or {"id": "draft-1", "message": {"id": "msg-1"}}
+
+    async def post(self, url, json=None, headers=None):
+        return httpx.Response(self.status_code, json=self.body, request=httpx.Request("POST", url))
+
+
+class _FakeTimeoutPostClient:
+    async def post(self, url, json=None, headers=None):
+        raise httpx.ConnectTimeout("fake: connection timed out")
+
+
+async def test_persist_gate_verdict_an_autonomous_create_email_draft_persists_the_real_artifact(pool, user_id):
+    """`DEC-191` (product rebuild Block C), the real end-to-end proof
+    that `persist_gate_verdict()` -- not just `execute_approved_
+    action()` directly -- genuinely calls the real Gmail API for a
+    `CREATE_EMAIL_DRAFT` proposal and persists the real draft/message
+    id onto the `action_events` row, with NO `approved_by_user_id`
+    supplied at all: a real S1 action autonomously executing is
+    exactly the point of this action type existing."""
+    proposal = ActionProposal(action_type=ActionType.CREATE_EMAIL_DRAFT, payload={"to": "a@example.com", "body": "hi"})
+    verdict = GateVerdict(decision="approve", findings=[], objections=[], trace_id="test-trace-draft", revision_count=0)
+
+    async with pool.acquire() as conn, conn.transaction():
+        executed, artifact = await persist_gate_verdict(
+            conn,
+            proposal=proposal,
+            stakes=Stakes.S1,
+            verdict=verdict,
+            user_id=user_id,
+            google_access_token="fake-access-token",
+            http_client=_FakeDraftPostClient(),
+        )
+
+    assert executed is True
+    assert artifact == {"draft_id": "draft-1", "message_id": "msg-1"}
+
+    row = await pool.fetchrow(
+        "SELECT outcome, resolved_at, artifact FROM action_events WHERE proposal_id = $1", proposal.proposal_id
+    )
+    assert row["outcome"] == "approved_unchanged"
+    assert row["resolved_at"] is not None
+    assert json.loads(row["artifact"]) == {"draft_id": "draft-1", "message_id": "msg-1"}
+
+
+async def test_persist_gate_verdict_a_real_transport_failure_records_outcome_unknown_not_a_false_success_or_silence(pool, user_id):
+    """The real, live proof of the fix this session made: before it, a
+    genuine transport failure here (`executed=None` at the
+    `ExecutionResult` level) was collapsed via a bare `bool(None)` to
+    `False` before ever reaching `map_verdict_to_outcome()` -- which,
+    for a real `approve` with `executed=False`, leaves the row
+    UNRESOLVED (`outcome`/`resolved_at` both `NULL`), indistinguishable
+    from a real `escalate_to_human` still awaiting a human decision.
+    After the fix, this row is resolved immediately as the real,
+    distinct `outcome_unknown` -- genuinely different information, and
+    the one this project's own CLAUDE.md three-valued discipline
+    requires."""
+    proposal = ActionProposal(action_type=ActionType.CREATE_EMAIL_DRAFT, payload={"to": "a@example.com", "body": "hi"})
+    verdict = GateVerdict(decision="approve", findings=[], objections=[], trace_id="test-trace-unknown", revision_count=0)
+
+    async with pool.acquire() as conn, conn.transaction():
+        executed, artifact = await persist_gate_verdict(
+            conn,
+            proposal=proposal,
+            stakes=Stakes.S1,
+            verdict=verdict,
+            user_id=user_id,
+            google_access_token="fake-access-token",
+            http_client=_FakeTimeoutPostClient(),
+        )
+
+    # The function's own simplified return value: a genuinely unknown
+    # execution is not a CONFIRMED success, so this is honestly False.
+    assert executed is False
+    assert artifact is None
+
+    row = await pool.fetchrow(
+        "SELECT outcome, resolved_at FROM action_events WHERE proposal_id = $1", proposal.proposal_id
+    )
+    # The real fact that matters: resolved as `outcome_unknown`, NOT
+    # left as an unresolved NULL/NULL that would be indistinguishable
+    # from a real escalate_to_human still awaiting a human decision.
+    assert row["outcome"] == "outcome_unknown"
+    assert row["resolved_at"] is not None
 
 
 async def test_drain_due_jobs_processes_a_real_multi_domain_job_and_persists_one_action_event_per_domain(pool, user_id):

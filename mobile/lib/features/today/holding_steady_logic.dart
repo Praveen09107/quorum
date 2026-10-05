@@ -52,3 +52,44 @@ String touchpointHeadline(DayTouchpoint touchpoint) {
       return 'How did today go';
   }
 }
+
+/// REAL, NEW (the redesign's own real Today-header work) -- a genuine,
+/// ordinary time-of-day greeting for the new page-level header, reusing
+/// this file's own already-real, already-hand-verified hour boundaries
+/// rather than a second, parallel set. Deliberately plain ("Good
+/// morning", not a streak/score/comparative framing) -- the same no-
+/// gamification discipline this file's own header already documents for
+/// `touchpointHeadline()`.
+const List<String> _weekdayNames = [
+  'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+];
+const List<String> _monthNames = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/// REAL, NEW (the redesign's own real Today-header work) -- a real,
+/// hand-written date format ("Friday, October 3"), deliberately not the
+/// `intl` package: this project has no existing dependency on it
+/// (confirmed directly against `pubspec.yaml` before writing this), and
+/// the approved redesign plan's own stated preference is to hand-build
+/// small, well-understood pieces over adding a new package this close to
+/// a real demo. `DateTime.weekday`/`.month` are both real, documented
+/// 1-indexed values (`DateTime.monday == 1`, `DateTime.january == 1`) --
+/// the `-1` below is a deliberate, real index conversion, not a guess.
+String formatHeaderDate(DateTime now) {
+  final weekday = _weekdayNames[now.weekday - 1];
+  final month = _monthNames[now.month - 1];
+  return '$weekday, $month ${now.day}';
+}
+
+String greetingForTouchpoint(DayTouchpoint touchpoint) {
+  switch (touchpoint) {
+    case DayTouchpoint.morning:
+      return 'Good morning';
+    case DayTouchpoint.midday:
+      return 'Good afternoon';
+    case DayTouchpoint.evening:
+      return 'Good evening';
+  }
+}
