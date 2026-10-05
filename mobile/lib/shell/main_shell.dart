@@ -88,6 +88,8 @@ import 'package:quorum_mobile/api/health_api.dart';
 import 'package:quorum_mobile/api/task_status_api.dart';
 import 'package:quorum_mobile/api/week_summary_api.dart';
 import 'package:quorum_mobile/db/database.dart';
+import 'package:quorum_mobile/api/agents_api.dart';
+import 'package:quorum_mobile/features/agents/agents_index_screen.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
 import 'package:quorum_mobile/features/career_digest/career_digest_logic.dart';
@@ -142,6 +144,11 @@ typedef QuickCaptureFetcher = Future<QuickCaptureResultData> Function(String tex
 
 class MainShell extends ConsumerStatefulWidget {
   final TodayDataFetcher? fetchToday;
+
+  /// `DEC-192` (product rebuild Block D). Optional, matching every
+  /// sibling fetcher's own honest gating -- when absent, the Agents
+  /// tab shows a real, honest error state rather than fabricated data.
+  final AgentsFetcher? fetchAgents;
   final HonestyFeedFetcher? fetchHonestyFeed;
   final TrustFetcher? fetchTrust;
   final TrustDigestFetcher? fetchTrustDigest;
@@ -239,6 +246,7 @@ class MainShell extends ConsumerStatefulWidget {
   const MainShell({
     super.key,
     this.fetchToday,
+    this.fetchAgents,
     this.fetchHonestyFeed,
     this.fetchTrust,
     this.fetchTrustDigest,
@@ -282,8 +290,20 @@ class _MainShellState extends ConsumerState<MainShell> {
   OutageState _outageState = OutageState.initial;
   Timer? _healthCheckTimer;
 
+  // `DEC-192` (product rebuild Block D): `Agents` is added as a REAL,
+  // deliberately scoped-down version of this rebuild's own planned
+  // four-tab structure (Today/Agents/Gate/Activity) -- a full
+  // navigation rebuild (folding Trust into a new Gate tab, moving You
+  // behind the avatar, renaming Log to Activity) is real, larger,
+  // genuinely separate scope than this single addition, and risking a
+  // full IA rip-and-replace on this shell's own large, already-tested
+  // surface was judged the wrong trade against the real time available
+  // this session. Named here as a disclosed, deliberate interim state,
+  // not a silent partial implementation: five tabs today, the planned
+  // four-tab consolidation is real, explicit follow-on work.
   static const List<_QuorumTab> _tabs = [
     _QuorumTab(label: 'Today', icon: Icons.today_outlined, selectedIcon: Icons.today),
+    _QuorumTab(label: 'Agents', icon: Icons.smart_toy_outlined, selectedIcon: Icons.smart_toy),
     _QuorumTab(label: 'Log', icon: Icons.history_outlined, selectedIcon: Icons.history),
     _QuorumTab(label: 'Trust', icon: Icons.verified_outlined, selectedIcon: Icons.verified),
     _QuorumTab(label: 'You', icon: Icons.person_outline, selectedIcon: Icons.person),
@@ -387,10 +407,14 @@ class _MainShellState extends ConsumerState<MainShell> {
           chooseNegotiation: widget.chooseNegotiation,
         );
       case 1:
-        return _HonestyLogTab(fetch: widget.fetchHonestyFeed);
+        final fetchAgents = widget.fetchAgents;
+        if (fetchAgents == null) return const _NotConnectedState(label: 'Agents');
+        return AgentsIndexScreen(fetch: fetchAgents);
       case 2:
-        return _TrustTab(fetch: widget.fetchTrust, fetchDigest: widget.fetchTrustDigest);
+        return _HonestyLogTab(fetch: widget.fetchHonestyFeed);
       case 3:
+        return _TrustTab(fetch: widget.fetchTrust, fetchDigest: widget.fetchTrustDigest);
+      case 4:
         return YouScreen(
           onConfirmDelete: widget.confirmDelete ?? _unconfiguredDeletion,
           onOpenMemories: widget.fetchMemories,

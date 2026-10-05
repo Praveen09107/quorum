@@ -3440,3 +3440,49 @@ def test_quick_capture_result_to_dict_returns_json_serializable_output():
         QuickCaptureResult(executed=True, decision="approve", stakes="S0", domain="tasks", operation="create")
     )
     json.dumps(serialized)  # must not raise
+
+
+# --- GET /agents (`DEC-192`, product rebuild Block D) ---
+
+
+def test_agents_endpoint_requires_real_auth():
+    with TestClient(app) as client:
+        response = client.get("/agents")
+    assert response.status_code == 401
+
+
+async def test_agents_endpoint_returns_all_five_real_domain_agents_even_with_zero_activity(pool, provisioned_users):
+    headers, _ = await _provisioned_auth_header(pool, provisioned_users)
+    with TestClient(app) as client:
+        response = client.get("/agents", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    domains = {agent["domain"] for agent in body["agents"]}
+    assert domains == {"email", "calendar", "tasks", "finance", "career"}
+    # A genuinely inactive agent renders as an honest zero, never absent.
+    for agent in body["agents"]:
+        assert agent["lifetime_actions"] == 0
+        assert agent["last_activity"] is None
+        assert agent["success_rate"] is None
+
+
+async def test_agents_endpoint_reflects_a_real_resolved_action(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)",
+        proposal_id, "create_task", "S1", "{}", "approve", "approved_unchanged",
+        str(proposal_id), uuid.UUID(internal_user_id), datetime.now(timezone.utc),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/agents", headers=headers)
+
+    body = response.json()
+    tasks = next(a for a in body["agents"] if a["domain"] == "tasks")
+    assert tasks["lifetime_actions"] == 1
+    assert tasks["success_count"] == 1
+    assert tasks["success_rate"] == 1.0
+    assert tasks["last_activity"] is not None

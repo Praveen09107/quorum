@@ -39,7 +39,7 @@ anything out... shown with EQUAL prominence, not buried"):
   else, applied here to the action-outcome level.
 
 The authoritative, machine-readable form of that partition is the
-`_SUCCESS_OUTCOMES`/`_FAILURE_OUTCOMES`/`_UNCERTAIN_OUTCOMES` frozensets
+`SUCCESS_OUTCOMES`/`FAILURE_OUTCOMES`/`UNCERTAIN_OUTCOMES` frozensets
 below; this prose exists to explain the reasoning, not to be a second
 source of truth that can drift from it. `DEC-189` added the last two
 values after finding that `DEC-188` had widened the CHECK constraint
@@ -158,8 +158,15 @@ def describe_action(action_type: str, payload: dict) -> str:
 # adjacent here, rather than inline in the branch conditions, is what
 # makes "did we cover every constraint value?" answerable by reading
 # twelve lines instead of tracing control flow.
-_SUCCESS_OUTCOMES = frozenset({"approved_unchanged"})
-_FAILURE_OUTCOMES = frozenset(
+#
+# Made public (`DEC-192`, dropped the leading underscore) -- the exact
+# same "make public for a second real reuse" precedent this module's
+# own `describe_action()` already set: `features/agent_telemetry.py`
+# needs the identical real partition for its own per-agent outcome
+# breakdown and reuses these sets directly rather than re-deriving a
+# second copy that could silently drift from this one.
+SUCCESS_OUTCOMES = frozenset({"approved_unchanged"})
+FAILURE_OUTCOMES = frozenset(
     {
         "caught_by_gate",
         "corrected_by_user",
@@ -174,7 +181,7 @@ _FAILURE_OUTCOMES = frozenset(
         "rejected_by_user",
     }
 )
-_UNCERTAIN_OUTCOMES = frozenset(
+UNCERTAIN_OUTCOMES = frozenset(
     {
         "uncertain_no_data",
         # `outcome_unknown` (migration `0020`, `DEC-188`): a transport
@@ -207,11 +214,11 @@ def build_honesty_feed(rows: list[tuple[str, datetime, str, str, dict]]) -> Hone
             outcome=outcome,
             description=describe_action(action_type, payload),
         )
-        if outcome in _SUCCESS_OUTCOMES:
+        if outcome in SUCCESS_OUTCOMES:
             successes.append(entry)
-        elif outcome in _FAILURE_OUTCOMES:
+        elif outcome in FAILURE_OUTCOMES:
             failures_and_catches.append(entry)
-        elif outcome in _UNCERTAIN_OUTCOMES:
+        elif outcome in UNCERTAIN_OUTCOMES:
             genuinely_uncertain.append(entry)
         else:
             # REAL, DELIBERATE REVERSAL, `DEC-189`: this branch used to
@@ -236,8 +243,8 @@ def build_honesty_feed(rows: list[tuple[str, datetime, str, str, dict]]) -> Hone
             raise ValueError(
                 f"Unrecognized action_events.outcome {outcome!r}. This is a "
                 f"closed, CHECK-constrained set: if a migration added a new "
-                f"value, add it to exactly one of _SUCCESS_OUTCOMES, "
-                f"_FAILURE_OUTCOMES or _UNCERTAIN_OUTCOMES in honesty_log.py."
+                f"value, add it to exactly one of SUCCESS_OUTCOMES, "
+                f"FAILURE_OUTCOMES or UNCERTAIN_OUTCOMES in honesty_log.py."
             )
 
     total = len(successes) + len(failures_and_catches)

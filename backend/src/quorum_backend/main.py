@@ -67,6 +67,7 @@ from quorum_backend.features.action_approval import (
     approve_pending_action,
     reject_pending_action,
 )
+from quorum_backend.features.agent_telemetry import REAL_DOMAIN_AGENTS, fetch_agent_stats
 from quorum_backend.features.career_digest import (
     fetch_company_digest,
     make_groq_compile_digest_call,
@@ -1342,6 +1343,42 @@ async def quick_capture_extracted_endpoint(
         raise HTTPException(status_code=502, detail="Couldn't turn that into a real action -- please try rephrasing it.") from exc
 
     return _quick_capture_result_to_dict(result)
+
+
+@app.get("/agents")
+async def agents_endpoint(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """REAL, NEW (`DEC-192`, product rebuild Block D) -- backs the
+    Agents index, the page this whole rebuild exists to make possible:
+    the five domain agents as first-class entities a real, signed-in
+    user can actually see, each with its own real lifetime track
+    record, not a static list of names.
+
+    Every number here is computed fresh from `action_events` on every
+    call -- nothing is cached or precomputed, matching this backend's
+    own established "the database is the only source of truth"
+    discipline. See `features/agent_telemetry.py` for the real,
+    exhaustive `ActionType` -> agent mapping and the real outcome
+    partition this reuses directly from `honesty_log.py`."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    stats = await fetch_agent_stats(pool, user_id=internal_user_id)
+    return {
+        "agents": [
+            {
+                "domain": agent_stats.domain,
+                "lifetime_actions": agent_stats.lifetime_actions,
+                "success_count": agent_stats.success_count,
+                "caught_count": agent_stats.caught_count,
+                "rejected_count": agent_stats.rejected_count,
+                "uncertain_count": agent_stats.uncertain_count,
+                "success_rate": agent_stats.success_rate,
+                "last_activity": agent_stats.last_activity.isoformat() if agent_stats.last_activity else None,
+            }
+            for agent_stats in (stats[domain] for domain in REAL_DOMAIN_AGENTS)
+        ],
+    }
 
 
 @app.get("/predictive_risk")

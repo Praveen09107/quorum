@@ -100,6 +100,7 @@ import 'package:http/http.dart' as http;
 
 import 'package:quorum_mobile/api/account_api.dart';
 import 'package:quorum_mobile/api/action_approval_api.dart';
+import 'package:quorum_mobile/api/agents_api.dart';
 import 'package:quorum_mobile/api/capture_stream_api.dart';
 import 'package:quorum_mobile/api/career_digest_api.dart';
 import 'package:quorum_mobile/api/career_pipeline_api.dart';
@@ -348,6 +349,11 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             fetchHonestyFeed: createHonestyLogFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-192` (product rebuild Block D) -- the Agents tab.
+            fetchAgents: createAgentsFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
