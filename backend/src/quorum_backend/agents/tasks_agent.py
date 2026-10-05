@@ -30,10 +30,22 @@ def build_task_proposal(
     estimated_hours: float,
     deadline: datetime | None = None,
     existing_task_id: str | None = None,
+    new_task_id: str | None = None,
 ) -> ActionProposal:
     """create vs. update, based on whether an existing task is actually
     referenced -- existing_task_id present or absent, not inferred from
-    anything fuzzier."""
+    anything fuzzier.
+
+    `new_task_id` (`DEC-195`, product rebuild Block F remainder) --
+    real, new, additive: every existing real caller leaves this `None`
+    (unchanged real behavior, `action_executor.py`'s own `CREATE_TASK`
+    branch generates a fresh id itself in that case). Exists for a
+    real, new caller that genuinely needs to know the created row's own
+    id ahead of execution -- `features/retry_queue_drainer.py::
+    process_interview_prep_tasks_job()`, which must write each real
+    created task's id back onto `interviews.prep_task_ids` -- without
+    reopening `CREATE_TASK`'s own established "no artifact returned"
+    precedent for every other real caller that has never needed this."""
     if existing_task_id is not None:
         authorize_tool_call("tasks.update", calling_agent_domain="tasks")
         action_type = ActionType.UPDATE_TASK
@@ -48,6 +60,7 @@ def build_task_proposal(
             "estimated_hours": estimated_hours,
             "deadline": deadline.isoformat() if deadline else None,
             "existing_task_id": existing_task_id,
+            "new_task_id": new_task_id,
         },
     )
 

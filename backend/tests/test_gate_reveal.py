@@ -96,6 +96,25 @@ async def test_fetch_gate_reveal_an_s2_row_with_empty_objections_still_reports_i
     assert bundle.objections == []
 
 
+async def test_fetch_gate_reveal_returns_the_real_payload_the_approve_button_would_actually_execute(pool, user_id):
+    """REAL, DISCLOSED FIX (CRITICAL-tier cross-model review of
+    `features/action_approval.py`, HIGH-3): before this, a real human
+    could tap Approve on a pending `SEND_EMAIL`/`CREATE_CALENDAR_EVENT_
+    EXTERNAL` row without this bundle ever surfacing the real recipient/
+    subject/body/invitee the Gate was about to act on -- meeting "S3
+    requires human approval" in form only. This proves the real,
+    already-stored `action_events.payload` -- the exact payload `POST
+    /actions/{id}/approve` would execute -- now comes back verbatim, not
+    re-shaped or dropped."""
+    proposal_id = uuid.uuid4()
+    await _insert_action_event(pool, proposal_id=proposal_id, user_id=user_id)
+
+    bundle = await fetch_gate_reveal(pool, user_id=user_id, proposal_id=str(proposal_id))
+
+    assert bundle is not None
+    assert bundle.payload == {"title": "A real task"}
+
+
 async def test_fetch_gate_reveal_returns_none_for_a_real_nonexistent_proposal(pool, user_id):
     bundle = await fetch_gate_reveal(pool, user_id=user_id, proposal_id=str(uuid.uuid4()))
     assert bundle is None
