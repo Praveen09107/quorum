@@ -13,21 +13,29 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 import pytest_asyncio
 
 from quorum_backend.auth.user_provisioning import get_or_create_user
 from quorum_backend.core import db
 from quorum_backend.features.retry_queue_drainer import (
+    _email_recipient_check,
+    _is_known_email_contact,
     _mark_job_failed,
     persist_gate_verdict,
     available_hours_before_deadline,
+    build_stage_a_checks_for_domain,
     drain_due_jobs,
     map_verdict_to_outcome,
+    process_interview_prep_tasks_job,
+    validate_and_build_application_proposal,
     validate_and_build_calendar_proposal,
     validate_and_build_finance_proposal,
+    validate_and_build_interview_proposal,
     validate_and_build_task_proposal,
 )
+from quorum_backend.features.waiting_on import record_sent_message
 from quorum_backend.gate.schemas import (
     ActionProposal,
     ActionType,
@@ -58,6 +66,9 @@ async def user_id(pool):
     # DEC-128: real execution now genuinely writes real expenses rows
     # for a real, approved log_expense verdict -- cleaned up here too.
     await pool.execute("DELETE FROM expenses WHERE user_id = $1", uuid.UUID(uid))
+    # `DEC-202`: real sent-message history is now a real Stage A input
+    # (`RecipientCheck`) -- cleaned up here too.
+    await pool.execute("DELETE FROM sent_messages WHERE user_id = $1", uuid.UUID(uid))
     await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(uid))
 
 
@@ -116,6 +127,31 @@ def test_map_verdict_to_outcome_a_genuine_approve_that_never_executed_stays_hone
     assert map_verdict_to_outcome(_verdict("approve", revision_count=1), executed=False) == (None, False)
 
 
+def test_map_verdict_to_outcome_a_genuinely_unknown_execution_is_never_confused_with_a_confirmed_non_execution():
+    """`DEC-191` (product rebuild Block C). `executed is None` -- a
+    real, genuine transport-level failure during `CREATE_EMAIL_DRAFT`'s
+    own new autonomous execution -- must be recorded as the real,
+    distinct `outcome_unknown` (migration `0020`) and marked RESOLVED,
+    never left indistinguishable from `escalate_to_human`'s own
+    genuinely different "still awaiting a human decision" `(None,
+    False)` shape, and never silently collapsed into a confirmed `False`
+    the way a bare `bool(None)` would.
+
+    This mirrors `action_approval.py::approve_pending_action()`'s own
+    already-established handling of the identical real
+    `ExecutionResult.executed is None` fact for its own, separate S3
+    approval path (`DEC-188`) -- this test is the proof that the
+    autonomous S1 path this function serves now honors the same real
+    discipline, closing a latent instance of the exact bug class a
+    CRITICAL-tier review already paid to find and fix once."""
+    assert map_verdict_to_outcome(_verdict("approve", revision_count=0), executed=None) == ("outcome_unknown", True)
+    assert map_verdict_to_outcome(_verdict("approve", revision_count=1), executed=None) == ("outcome_unknown", True)
+    # A real `bool(None)` collapse would have produced the UNRESOLVED
+    # shape instead -- asserted explicitly so this test fails loudly if
+    # the fix ever regresses back to that collapse.
+    assert map_verdict_to_outcome(_verdict("approve"), executed=None) != (None, False)
+
+
 def test_validate_and_build_finance_proposal_rejects_a_non_positive_amount():
     with pytest.raises(DownstreamTranslationError):
         validate_and_build_finance_proposal({"action": "log_expense", "amount": 0, "category": "food", "payee": None})
@@ -143,6 +179,76 @@ def test_validate_and_build_finance_proposal_rejects_a_real_null_amount_honestly
     stated) can equally, honestly return `amount: null`."""
     with pytest.raises(DownstreamTranslationError):
         validate_and_build_finance_proposal({"action": "log_expense", "amount": None, "category": "food", "payee": None})
+
+
+# --- `validate_and_build_application_proposal` (`DEC-194`, product
+# rebuild Block F) ---
+
+
+def test_validate_and_build_application_proposal_produces_the_real_action_type():
+    proposal = validate_and_build_application_proposal({"company": "Stripe"})
+    assert proposal.action_type == ActionType.CREATE_APPLICATION
+    assert proposal.payload["company"] == "Stripe"
+    assert proposal.payload["role"] is None
+    assert proposal.payload["deadline"] is None
+
+
+def test_validate_and_build_application_proposal_carries_role_and_parses_deadline():
+    proposal = validate_and_build_application_proposal(
+        {"company": "Stripe", "role": "Backend Engineer", "deadline_iso": "2027-03-01T00:00:00+00:00"}
+    )
+    assert proposal.payload["role"] == "Backend Engineer"
+    assert proposal.payload["deadline"] == "2027-03-01T00:00:00+00:00"
+
+
+def test_validate_and_build_application_proposal_rejects_an_empty_company():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_application_proposal({"company": "   "})
+
+
+def test_validate_and_build_application_proposal_rejects_a_non_string_company():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_application_proposal({"company": None})
+
+
+def test_validate_and_build_application_proposal_rejects_an_overlong_company():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_application_proposal({"company": "x" * 301})
+
+
+def test_validate_and_build_application_proposal_rejects_an_empty_role_when_present():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_application_proposal({"company": "Stripe", "role": "   "})
+
+
+# --- `validate_and_build_interview_proposal` (`DEC-195`, product
+# rebuild Block F remainder) ---
+
+
+def test_validate_and_build_interview_proposal_produces_the_real_action_type():
+    proposal = validate_and_build_interview_proposal({"application_id": "app_1"})
+    assert proposal.action_type == ActionType.CREATE_INTERVIEW
+    assert proposal.payload["application_id"] == "app_1"
+    assert proposal.payload["scheduled_at"] is None
+    assert proposal.payload["format"] is None
+
+
+def test_validate_and_build_interview_proposal_parses_a_real_scheduled_at_and_keeps_format():
+    proposal = validate_and_build_interview_proposal(
+        {"application_id": "app_1", "scheduled_at_iso": "2027-03-01T10:00:00+00:00", "format": "video"}
+    )
+    assert proposal.payload["scheduled_at"] == "2027-03-01T10:00:00+00:00"
+    assert proposal.payload["format"] == "video"
+
+
+def test_validate_and_build_interview_proposal_rejects_an_empty_application_id():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_interview_proposal({"application_id": "   "})
+
+
+def test_validate_and_build_interview_proposal_rejects_an_unrecognized_format():
+    with pytest.raises(DownstreamTranslationError):
+        validate_and_build_interview_proposal({"application_id": "app_1", "format": "carrier_pigeon"})
 
 
 def test_validate_and_build_task_proposal_rejects_non_positive_hours():
@@ -528,6 +634,99 @@ async def test_persist_gate_verdict_writes_real_findings_and_objections_matching
     assert objections[0]["evidence_ref"]["source_type"] == "budget"
 
 
+class _FakeDraftPostClient:
+    """A real, minimal `httpx.AsyncClient.post()` double, local to this
+    test module -- `test_action_executor.py` has its own, this file
+    needed its own real caller too (`persist_gate_verdict()` itself,
+    not `execute_approved_action()` directly)."""
+
+    def __init__(self, *, status_code: int = 200, body: dict | None = None):
+        self.status_code = status_code
+        self.body = body or {"id": "draft-1", "message": {"id": "msg-1"}}
+
+    async def post(self, url, json=None, headers=None):
+        return httpx.Response(self.status_code, json=self.body, request=httpx.Request("POST", url))
+
+
+class _FakeTimeoutPostClient:
+    async def post(self, url, json=None, headers=None):
+        raise httpx.ConnectTimeout("fake: connection timed out")
+
+
+async def test_persist_gate_verdict_an_autonomous_create_email_draft_persists_the_real_artifact(pool, user_id):
+    """`DEC-191` (product rebuild Block C), the real end-to-end proof
+    that `persist_gate_verdict()` -- not just `execute_approved_
+    action()` directly -- genuinely calls the real Gmail API for a
+    `CREATE_EMAIL_DRAFT` proposal and persists the real draft/message
+    id onto the `action_events` row, with NO `approved_by_user_id`
+    supplied at all: a real S1 action autonomously executing is
+    exactly the point of this action type existing."""
+    proposal = ActionProposal(action_type=ActionType.CREATE_EMAIL_DRAFT, payload={"to": "a@example.com", "body": "hi"})
+    verdict = GateVerdict(decision="approve", findings=[], objections=[], trace_id="test-trace-draft", revision_count=0)
+
+    async with pool.acquire() as conn, conn.transaction():
+        executed, artifact = await persist_gate_verdict(
+            conn,
+            proposal=proposal,
+            stakes=Stakes.S1,
+            verdict=verdict,
+            user_id=user_id,
+            google_access_token="fake-access-token",
+            http_client=_FakeDraftPostClient(),
+        )
+
+    assert executed is True
+    assert artifact == {"draft_id": "draft-1", "message_id": "msg-1"}
+
+    row = await pool.fetchrow(
+        "SELECT outcome, resolved_at, artifact FROM action_events WHERE proposal_id = $1", proposal.proposal_id
+    )
+    assert row["outcome"] == "approved_unchanged"
+    assert row["resolved_at"] is not None
+    assert json.loads(row["artifact"]) == {"draft_id": "draft-1", "message_id": "msg-1"}
+
+
+async def test_persist_gate_verdict_a_real_transport_failure_records_outcome_unknown_not_a_false_success_or_silence(pool, user_id):
+    """The real, live proof of the fix this session made: before it, a
+    genuine transport failure here (`executed=None` at the
+    `ExecutionResult` level) was collapsed via a bare `bool(None)` to
+    `False` before ever reaching `map_verdict_to_outcome()` -- which,
+    for a real `approve` with `executed=False`, leaves the row
+    UNRESOLVED (`outcome`/`resolved_at` both `NULL`), indistinguishable
+    from a real `escalate_to_human` still awaiting a human decision.
+    After the fix, this row is resolved immediately as the real,
+    distinct `outcome_unknown` -- genuinely different information, and
+    the one this project's own CLAUDE.md three-valued discipline
+    requires."""
+    proposal = ActionProposal(action_type=ActionType.CREATE_EMAIL_DRAFT, payload={"to": "a@example.com", "body": "hi"})
+    verdict = GateVerdict(decision="approve", findings=[], objections=[], trace_id="test-trace-unknown", revision_count=0)
+
+    async with pool.acquire() as conn, conn.transaction():
+        executed, artifact = await persist_gate_verdict(
+            conn,
+            proposal=proposal,
+            stakes=Stakes.S1,
+            verdict=verdict,
+            user_id=user_id,
+            google_access_token="fake-access-token",
+            http_client=_FakeTimeoutPostClient(),
+        )
+
+    # The function's own simplified return value: a genuinely unknown
+    # execution is not a CONFIRMED success, so this is honestly False.
+    assert executed is False
+    assert artifact is None
+
+    row = await pool.fetchrow(
+        "SELECT outcome, resolved_at FROM action_events WHERE proposal_id = $1", proposal.proposal_id
+    )
+    # The real fact that matters: resolved as `outcome_unknown`, NOT
+    # left as an unresolved NULL/NULL that would be indistinguishable
+    # from a real escalate_to_human still awaiting a human decision.
+    assert row["outcome"] == "outcome_unknown"
+    assert row["resolved_at"] is not None
+
+
 async def test_drain_due_jobs_processes_a_real_multi_domain_job_and_persists_one_action_event_per_domain(pool, user_id):
     await _seed_job(pool, user_id=user_id, source_domains=["finance", "tasks"])
     translation_call = await _fake_translation_call_factory(
@@ -702,3 +901,207 @@ async def test_drain_due_jobs_deadline_conflict_check_genuinely_uses_real_commit
     event = await pool.fetchrow("SELECT gate_decision, outcome FROM action_events WHERE user_id = $1", uuid.UUID(user_id))
     assert event["gate_decision"] == "revise"
     assert event["outcome"] == "caught_by_gate"
+
+
+# --- `process_interview_prep_tasks_job` / the real `interview_prep_tasks`
+# drain dispatch (`DEC-195`, product rebuild Block F remainder) ---
+
+
+@pytest_asyncio.fixture
+async def application_id(pool, user_id):
+    app_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company) VALUES ($1, $2, $3)",
+        app_id, uuid.UUID(user_id), "Stripe",
+    )
+    yield str(app_id)
+    await pool.execute("DELETE FROM applications WHERE application_id = $1", app_id)
+
+
+@pytest_asyncio.fixture
+async def interview_id(pool, application_id):
+    interview_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO interviews (interview_id, application_id, format) VALUES ($1, $2, $3)",
+        interview_id, uuid.UUID(application_id), "video",
+    )
+    yield str(interview_id)
+    await pool.execute("DELETE FROM interviews WHERE interview_id = $1", interview_id)
+
+
+async def test_process_interview_prep_tasks_job_creates_three_real_approved_tasks_and_links_them(pool, user_id, interview_id):
+    async with pool.acquire() as conn:
+        produced, executed = await process_interview_prep_tasks_job(
+            conn,
+            {"user_id": user_id, "interview_id": interview_id, "company": "Stripe", "format": "video"},
+            critic_call=_fake_critic_call,
+            judge_call=_fake_judge_approve,
+        )
+    assert (produced, executed) == (3, 3)
+
+    tasks = await pool.fetch("SELECT task_id, title FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    assert len(tasks) == 3
+    assert any("Stripe" in t["title"] for t in tasks)
+    assert any("video" in t["title"] for t in tasks)
+
+    row = await pool.fetchrow("SELECT prep_task_ids FROM interviews WHERE interview_id = $1", uuid.UUID(interview_id))
+    real_task_ids = {t["task_id"] for t in tasks}
+    assert set(row["prep_task_ids"]) == real_task_ids
+
+
+async def test_process_interview_prep_tasks_job_each_real_prep_task_is_genuinely_stakes_s1_never_reaching_the_judge(pool, user_id, interview_id):
+    """`CREATE_TASK` is real `Stakes.S1` -- `gate.orchestration.run_
+    stage_b()`'s own structural rule means the real Judge (and Critic)
+    are NEVER invoked for it, so a genuine Gate "reject" is not a real,
+    reachable outcome for one of these prep tasks (Stage A here is
+    just `provenance_check`, hardcoded to always pass). What IS real
+    and worth proving: this new code path honors that same structural
+    guarantee, matching this project's own established "prove Stage
+    B's zero-invocation by call count" precedent (`DEC-191`) -- a
+    `judge_call` that raises if ever actually called must never fire."""
+    async def judge_should_not_be_called(proposal, findings, objections):
+        raise AssertionError("the real Judge must never be invoked for a Stakes.S1 CREATE_TASK proposal")
+
+    async def critic_should_not_be_called(proposal, findings):
+        raise AssertionError("the real Critic must never be invoked for a Stakes.S1 CREATE_TASK proposal")
+
+    async with pool.acquire() as conn:
+        produced, executed = await process_interview_prep_tasks_job(
+            conn,
+            {"user_id": user_id, "interview_id": interview_id, "company": "Stripe", "format": "video"},
+            critic_call=critic_should_not_be_called,
+            judge_call=judge_should_not_be_called,
+        )
+    assert (produced, executed) == (3, 3)
+
+
+async def test_process_interview_prep_tasks_job_handles_a_real_null_format_honestly(pool, user_id, interview_id):
+    async with pool.acquire() as conn:
+        produced, executed = await process_interview_prep_tasks_job(
+            conn,
+            {"user_id": user_id, "interview_id": interview_id, "company": "Stripe", "format": None},
+            critic_call=_fake_critic_call,
+            judge_call=_fake_judge_approve,
+        )
+    assert (produced, executed) == (3, 3)
+    titles = {t["title"] for t in await pool.fetch("SELECT title FROM tasks WHERE user_id = $1", uuid.UUID(user_id))}
+    assert any("common interview questions" in t for t in titles)  # no dangling "None " prefix
+
+
+async def test_drain_due_jobs_dispatches_a_real_interview_prep_tasks_job(pool, user_id, interview_id):
+    """The real, live proof that `drain_due_jobs()`'s own dispatch
+    actually routes this real `job_type` to the real processor above --
+    not just that the processor works when called directly."""
+    await pool.execute(
+        "INSERT INTO retry_queue (retry_id, job_type, payload) VALUES ($1, $2, $3::jsonb)",
+        uuid.uuid4(), "interview_prep_tasks",
+        json.dumps({"user_id": user_id, "interview_id": interview_id, "company": "Stripe", "format": "phone"}),
+    )
+
+    async def translation_call_never_needed(domain, description):
+        raise AssertionError("an interview_prep_tasks job must never call the real translation function")
+
+    result = await drain_due_jobs(
+        pool, translation_call=translation_call_never_needed, critic_call=_fake_critic_call, judge_call=_fake_judge_approve
+    )
+
+    assert result.jobs_succeeded == 1
+    assert result.jobs_failed == 0
+    assert result.downstream_actions_produced == 3
+    assert result.downstream_actions_executed == 3
+    assert await pool.fetchrow("SELECT 1 FROM retry_queue") is None
+    tasks = await pool.fetch("SELECT 1 FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
+    assert len(tasks) == 3
+
+
+# --- RecipientCheck wiring into the email domain (`DEC-202`) ---
+
+
+def test_email_recipient_check_a_known_contact_is_verified_true():
+    finding = _email_recipient_check("sarah@example.com", True)
+    assert finding.validator == "RecipientCheck"
+    assert finding.evidence_state == "verified_true"
+
+
+def test_email_recipient_check_an_unknown_recipient_is_downgraded_to_no_data_found_not_verified_false():
+    """The real, disclosed, Preethish-confirmed deviation from
+    `recipient_check()`'s own default severity for this one caller:
+    a hard `verified_false` would block every genuinely new, legitimate
+    first-time recipient, not just a hostile one -- downgraded here to
+    `no_data_found`, never a hard Stage A block."""
+    finding = _email_recipient_check("new-person@example.com", False)
+    assert finding.validator == "RecipientCheck"
+    assert finding.evidence_state == "no_data_found"
+    assert "flagged, not blocked" in finding.claim
+
+
+def test_email_recipient_check_no_recipient_at_all_is_honestly_no_data_found():
+    finding = _email_recipient_check(None, False)
+    assert finding.evidence_state == "no_data_found"
+
+
+async def test_is_known_email_contact_true_after_a_real_sent_message(pool, user_id):
+    await record_sent_message(
+        pool, user_id=user_id, message_id="m1", thread_id="t1", recipient="sarah@example.com",
+        subject="s", sent_at=datetime.now(timezone.utc),
+    )
+    assert await _is_known_email_contact(pool, user_id=user_id, email_address="sarah@example.com") is True
+    assert await _is_known_email_contact(pool, user_id=user_id, email_address="SARAH@EXAMPLE.COM") is True
+
+
+async def test_is_known_email_contact_false_for_a_genuinely_new_address(pool, user_id):
+    assert await _is_known_email_contact(pool, user_id=user_id, email_address="never-emailed@example.com") is False
+
+
+async def test_is_known_email_contact_correctly_parses_a_real_multi_recipient_header(pool, user_id):
+    """`sent_messages.recipient` is the real, raw Gmail `To` header,
+    which can genuinely name more than one address in a group thread
+    -- a bare substring/equality match on the whole header would miss
+    a real, known recipient named only alongside others."""
+    await record_sent_message(
+        pool, user_id=user_id, message_id="m1", thread_id="t1",
+        recipient="Sarah Jones <sarah@example.com>, Bob K <bob@example.com>",
+        subject="s", sent_at=datetime.now(timezone.utc),
+    )
+    assert await _is_known_email_contact(pool, user_id=user_id, email_address="bob@example.com") is True
+
+
+async def test_build_stage_a_checks_for_domain_email_includes_a_real_recipient_check(pool, user_id):
+    await record_sent_message(
+        pool, user_id=user_id, message_id="m1", thread_id="t1", recipient="sarah@example.com",
+        subject="s", sent_at=datetime.now(timezone.utc),
+    )
+    proposal = ActionProposal(action_type=ActionType.CREATE_EMAIL_DRAFT, payload={"to": "sarah@example.com", "body": "hi"})
+
+    checks = await build_stage_a_checks_for_domain(pool, domain="email", proposal=proposal, user_id=user_id)
+
+    assert len(checks) == 2
+    findings = [check(proposal) for check in checks]
+    validators = {f.validator for f in findings}
+    assert validators == {"ProvenanceCheck", "RecipientCheck"}
+    recipient_finding = next(f for f in findings if f.validator == "RecipientCheck")
+    assert recipient_finding.evidence_state == "verified_true"
+
+
+async def test_build_stage_a_checks_for_domain_email_a_genuinely_new_recipient_is_flagged_not_blocked(pool, user_id):
+    proposal = ActionProposal(action_type=ActionType.CREATE_EMAIL_DRAFT, payload={"to": "new-person@example.com", "body": "hi"})
+
+    checks = await build_stage_a_checks_for_domain(pool, domain="email", proposal=proposal, user_id=user_id)
+    findings = [check(proposal) for check in checks]
+
+    recipient_finding = next(f for f in findings if f.validator == "RecipientCheck")
+    assert recipient_finding.evidence_state == "no_data_found"
+
+
+async def test_build_stage_a_checks_for_domain_other_domains_are_genuinely_unaffected(pool, user_id):
+    """A real, direct regression guard: wiring `RecipientCheck` into
+    `email` must never add it (or any other new check) to a domain
+    that was never named -- `finance`/`calendar` stay exactly
+    `[provenance_check]`, matching this function's own pre-`DEC-202`
+    behavior byte for byte."""
+    proposal = ActionProposal(action_type=ActionType.UPDATE_BUDGET, payload={"amount": 1000, "category": "x"})
+
+    checks = await build_stage_a_checks_for_domain(pool, domain="finance", proposal=proposal, user_id=user_id)
+
+    assert len(checks) == 1
+    assert checks[0](proposal).validator == "ProvenanceCheck"

@@ -16,9 +16,22 @@
 // real, injected async fetcher, same deferred-HTTP-implementation
 // pattern as every other real/external boundary in this project; the
 // link only appears at all when a real fetcher is actually supplied.
+//
+// A second real link added (`DEC-193`, product rebuild Block E): Trust
+// -> the Gate showcase. This is the judge-facing proof surface the
+// original rebuild mandate's point #4 named explicitly ("a separate
+// Gate-workflow showcase page so that judges will understand it is real
+// working"). Trust is its real, disclosed home rather than a new tab --
+// it is already where this app's self-test/adversarial-catch-rate
+// results live, and `GET /gate/validators`/`GET /gate/stats` are a
+// direct extension of that same real question ("is the Gate actually
+// working"), matching `DEC-192`'s own precedent of extending an
+// existing, closely-related screen instead of a full IA rebuild.
 
 import 'package:flutter/material.dart';
 
+import 'package:quorum_mobile/features/gate_showcase/gate_showcase_logic.dart';
+import 'package:quorum_mobile/features/gate_showcase/gate_showcase_screen.dart';
 import 'package:quorum_mobile/features/trust/trust_logic.dart';
 import 'package:quorum_mobile/features/trust_digest/trust_digest_logic.dart';
 import 'package:quorum_mobile/features/trust_digest/trust_digest_screen.dart';
@@ -28,8 +41,16 @@ import 'package:quorum_mobile/theme/spacing.dart';
 class TrustScreen extends StatelessWidget {
   final TrustData trust;
   final Future<TrustDigestData> Function()? onOpenTrustDigest;
+  final Future<List<GateValidatorData>> Function()? fetchGateValidators;
+  final Future<GateStatsData> Function()? fetchGateStats;
 
-  const TrustScreen({super.key, required this.trust, this.onOpenTrustDigest});
+  const TrustScreen({
+    super.key,
+    required this.trust,
+    this.onOpenTrustDigest,
+    this.fetchGateValidators,
+    this.fetchGateStats,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -62,6 +83,25 @@ class TrustScreen extends StatelessWidget {
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => _TrustDigestLoader(fetch: onOpenTrustDigest!)),
+              ),
+            ),
+          ),
+        ],
+        if (fetchGateValidators != null && fetchGateStats != null) ...[
+          const SizedBox(height: QuorumSpacing.sm),
+          Card(
+            child: ListTile(
+              leading: QuorumIconBadge(icon: Icons.shield_outlined, color: colorScheme.primary),
+              title: const Text('How the Gate works'),
+              subtitle: const Text('The real validator roster and live stats, for the curious or the skeptical'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => GateShowcaseScreen(
+                    fetchValidators: fetchGateValidators!,
+                    fetchStats: fetchGateStats!,
+                  ),
+                ),
               ),
             ),
           ),

@@ -3,11 +3,15 @@ agent, the first genuinely branching graph, and the full, complete
 5-domain exhaustive authorization matrix proof."""
 import pytest
 
+from datetime import datetime, timezone
+
 from quorum_backend.agents.career_agent import (
     CareerAgentState,
     InvalidApplicationStatusError,
     _normalize_application_status,
     build_career_agent_graph,
+    build_create_application_proposal,
+    build_schedule_interview_proposal,
     build_status_update_proposal,
     make_compile_digest_node,
     make_update_status_node,
@@ -154,6 +158,49 @@ def test_both_node_factories_are_real_and_independently_callable():
     digest_node = make_compile_digest_node(_fake_digest_call)
     assert callable(update_node)
     assert callable(digest_node)
+
+
+# --- `build_create_application_proposal` (`DEC-194`, product rebuild
+# Block F) -- the real, first proposal builder for a NEW application row ---
+
+
+def test_build_create_application_proposal_produces_the_real_action_type():
+    proposal = build_create_application_proposal("Stripe")
+    assert proposal.action_type == ActionType.CREATE_APPLICATION
+
+
+def test_build_create_application_proposal_carries_company_role_and_deadline():
+    deadline = datetime(2027, 3, 1, tzinfo=timezone.utc)
+    proposal = build_create_application_proposal("Stripe", role="Backend Engineer", deadline=deadline)
+    assert proposal.payload == {
+        "company": "Stripe",
+        "role": "Backend Engineer",
+        "deadline": deadline.isoformat(),
+    }
+
+
+def test_build_create_application_proposal_defaults_role_and_deadline_to_none():
+    proposal = build_create_application_proposal("Stripe")
+    assert proposal.payload["role"] is None
+    assert proposal.payload["deadline"] is None
+
+
+# --- `build_schedule_interview_proposal` (`DEC-195`, product rebuild
+# Block F remainder) -- the real, first proposal builder for the
+# `interviews` table ---
+
+
+def test_build_schedule_interview_proposal_produces_the_real_action_type():
+    proposal = build_schedule_interview_proposal("app_1")
+    assert proposal.action_type == ActionType.CREATE_INTERVIEW
+    assert proposal.payload == {"application_id": "app_1", "scheduled_at": None, "format": None}
+
+
+def test_build_schedule_interview_proposal_carries_a_real_scheduled_at_and_format():
+    scheduled_at = datetime(2027, 3, 1, 10, 0, tzinfo=timezone.utc)
+    proposal = build_schedule_interview_proposal("app_1", scheduled_at=scheduled_at, format="video")
+    assert proposal.payload["scheduled_at"] == scheduled_at.isoformat()
+    assert proposal.payload["format"] == "video"
 
 
 def test_full_five_domain_authorization_matrix_holds():

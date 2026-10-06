@@ -36,7 +36,14 @@ import 'package:quorum_mobile/theme/spacing.dart';
 class HonestyLogScreen extends StatelessWidget {
   final HonestyFeedData feed;
 
-  const HonestyLogScreen({super.key, required this.feed});
+  /// `DEC-201` (product rebuild) -- the real drill-through into the
+  /// Decision Trace screen for the exact action a row describes.
+  /// Optional and additive, matching every other real tap-handler's
+  /// own honest gating: when absent, every row renders exactly as
+  /// before, non-interactive.
+  final void Function(LoggedActionData action)? onTapAction;
+
+  const HonestyLogScreen({super.key, required this.feed, this.onTapAction});
 
   @override
   Widget build(BuildContext context) {
@@ -50,9 +57,9 @@ class HonestyLogScreen extends StatelessWidget {
         const SizedBox(height: QuorumSpacing.md),
         // Every section below shares identical heading and card styling
         // -- deliberately, per the header comment above.
-        _Section(title: 'What went right', items: feed.successes),
-        _Section(title: 'What was caught or corrected', items: feed.failuresAndCatches),
-        _Section(title: 'Genuinely uncertain', items: feed.genuinelyUncertain),
+        _Section(title: 'What went right', items: feed.successes, onTapAction: onTapAction),
+        _Section(title: 'What was caught or corrected', items: feed.failuresAndCatches, onTapAction: onTapAction),
+        _Section(title: 'Genuinely uncertain', items: feed.genuinelyUncertain, onTapAction: onTapAction),
       ],
     );
   }
@@ -61,8 +68,9 @@ class HonestyLogScreen extends StatelessWidget {
 class _Section extends StatelessWidget {
   final String title;
   final List<LoggedActionData> items;
+  final void Function(LoggedActionData action)? onTapAction;
 
-  const _Section({required this.title, required this.items});
+  const _Section({required this.title, required this.items, this.onTapAction});
 
   @override
   Widget build(BuildContext context) {
@@ -84,6 +92,8 @@ class _Section extends StatelessWidget {
               leading: QuorumIconBadge(icon: _iconForOutcome(items[i].outcome), color: badgeColor),
               title: Text(items[i].description),
               subtitle: Text(outcomeLabel(items[i].outcome)),
+              trailing: onTapAction == null ? null : const Icon(Icons.chevron_right),
+              onTap: onTapAction == null ? null : () => onTapAction!(items[i]),
             ),
           ),
         ],

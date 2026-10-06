@@ -76,6 +76,10 @@ Future<GateRevealBundle> Function(String proposalId) createGateRevealFetcher({
         objections: rawObjections == null
             ? null
             : (rawObjections as List<dynamic>).map((raw) => _parseObjection(raw as Map<String, dynamic>)).toList(),
+        actionType: json['action_type'] as String,
+        gateDecision: json['gate_decision'] as String,
+        resolvedAt: json['resolved_at'] as String?,
+        payload: json['payload'] as Map<String, dynamic>,
       );
     } catch (e) {
       throw const ApiException('Quorum sent back something this app could not understand.');

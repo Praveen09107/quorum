@@ -94,17 +94,21 @@ import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from email.utils import getaddresses
 
 import asyncpg
+import httpx
 
 from quorum_backend.agents.calendar_agent import build_event_proposal
+from quorum_backend.agents.career_agent import build_create_application_proposal, build_schedule_interview_proposal
 from quorum_backend.agents.finance_agent import build_finance_proposal
 from quorum_backend.agents.tasks_agent import build_task_proposal
-from quorum_backend.features.action_executor import execute_approved_action
+from quorum_backend.features.action_executor import ExecutionResult, execute_approved_action
 from quorum_backend.features.today import TODAY_WORKING_HOURS_PER_DAY
 from quorum_backend.gate.orchestration import CriticCall, JudgeCall, StageACheck, review
-from quorum_backend.gate.schemas import ActionProposal, GateVerdict, Stakes
-from quorum_backend.gate.validators import deadline_conflict_check, provenance_check
+from quorum_backend.gate.schemas import ActionProposal, Finding, GateVerdict, Stakes
+from quorum_backend.gate.timeline import GateTimeline
+from quorum_backend.gate.validators import deadline_conflict_check, provenance_check, recipient_check
 from quorum_backend.negotiation.downstream_translation import (
     DownstreamTranslationCall,
     DownstreamTranslationError,
@@ -127,6 +131,10 @@ MAX_RETRY_ATTEMPTS = 5
 RETRY_BACKOFF_MINUTES = 10
 
 _NEGOTIATION_DOWNSTREAM_JOB_TYPE = "negotiation_downstream_action"
+# `DEC-195` (product rebuild Block F, remainder) -- the real, second
+# `job_type` this drainer has ever known how to process, enqueued by
+# `action_executor.py`'s own new `CREATE_INTERVIEW` branch.
+_INTERVIEW_PREP_TASKS_JOB_TYPE = "interview_prep_tasks"
 
 
 class DownstreamDrainError(Exception):
@@ -213,6 +221,75 @@ def available_hours_before_deadline(deadline: datetime, *, now: datetime | None 
     return whole_days * TODAY_WORKING_HOURS_PER_DAY
 
 
+async def _is_known_email_contact(conn: asyncpg.Connection, *, user_id: str, email_address: str) -> bool:
+    """Real, live check: has this user ever sent to this exact real
+    address before? `sent_messages.recipient` is the real, raw Gmail
+    `To` header (confirmed in `quick_capture.py`'s own top-of-file
+    docstring), which can genuinely name more than one real address in
+    a group thread -- `email.utils.getaddresses()` (stdlib, RFC 5322-
+    aware) parses every real address out of it correctly, the same
+    real, reviewed technique `quick_capture.py::_fetch_known_
+    recipients()` already established for the identical parsing
+    problem. Kept as an independent, self-contained copy here rather
+    than a cross-module import of that function: `quick_capture.py`
+    already imports `build_stage_a_checks_for_domain` FROM this module,
+    so importing back would be a real circular import."""
+    rows = await conn.fetch("SELECT DISTINCT recipient FROM sent_messages WHERE user_id = $1", uuid.UUID(user_id))
+    target = email_address.strip().lower()
+    for row in rows:
+        for _display_name, addr in getaddresses([row["recipient"]]):
+            if addr.strip().lower() == target:
+                return True
+    return False
+
+
+@dataclass(frozen=True)
+class _StaticContactsAdapter:
+    """A real, prefetched `ContactsAdapter` -- the real DB lookup
+    already happened in `build_stage_a_checks_for_domain()` (an async
+    caller), so this sync adapter the check closure actually calls
+    just reports what was already found, the same real "prefetch, then
+    adapt" split `PrefetchedCommittedHoursAdapter` below already
+    establishes for `deadline_conflict_check`."""
+
+    known: bool
+
+    def is_known_contact(self, email: str) -> bool:
+        return self.known
+
+
+def _email_recipient_check(recipient_email: str | None, is_known_contact: bool) -> Finding:
+    """Wraps the real `recipient_check()` with one real, disclosed,
+    Preethish-confirmed deviation from its own default severity for
+    THIS caller specifically: a hard `verified_false` would block
+    EVERY first-time email to a genuinely new, legitimate real
+    contact, not only a hostile or hallucinated one -- `thread_
+    participants` is always honestly empty here (no real Gmail thread
+    lookup happens at proposal-build time), so a recipient who isn't
+    yet a known contact is, today, indistinguishable from a
+    genuinely new but entirely legitimate one. Downgraded to `no_data_
+    found` ("flagged, not blocked") rather than `verified_false`,
+    matching the validator's own existing reply-all-hazard precedent
+    for the identical real tension -- this still reaches Stage B /
+    the real S3 human-approval backstop, it just never auto-blocks on
+    its own. `recipient_check()` itself is left completely unchanged;
+    this is a caller-local decision, not a change to what the
+    validator means for any other real caller."""
+    finding = recipient_check(
+        recipient_email=recipient_email,
+        thread_participants=[],
+        contacts=_StaticContactsAdapter(known=is_known_contact),
+    )
+    if finding.evidence_state != "verified_false":
+        return finding
+    return Finding(
+        validator=finding.validator,
+        claim=f"{finding.claim} (flagged, not blocked -- no real thread lookup exists yet to rule out a legitimate first-time recipient)",
+        evidence_state="no_data_found",
+        confidence=finding.confidence,
+    )
+
+
 async def build_stage_a_checks_for_domain(
     conn: asyncpg.Connection, *, domain: str, proposal: ActionProposal, user_id: str
 ) -> list[StageACheck]:
@@ -224,8 +301,18 @@ async def build_stage_a_checks_for_domain(
     reuse) -- never fabricated either way. `deadline_conflict_check`
     additionally for `tasks`, backed by a real, live-fetched committed-
     hours value (see module docstring for why `finance`/`calendar` don't
-    get an equivalent real ground-truth check)."""
+    get an equivalent real ground-truth check). `recipient_check`
+    (`DEC-202`) additionally for `email` -- see `_email_recipient_
+    check()` above for the one real, disclosed deviation from its
+    default severity this caller applies."""
     checks: list[StageACheck] = [lambda p: provenance_check(justification_sources=["user_request"])]
+
+    if domain == "email":
+        recipient_email = proposal.payload.get("to")
+        is_known = False
+        if isinstance(recipient_email, str) and recipient_email.strip():
+            is_known = await _is_known_email_contact(conn, user_id=user_id, email_address=recipient_email)
+        checks.append(lambda p, r=recipient_email, known=is_known: _email_recipient_check(r, known))
 
     if domain == "tasks":
         deadline = proposal.payload.get("deadline")
@@ -442,6 +529,55 @@ def validate_and_build_task_proposal(args: dict, *, existing_task_id: str | None
     return build_task_proposal(title=args["title"], estimated_hours=estimated_hours, deadline=deadline, existing_task_id=existing_task_id)
 
 
+_MAX_APPLICATION_COMPANY_LENGTH = 300
+_MAX_APPLICATION_ROLE_LENGTH = 300
+
+
+def validate_and_build_application_proposal(args: dict) -> ActionProposal:
+    """`DEC-194` (product rebuild Block F). A pure create, no existing
+    row to resolve -- so, unlike `resolve_and_build_application_status_
+    proposal()`, this never needs a real database connection. Same
+    "reject a malformed real value with an honest, catchable error"
+    discipline as `validate_and_build_task_proposal()`'s own identical
+    checks: `applications.company TEXT NOT NULL` and `role TEXT` are
+    both real, unbounded columns -- the same class of risk `tasks.title`
+    was closed for, bounded here for the same reason."""
+    company = args["company"]
+    if not isinstance(company, str) or not company.strip():
+        raise DownstreamTranslationError(f"A real application needs a real, non-empty company name, got {company!r}")
+    if len(company) > _MAX_APPLICATION_COMPANY_LENGTH:
+        raise DownstreamTranslationError(f"Company name exceeds the real, max plausible length {_MAX_APPLICATION_COMPANY_LENGTH}")
+    role = args.get("role")
+    if role is not None:
+        if not isinstance(role, str) or not role.strip():
+            raise DownstreamTranslationError(f"Role must be a real, non-empty string or null, got {role!r}")
+        if len(role) > _MAX_APPLICATION_ROLE_LENGTH:
+            raise DownstreamTranslationError(f"Role exceeds the real, max plausible length {_MAX_APPLICATION_ROLE_LENGTH}")
+    deadline_iso = args.get("deadline_iso")
+    deadline = datetime.fromisoformat(deadline_iso) if deadline_iso else None
+    return build_create_application_proposal(company=company, role=role, deadline=deadline)
+
+
+_REAL_INTERVIEW_FORMATS = ("phone", "video", "onsite")
+
+
+def validate_and_build_interview_proposal(args: dict) -> ActionProposal:
+    """`DEC-195` (product rebuild Block F, remainder). A pure create,
+    no existing row to resolve -- ownership of `application_id` is
+    verified later, in `action_executor.py`'s own real `CREATE_
+    INTERVIEW` branch, which is the first point this function's own
+    caller actually has a real database connection."""
+    application_id = args["application_id"]
+    if not isinstance(application_id, str) or not application_id.strip():
+        raise DownstreamTranslationError(f"A real interview needs a real, non-empty application_id, got {application_id!r}")
+    scheduled_at_iso = args.get("scheduled_at_iso")
+    scheduled_at = datetime.fromisoformat(scheduled_at_iso) if scheduled_at_iso else None
+    interview_format = args.get("format")
+    if interview_format is not None and interview_format not in _REAL_INTERVIEW_FORMATS:
+        raise DownstreamTranslationError(f"Real interview format must be one of {_REAL_INTERVIEW_FORMATS} or null, got {interview_format!r}")
+    return build_schedule_interview_proposal(application_id=application_id, scheduled_at=scheduled_at, format=interview_format)
+
+
 def validate_and_build_calendar_proposal(args: dict) -> ActionProposal:
     start = datetime.fromisoformat(args["start_iso"])
     end = datetime.fromisoformat(args["end_iso"])
@@ -465,7 +601,7 @@ async def _translate_and_build_proposal(
     raise DownstreamDrainError(f"Unsupported domain for downstream translation: {domain!r}")
 
 
-def map_verdict_to_outcome(verdict: GateVerdict, *, executed: bool) -> tuple[str | None, bool]:
+def map_verdict_to_outcome(verdict: GateVerdict, *, executed: bool | None) -> tuple[str | None, bool]:
     """Real, exhaustive mapping from `GateVerdict.decision` (and, for a
     genuine `approve`, whether it genuinely executed) onto `action_
     events`'s own real, closed `outcome` vocabulary (`approved_
@@ -517,10 +653,30 @@ def map_verdict_to_outcome(verdict: GateVerdict, *, executed: bool) -> tuple[str
     Stage-B-issued revise that the Gate itself resolved is real
     `caught_by_gate` instead: the Gate, not a person, is what changed
     it.
+
+    `executed: bool | None`, widened from a plain `bool` by `DEC-191`
+    (product rebuild Block C). `None` is the real, distinct, genuinely-
+    ambiguous outcome `ExecutionResult.executed` already carries for a
+    transport-level failure -- `action_approval.py::approve_pending_
+    action()`'s own separate approval path has handled this correctly
+    since `DEC-188` (its own real `outcome_unknown` terminal state,
+    migration `0020`), but this function's own one real caller
+    (`persist_gate_verdict()` below) used to collapse it via a bare
+    `bool(...)` before calling this function at all -- harmless in
+    practice for as long as no real caller of THIS function ever
+    reached a Google-API-calling branch with real credentials (true
+    until `CREATE_EMAIL_DRAFT`, real `Stakes.S1`, started reaching one
+    autonomously), but a real, latent instance of the exact class of
+    bug `DEC-188` already paid a CRITICAL-tier review to find and fix
+    once. Mapped to the SAME real `outcome_unknown`/resolved=True shape
+    that path already established, rather than a second, independently
+    invented handling for the identical real fact.
     """
     if verdict.decision == "escalate_to_human":
         return None, False
     if verdict.decision == "approve":
+        if executed is None:
+            return "outcome_unknown", True
         if not executed:
             return None, False
         if verdict.revision_count == 0:
@@ -539,13 +695,55 @@ def map_verdict_to_outcome(verdict: GateVerdict, *, executed: bool) -> tuple[str
 
 
 async def persist_gate_verdict(
-    conn: asyncpg.Connection, *, proposal: ActionProposal, stakes: Stakes, verdict: GateVerdict, user_id: str
-) -> bool:
+    conn: asyncpg.Connection,
+    *,
+    proposal: ActionProposal,
+    stakes: Stakes,
+    verdict: GateVerdict,
+    user_id: str,
+    timeline: GateTimeline | None = None,
+    google_access_token: str | None = None,
+    http_client: httpx.AsyncClient | None = None,
+) -> tuple[bool, dict | None]:
     """Persists the real `action_events` row, then -- for a genuine
     `approve` verdict only -- calls the real `action_executor.py` on
     the SAME connection, so the real write (when one exists) commits or
     rolls back together with the real decision that authorized it.
-    Returns whether a real execution genuinely happened.
+    Returns `(executed, artifact)` -- whether a real execution
+    DEFINITELY happened, and the real structured external id Google's
+    own API returned, if any (`DEC-191`, migration `0022`; `None` for
+    every non-executed outcome and every action type that never calls
+    a Google API).
+
+    `executed` IS a plain `bool` in this function's own return value --
+    `True` only for a confirmed success, `False` for both a confirmed
+    non-execution AND a genuinely unknown transport failure -- matching
+    this function's two real callers, both of which only ever need a
+    "did this definitely succeed" signal (`drain_due_jobs()`'s own
+    `executed_count`; `QuickCaptureResult.executed: bool`, unchanged by
+    this function's own internal fix). This is a DELIBERATE, DIFFERENT
+    collapse from the one this docstring's own history once made BY
+    MISTAKE: the real three-valued fact is preserved all the way
+    through to `map_verdict_to_outcome()` below and recorded correctly
+    in the real, persisted `outcome` column (`outcome_unknown` for a
+    genuine transport failure, never confused with a confirmed
+    `caught_by_gate`/left ambiguously unresolved) -- only THIS
+    function's own simplified return value collapses the distinction,
+    for callers that have never needed it. The database record, which
+    is what `trust_digest.py`/`honesty_log.py` actually read, stays
+    honest either way.
+
+    REAL, DISCLOSED CHANGE FROM THIS FUNCTION'S ORIGINAL RETURN SHAPE
+    (a bare `bool`): `DEC-191` needed the real artifact to reach
+    `features/quick_capture.py`'s own `QuickCaptureResult`, which only
+    had this function's own return value to work with -- adding a
+    second return value here, rather than a third, parallel way to
+    learn the same fact, keeps there being exactly one real source for
+    "what did this persist call actually do." The one other real
+    caller (`drain_due_jobs()` below) only ever checked truthiness and
+    is updated to unpack the tuple accordingly; it does not yet surface
+    an artifact anywhere, since no real negotiation-downstream action
+    type reaches a Google-API-calling branch today.
 
     Made public (`DEC-153`) -- this function is fully generic (no
     negotiation-specific coupling anywhere in it), and `features/
@@ -554,6 +752,26 @@ async def persist_gate_verdict(
     directly rather than re-derived, the same "don't duplicate a
     once-CRITICAL-tier-review-fixed serialization detail" discipline
     this whole docstring already documents below.
+
+    `google_access_token`/`http_client` (`DEC-191`, product rebuild
+    Block C) -- threaded straight through to `execute_approved_action()`,
+    matching that function's own established optional-token pattern
+    exactly. Both default to `None`, which is the ordinary case for
+    this function's ORIGINAL real caller (`drain_due_jobs()` below,
+    negotiation downstream actions, which today never produce a real
+    Gmail- or Calendar-executable action type -- unaffected by this
+    change). They exist for `CREATE_EMAIL_DRAFT` specifically: real
+    `Stakes.S1`, so it reaches this function's own `verdict.decision ==
+    "approve"` branch with no separate human-approval step at all
+    (unlike `SEND_EMAIL`/`CREATE_CALENDAR_EVENT_EXTERNAL`, both real
+    `Stakes.S3`, which this same branch also reaches but which
+    `execute_approved_action()`'s own structural S3 backstop refuses to
+    execute without a real `approved_by_user_id` this function never
+    supplies -- so passing a token here does not, and must not, create
+    any new way for an S3 action to execute without that separate,
+    human approval step; it only lets a genuinely autonomous S1 action
+    reach the real Google API call its own stakes tier already
+    entitles it to.
 
     REAL, LIVE PERSISTENCE OF THE GATE'S OWN FINDINGS/OBJECTIONS, closing
     the real, disclosed gap `DEC-126` found (migration `0013`, `DEC-146`):
@@ -589,18 +807,58 @@ async def persist_gate_verdict(
     # docstring for the full account of why recording a genuine approve
     # as resolved/successful regardless of whether it actually executed
     # was a real, live honesty gap, not just a hypothetical one.
-    executed = False
+    # `DEC-191`: kept as the real, three-valued `bool | None` ALL THE
+    # WAY to `map_verdict_to_outcome()` below -- a bare `bool(...)`
+    # collapse here, which this line used to do, is exactly the class
+    # of bug `DEC-188` already found and fixed once for `action_
+    # approval.py`'s own separate approval path (HIGH-2: a genuinely
+    # UNKNOWN transport failure must never be recorded as a confirmed
+    # `False`). It was harmless here for as long as no real caller of
+    # this function ever reached a Google-API-calling branch with real
+    # credentials -- true until `CREATE_EMAIL_DRAFT` started reaching
+    # one autonomously (real `Stakes.S1`, no separate human-approval
+    # step to catch it first) -- so fixed here now, before this path
+    # was genuinely live, rather than after a real transport failure
+    # was misrecorded.
+    executed: bool | None = False
+    result: ExecutionResult | None = None
     if verdict.decision == "approve":
-        result = await execute_approved_action(conn, action_type=proposal.action_type, payload=final_payload, user_id=user_id)
-        executed = bool(result.executed)
+        result = await execute_approved_action(
+            conn,
+            action_type=proposal.action_type,
+            payload=final_payload,
+            user_id=user_id,
+            google_access_token=google_access_token,
+            http_client=http_client,
+        )
+        executed = result.executed
     # Never executes on reject/revise/escalate_to_human -- see this
     # module's and action_executor.py's own top-of-file docstrings for
     # why escalate_to_human specifically must never execute.
 
     outcome, is_resolved = map_verdict_to_outcome(verdict, executed=executed)
+    # `DEC-189`: three real columns added by migration `0021`. All three
+    # stay genuinely NULL when no `timeline` was supplied -- NULL means
+    # "not recorded," and a consumer must render an honest absence
+    # rather than a fabricated empty timeline that would imply the Gate
+    # ran no checks. `revision_count` deliberately follows the same rule
+    # rather than defaulting to `verdict.revision_count` whenever a
+    # timeline is absent: it IS always available on the verdict, but
+    # writing it for some rows and not others with no way to tell which
+    # is worse than a consistent "recorded or not" signal, and every
+    # real caller that cares about it passes a timeline.
+    pre_revision = timeline.pre_revision_payload if timeline is not None else None
+    # `DEC-191`, migration `0022`. Genuinely NULL for every non-executed
+    # outcome and every action type that never calls a Google API --
+    # `result` itself is `None` on every real reject/revise/escalate_to_
+    # human branch above, and `ExecutionResult.artifact` is already
+    # `None` by default for every executor branch that never sets it,
+    # so this one expression correctly covers all of those cases with
+    # no separate check needed.
+    artifact = result.artifact if result is not None else None
     await conn.execute(
-        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at, findings, objections) "
-        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)",
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at, findings, objections, gate_timeline, revision_count, pre_revision_payload, artifact) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13, $14::jsonb, $15::jsonb)",
         proposal.proposal_id,
         proposal.action_type.value,
         stakes.value,
@@ -612,8 +870,16 @@ async def persist_gate_verdict(
         datetime.now(timezone.utc) if is_resolved else None,
         json.dumps([finding.model_dump(mode="json") for finding in verdict.findings]),
         json.dumps([objection.model_dump(mode="json") for objection in verdict.objections]),
+        json.dumps(timeline.events) if timeline is not None else None,
+        verdict.revision_count if timeline is not None else None,
+        json.dumps(pre_revision) if pre_revision is not None else None,
+        json.dumps(artifact) if artifact is not None else None,
     )
-    return executed
+    # Collapsed to a plain bool HERE, at the return boundary, not
+    # earlier -- `outcome`/`resolved_at` above were already decided
+    # from the real, uncollapsed three-valued `executed`, so this
+    # simplification can no longer affect what gets persisted.
+    return bool(executed), artifact
 
 
 async def process_negotiation_downstream_job(
@@ -694,11 +960,78 @@ async def process_negotiation_downstream_job(
     # disclosed rather than silently left unexamined.
     executed_count = 0
     for proposal, stakes, verdict in reviewed:
-        executed = await persist_gate_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
+        executed, _artifact = await persist_gate_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
         if executed:
             executed_count += 1
 
     return len(reviewed), executed_count
+
+
+# Real, fixed, deterministic prep-task titles -- `CLAUDE.md`'s own
+# drift pattern #1 ("never reach for an LLM to do something checkable
+# in code") applies here too: three real, generically-useful interview
+# prep tasks genuinely don't need a model call to generate, and a
+# fixed, code-authored set is honest about being a template, never
+# dressed up as a personalized real recommendation it isn't.
+def _real_prep_task_titles(company: str, interview_format: str | None) -> list[str]:
+    format_phrase = f"{interview_format} " if interview_format else ""
+    return [
+        f"Research {company} before the interview",
+        "Review your resume and recent projects",
+        f"Prepare answers for common {format_phrase}interview questions",
+    ]
+
+
+async def process_interview_prep_tasks_job(
+    conn: asyncpg.Connection,
+    payload: dict,
+    *,
+    critic_call: CriticCall,
+    judge_call: JudgeCall,
+) -> tuple[int, int]:
+    """`DEC-195` (product rebuild Block F, remainder) -- the real,
+    async consumer `action_executor.py`'s own `CREATE_INTERVIEW` branch
+    queues a job for. Each real prep task is its own real, independently
+    Gate-reviewed `CREATE_TASK` proposal (`Stakes.S1`, Stage B never
+    runs) -- not a same-transaction multi-row write, matching this
+    module's own established `process_negotiation_downstream_job()`
+    precedent for "one domain's action triggers real work in another."
+
+    Returns real `(tasks_produced, tasks_executed)` counts, reused
+    directly into `DrainResult`'s own existing, generically-named
+    `downstream_actions_produced`/`_executed` fields -- no new response
+    shape needed for `POST /internal/drain-retry-queue`.
+
+    Each real created task's own id is known AHEAD of its own Gate
+    review (`uuid.uuid4()`, passed through `new_task_id`) specifically
+    so this function can write it onto `interviews.prep_task_ids` the
+    moment -- and only when -- that task's own review genuinely
+    approved and executed it; a task the Gate declined is correctly
+    left out of that array."""
+    user_id = payload["user_id"]
+    interview_id = payload["interview_id"]
+    company = payload["company"]
+    interview_format = payload.get("format")
+
+    titles = _real_prep_task_titles(company, interview_format)
+    executed_task_ids: list[uuid.UUID] = []
+    for title in titles:
+        new_task_id = uuid.uuid4()
+        proposal = build_task_proposal(title=title, estimated_hours=1.0, new_task_id=str(new_task_id))
+        stakes = get_stakes(proposal.action_type)
+        stage_a_checks = await build_stage_a_checks_for_domain(conn, domain="tasks", proposal=proposal, user_id=user_id)
+        verdict = await review(proposal, stakes, stage_a_checks, critic_call, judge_call)
+        executed, _artifact = await persist_gate_verdict(conn, proposal=proposal, stakes=stakes, verdict=verdict, user_id=user_id)
+        if executed:
+            executed_task_ids.append(new_task_id)
+
+    if executed_task_ids:
+        await conn.execute(
+            "UPDATE interviews SET prep_task_ids = $1 WHERE interview_id = $2",
+            executed_task_ids, uuid.UUID(interview_id),
+        )
+
+    return len(titles), len(executed_task_ids)
 
 
 async def _mark_job_failed(conn: asyncpg.Connection, retry_id, error_message: str) -> None:
@@ -795,21 +1128,26 @@ async def drain_due_jobs(
                     else:
                         jobs_seen += 1
                         retry_id = row["retry_id"]
+                        payload = json.loads(row["payload"])
 
-                        if row["job_type"] != _NEGOTIATION_DOWNSTREAM_JOB_TYPE:
-                            # A real, exhaustive, disclosed guard -- this
-                            # drainer only knows how to process the one
-                            # real job_type any code in this backend has
-                            # ever enqueued. Raised, not handled inline,
-                            # so it flows through the exact same real
-                            # recovery path every other real failure
-                            # below does.
+                        # A real, exhaustive, disclosed dispatch -- this
+                        # drainer only knows how to process these two
+                        # real job types (`DEC-195` added the second).
+                        # An unrecognized value raises, not handled
+                        # inline, so it flows through the exact same
+                        # real recovery path every other real failure
+                        # below does.
+                        if row["job_type"] == _NEGOTIATION_DOWNSTREAM_JOB_TYPE:
+                            produced, executed = await process_negotiation_downstream_job(
+                                conn, payload, translation_call=translation_call, critic_call=critic_call, judge_call=judge_call
+                            )
+                        elif row["job_type"] == _INTERVIEW_PREP_TASKS_JOB_TYPE:
+                            produced, executed = await process_interview_prep_tasks_job(
+                                conn, payload, critic_call=critic_call, judge_call=judge_call
+                            )
+                        else:
                             raise DownstreamDrainError(f"Unknown job_type: {row['job_type']!r}")
 
-                        payload = json.loads(row["payload"])
-                        produced, executed = await process_negotiation_downstream_job(
-                            conn, payload, translation_call=translation_call, critic_call=critic_call, judge_call=judge_call
-                        )
                         await conn.execute("DELETE FROM retry_queue WHERE retry_id = $1", retry_id)
                         jobs_succeeded += 1
                         downstream_actions_produced += produced
