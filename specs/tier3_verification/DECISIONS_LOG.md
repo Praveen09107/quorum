@@ -4897,4 +4897,22 @@ Gemini quota consumed by this verification was checked before spending it (11 of
 
 ---
 
-*Next entry: DEC-204*
+## DEC-204: the real, full per-scenario GateVerdict reaches the Gate Self-test screen
+
+**Zero backend change -- the second entry this rebuild has found needing none, the first being `DEC-201`'s Decision Trace.** `GET /trust` has returned every real scenario's complete `GateVerdict` (findings, objections, decision, revision count) since `DEC-193`'s own backend fix ("`_serialize_scenario_result()` excluded the full GateVerdict... fixed: every scenario result now carries its complete real verdict"). The real gap was entirely on the mobile side: `trust_api.dart::_parseScenarioResult()` decoded the response and silently dropped the whole `verdict` key, and `trust_screen.dart` only ever rendered `trust.missed` -- a caught scenario had no real representation anywhere beyond the aggregate count. This closes the plan's own named "Gate -- Self-test" screen item: "every scenario, its full `GateVerdict`... pass/fail."
+
+**`ScenarioVerdictData`** (new, `trust_logic.dart`) -- reuses `FindingSummary`/`ObjectionSummary` directly from `gate_reveal_logic.dart` rather than a second, parallel pair of classes for the identical real `Finding`/`Objection` shape. `trust_api.dart` now parses the real `verdict` object the backend has always sent.
+
+**`ScenarioVerdictScreen`** (new) -- reuses `FindingRow`/`StageBSection`, both already public from `gate_reveal_screen.dart` for exactly this kind of second real reuse, rather than re-rendering the identical real Stage A/B shapes a third time in this app. A real, disclosed correctness detail: Stage B is only shown when `stageBRan(objections)` genuinely says it ran (no `stakes` field exists on a self-test scenario result to gate on directly, unlike `GateRevealScreen`'s own `stageBRanForStakes()`) -- an S0/S1 scenario where Stage B never ran shows an honest "Stage B never ran" line, never `StageBSection`'s own unconditional "Reviewed — no objections," which would misrepresent a real structural fact as a real, positive review outcome.
+
+**`trust_screen.dart` gains a real "Every real scenario" section** -- `trust.results` (which has "carried every real scenario, passed and failed alike -- never pre-filtered" since this field was first built) rendered in full for the first time, each row tapping through to its own real `ScenarioVerdictScreen`. The existing "Missed" section keeps its own real, prominent place and now drills through too.
+
+**A real, found-and-fixed documentation bug, unrelated to wiring but caught while auditing this same registry for `DEC-202`/`DEC-203`'s own work:** `VALIDATOR_REGISTRY`'s `CoverageCheck` entry described a completely different mechanism ("confirms every claim a proposal makes was actually checked by at least one real validator... the Gate's own check on itself") than what `coverage_check()` actually implements (a term-overlap check that a drafted REPLY addresses every question its source email asked). Fixed to describe the real function; `coverage_check()` itself is untouched, and stays genuinely unwired -- its own real extraction half (`gate/prompts.py::build_coverage_extraction_prompt()`) already exists but needs its own real LLM call this entry does not add, a real, disclosed reason distinct from "nobody has gotten to it yet."
+
+**Verification.** `ruff check backend` clean; the registry's own name-matching test is unaffected by a narrative-only change, confirmed by running it directly. `flutter analyze` zero issues. `flutter test`: **913 passed** (up from 903 at the `DEC-203` checkpoint -- 10 new: verdict-parsing tests in `trust_api_test.dart`, the real `ScenarioVerdictScreen` widget tests, and the new "Every real scenario" section's own tests in `trust_screen.dart`).
+
+**Not done, named rather than assumed:** no real device was connected to confirm this new screen renders and behaves correctly on-device. `PIILeakCheck`/`CommitmentCheck`/`AvailabilityCheck`/`TemporalFactCheck`/`CoverageCheck` remain unwired, each for its own real, disclosed reason. The remaining four full agent workspaces, the four-tab IA consolidation, a full filterable Activity screen, and the rest of Block G all remain exactly as deferred as `DEC-203` left them. The Gate "Live" streaming-feed screen the plan also names (a real-time feed of verifications as they happen, distinct from this self-test replay) is still not built. Nothing from this rebuild is deployed to the live Cloud Run backend or witnessed on a real device -- fourteen real PRs (`#99` through this entry's own) remain open and unmerged.
+
+---
+
+*Next entry: DEC-205*

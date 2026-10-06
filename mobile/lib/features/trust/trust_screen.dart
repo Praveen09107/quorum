@@ -32,6 +32,7 @@ import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/features/gate_showcase/gate_showcase_logic.dart';
 import 'package:quorum_mobile/features/gate_showcase/gate_showcase_screen.dart';
+import 'package:quorum_mobile/features/trust/scenario_verdict_screen.dart';
 import 'package:quorum_mobile/features/trust/trust_logic.dart';
 import 'package:quorum_mobile/features/trust_digest/trust_digest_logic.dart';
 import 'package:quorum_mobile/features/trust_digest/trust_digest_screen.dart';
@@ -122,11 +123,44 @@ class TrustScreen extends StatelessWidget {
                 leading: const QuorumIconBadge(icon: Icons.warning_amber, color: QuorumStatusColors.critical),
                 title: Text('Scenario ${trust.missed[i].scenarioId}'),
                 subtitle: Text('Expected ${trust.missed[i].expected}, got ${trust.missed[i].actual}'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _openScenario(context, trust.missed[i]),
+              ),
+            ),
+          ],
+          const SizedBox(height: QuorumSpacing.lg),
+        ],
+        // `DEC-204` (product rebuild) -- the real, full scenario list
+        // `GET /trust`'s own `results` field has always carried
+        // (passed and failed alike, "never pre-filtered" per that
+        // field's own established contract) but this screen never
+        // rendered until now -- only the missed subset was ever shown.
+        if (trust.results.isNotEmpty) ...[
+          Text('Every real scenario', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: QuorumSpacing.sm),
+          for (var i = 0; i < trust.results.length; i++) ...[
+            if (i > 0) const SizedBox(height: QuorumSpacing.sm),
+            Card(
+              child: ListTile(
+                leading: QuorumIconBadge(
+                  icon: trust.results[i].passed ? Icons.check_circle_outline : Icons.warning_amber,
+                  color: trust.results[i].passed ? QuorumStatusColors.verified : QuorumStatusColors.critical,
+                ),
+                title: Text('Scenario ${trust.results[i].scenarioId}'),
+                subtitle: Text('Real decision: ${trust.results[i].verdict.decision}'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _openScenario(context, trust.results[i]),
               ),
             ),
           ],
         ],
       ],
+    );
+  }
+
+  void _openScenario(BuildContext context, ScenarioResultData result) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => ScenarioVerdictScreen(result: result)),
     );
   }
 }

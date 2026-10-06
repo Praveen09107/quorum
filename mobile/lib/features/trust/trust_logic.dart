@@ -33,7 +33,33 @@
 // other way (defaulting to `realGate`) would overstate confidence in a
 // measurement that was never actually confirmed to be real.
 
+import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
+
 enum SelfTestTarget { stub, realGate }
+
+/// `DEC-204` (product rebuild). The real, full `GateVerdict` `GET
+/// /trust` has carried for every real scenario since `DEC-193`'s own
+/// backend fix ("every ScenarioResult, never filtered") -- this is the
+/// first real mobile reader of it; `_parseScenarioResult()` previously
+/// decoded the response and silently dropped the whole `verdict` key.
+/// Reuses `FindingSummary`/`ObjectionSummary` directly from `gate_
+/// reveal_logic.dart` rather than a second, parallel pair of classes
+/// for the identical real `Finding`/`Objection` shape.
+class ScenarioVerdictData {
+  final String decision;
+  final int revisionCount;
+  final List<FindingSummary> findings;
+  final List<ObjectionSummary> objections;
+  final String traceId;
+
+  const ScenarioVerdictData({
+    required this.decision,
+    required this.revisionCount,
+    required this.findings,
+    required this.objections,
+    required this.traceId,
+  });
+}
 
 class ScenarioResultData {
   final String scenarioId;
@@ -41,11 +67,17 @@ class ScenarioResultData {
   final String actual;
   final bool passed;
 
+  /// Always real and present -- `GET /trust`'s own `_serialize_
+  /// scenario_result()` unconditionally includes a real `verdict` for
+  /// every scenario, never nullable.
+  final ScenarioVerdictData verdict;
+
   const ScenarioResultData({
     required this.scenarioId,
     required this.expected,
     required this.actual,
     required this.passed,
+    required this.verdict,
   });
 }
 

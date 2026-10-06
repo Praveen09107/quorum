@@ -117,8 +117,22 @@ VALIDATOR_REGISTRY: tuple[ValidatorInfo, ...] = (
     ValidatorInfo(
         name="CoverageCheck",
         function_name="coverage_check",
-        description="Confirms every claim a proposal makes was actually checked by at least one real validator above -- the Gate's own check on itself.",
-        evidence_source="The real set of Finding objects Stage A already produced for this proposal.",
+        # REAL, DISCLOSED CORRECTION (`DEC-203`): this entry previously
+        # described a completely different mechanism -- "every claim a
+        # proposal makes was actually checked by at least one real
+        # validator" -- that does not match what `coverage_check()`
+        # actually does. The real function is a term-overlap check that
+        # a drafted REPLY addresses every question the source email it
+        # answers actually asked; found while auditing this registry
+        # for the real DEC-202/DEC-203 wiring work, fixed rather than
+        # carried forward. The real extraction half this check depends
+        # on (`gate/prompts.py::build_coverage_extraction_prompt()`,
+        # which needs its own real LLM call) already exists and also
+        # has zero real caller -- a real, disclosed reason this stays
+        # unwired, genuinely distinct from `wired=False` meaning
+        # "nobody has gotten to it yet."
+        description="Confirms a drafted reply genuinely addresses every question the real source email it answers actually asked, never silently dropping one.",
+        evidence_source="A real, separate extraction call over the source email's own text, compared against the drafted reply.",
         wired=False,
     ),
 )
