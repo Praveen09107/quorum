@@ -121,6 +121,7 @@ import 'package:quorum_mobile/api/tasks_api.dart';
 import 'package:quorum_mobile/api/today_api.dart';
 import 'package:quorum_mobile/api/trust_api.dart';
 import 'package:quorum_mobile/api/create_application_api.dart';
+import 'package:quorum_mobile/api/create_calendar_event_api.dart';
 import 'package:quorum_mobile/api/schedule_interview_api.dart';
 import 'package:quorum_mobile/api/update_budget_api.dart';
 import 'package:quorum_mobile/api/gate_showcase_api.dart';
@@ -519,6 +520,14 @@ class _QuorumAppState extends State<QuorumApp> {
             // and the real `DeviceCalendarPlugin` connection are cheap
             // to share, and there is no reason for two.
             onCreateLocalEvent: _calendarSync.createLocalEvent,
+            // `DEC-206` (product rebuild) -- Calendar's first real
+            // write control, closing the single most visible gap a
+            // direct on-device walkthrough found: the Calendar
+            // workspace had no way to book anything at all.
+            onBookMeeting: createCreateCalendarEventFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
             // `DEC-198` (product rebuild) -- the real Google connection
             // health screen. `onReconnectGoogle` reuses the exact same
             // real sign-in flow `LoginScreen` already uses: it always

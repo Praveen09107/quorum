@@ -657,13 +657,27 @@ def validate_and_build_interview_proposal(args: dict) -> ActionProposal:
 
 
 def validate_and_build_calendar_proposal(args: dict) -> ActionProposal:
+    """REAL, DISCLOSED FIX (`DEC-206`): a real, empty/overlong title
+    check was missing here -- every sibling `validate_and_build_*_
+    proposal()` in this module (task, application) already rejects
+    one, found while adding `POST /calendar/events`'s own first
+    structured, non-Gemini-extracted entry point into this function;
+    a real client submitting a structured form (never reviewed by the
+    extraction prompt's own "never invent a reference" framing) is a
+    genuinely more direct path for an empty value to reach here than
+    free text ever was."""
+    title = args["title"]
+    if not isinstance(title, str) or not title.strip():
+        raise DownstreamTranslationError(f"A real calendar event needs a real, non-empty title, got {title!r}")
+    if len(title) > _MAX_TASK_TITLE_LENGTH:
+        raise DownstreamTranslationError(f"Event title exceeds the real, max plausible length {_MAX_TASK_TITLE_LENGTH}")
     start = datetime.fromisoformat(args["start_iso"])
     end = datetime.fromisoformat(args["end_iso"])
     if end <= start:
         raise DownstreamTranslationError(f"Translated calendar event end ({end}) must be after start ({start})")
     # has_external_invitee is always False here -- a real, disclosed,
     # code-decided default; see this module's top-of-file docstring.
-    return build_event_proposal(proposed_start=start, proposed_end=end, title=args["title"], has_external_invitee=False)
+    return build_event_proposal(proposed_start=start, proposed_end=end, title=title, has_external_invitee=False)
 
 
 async def _translate_and_build_proposal(

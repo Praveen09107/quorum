@@ -94,6 +94,7 @@ import 'package:quorum_mobile/api/week_summary_api.dart';
 import 'package:quorum_mobile/db/database.dart';
 import 'package:quorum_mobile/api/agents_api.dart';
 import 'package:quorum_mobile/api/create_application_api.dart';
+import 'package:quorum_mobile/api/create_calendar_event_api.dart';
 import 'package:quorum_mobile/api/schedule_interview_api.dart';
 import 'package:quorum_mobile/features/agents/agents_index_screen.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
@@ -246,6 +247,13 @@ class MainShell extends ConsumerStatefulWidget {
   /// real on-device write being attempted.
   final CreateLocalEventCall? onCreateLocalEvent;
 
+  /// `DEC-206` (product rebuild) -- Calendar's first real write
+  /// control, closing the single most visible gap a direct walkthrough
+  /// found: `CalendarScreen` was a pure, read-only `StatelessWidget`
+  /// with no way to book anything at all. Optional and additive,
+  /// matching every sibling fetcher's own honest gating.
+  final CreateCalendarEventFetcher? onBookMeeting;
+
   /// The real, live "sign out" action (`DEC-105`) -- distinct from
   /// `confirmDelete` above: signing out ends the current real session
   /// only, never touches any real stored data, the opposite stakes
@@ -331,6 +339,7 @@ class MainShell extends ConsumerStatefulWidget {
     this.onApproveAction,
     this.onRejectAction,
     this.onCreateLocalEvent,
+    this.onBookMeeting,
     this.onSignOut,
     this.healthCheck,
     this.healthCheckInterval = const Duration(seconds: 20),
@@ -509,7 +518,12 @@ class _MainShellState extends ConsumerState<MainShell> {
         final fetchCalendarEvents = widget.fetchCalendarEvents;
         if (syncCalendar == null || fetchCalendarEvents == null) return _showNotConnectedSnackBar(context, 'Calendar');
         Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => CalendarLoader(sync: syncCalendar, fetchEvents: fetchCalendarEvents),
+          builder: (_) => CalendarLoader(
+            sync: syncCalendar,
+            fetchEvents: fetchCalendarEvents,
+            onBookMeeting: widget.onBookMeeting,
+            onCreateLocalEvent: widget.onCreateLocalEvent,
+          ),
         ));
       case QuorumAgent.email:
         final fetchEmailOverview = widget.fetchEmailOverview;
@@ -574,6 +588,8 @@ class _MainShellState extends ConsumerState<MainShell> {
           fetchSearch: widget.fetchSearch,
           syncCalendar: widget.syncCalendar,
           fetchCalendarEvents: widget.fetchCalendarEvents,
+          onBookMeeting: widget.onBookMeeting,
+          onCreateLocalEvent: widget.onCreateLocalEvent,
           fetchWeekSummary: widget.fetchWeekSummary,
           onSignOut: widget.onSignOut,
         );

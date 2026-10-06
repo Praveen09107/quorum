@@ -528,6 +528,28 @@ class ScheduleInterviewRequest(BaseModel):
     format: str | None = None
 
 
+class CreateCalendarEventRequest(BaseModel):
+    """`DEC-206` (product rebuild) -- the real request shape for `POST
+    /calendar/events`, the first structured, extraction-skipping entry
+    point the `calendar` domain has ever had -- every other domain
+    already got one (`POST /applications`/`/interviews`, `PUT
+    /finance/budget`) but Calendar's own mobile workspace screen was
+    confirmed, directly, to be a pure, read-only `StatelessWidget` with
+    no create action anywhere, the clearest concrete instance of this
+    rebuild's own original complaint ("I never saw the app... book
+    meetings real time"). Same Part B3 principle as its three siblings:
+    skips Gemini extraction entirely, zero quota cost, full real Gate
+    review regardless. `invitee_email`, if genuinely present, is what
+    `router.py::get_stakes()` uses to classify this real `Stakes.S3`
+    (external invitee) rather than a lower tier -- exactly the same
+    real distinction the free-text extraction path already makes."""
+
+    title: str
+    start_iso: str
+    end_iso: str
+    invitee_email: str | None = None
+
+
 class UpdateBudgetRequest(BaseModel):
     """`DEC-200` (product rebuild) -- the real request shape for `PUT
     /finance/budget`. Budget-setting has worked end to end through
@@ -1501,6 +1523,51 @@ async def schedule_interview_endpoint(
         raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
     except asyncpg.PostgresError as exc:
         raise HTTPException(status_code=502, detail="Couldn't schedule that interview -- please try again.") from exc
+
+    return _quick_capture_result_to_dict(result)
+
+
+@app.post("/calendar/events")
+async def create_calendar_event_endpoint(
+    body: CreateCalendarEventRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """`DEC-206` (product rebuild) -- real, new. Closes the real,
+    confirmed gap `CreateCalendarEventRequest`'s own docstring names: a
+    real, structured entry point into the SAME real `capture_action_
+    from_extracted_args()` pipeline every other domain's structured
+    route already uses, never calling Gemini extraction. An external
+    invitee (a real, live-caught S3 case the Gate's own Critic
+    genuinely reviews) still goes through Stage B exactly as it would
+    via free text -- this route changes nothing about the real
+    verification, only how the structured fields arrive. On a genuine
+    execution, the real `event_start`/`event_end`/`event_title` in the
+    response are what the mobile client uses to perform the actual
+    on-device `device_calendar` write -- see `_quick_capture_result_to_
+    dict()`'s own docstring for why those fields are never gated on
+    `executed` for this action type."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    settings = get_settings()
+    critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
+    judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                result = await capture_action_from_extracted_args(
+                    conn,
+                    user_id=internal_user_id,
+                    args={"domain": "calendar", "operation": "create", **body.model_dump()},
+                    critic_call=critic_call,
+                    judge_call=judge_call,
+                )
+    except QuickCaptureError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except InfrastructureFailure as exc:
+        raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
+    except asyncpg.PostgresError as exc:
+        raise HTTPException(status_code=502, detail="Couldn't book that event -- please try again.") from exc
 
     return _quick_capture_result_to_dict(result)
 
