@@ -19,6 +19,8 @@ known, public, insecure default JWT signing key still in place, that's
 loudly logged now -- a real safety net for exactly the "someone forgot
 to set a real secret" failure mode.
 """
+import asyncio
+import json
 import logging
 import secrets
 import sys
@@ -30,8 +32,9 @@ from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator
 
 import asyncpg
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from quorum_backend.auth.access_token import (
@@ -42,7 +45,7 @@ from quorum_backend.auth.access_token import (
     decode_access_token,
 )
 from quorum_backend.auth.google_oauth import GoogleIdTokenInvalid, GoogleOAuthExchangeFailed, exchange_authorization_code, verify_google_id_token
-from quorum_backend.auth.google_token_store import fetch_google_tokens, store_google_tokens, update_access_token_after_refresh
+from quorum_backend.auth.google_token_store import fetch_google_tokens, get_valid_google_access_token, store_google_tokens, update_access_token_after_refresh
 from quorum_backend.auth.refresh_token import (
     TokenExpired,
     TokenInvalid,
@@ -58,6 +61,13 @@ from quorum_backend.auth.user_provisioning import get_or_create_user, resolve_in
 from quorum_backend.core import db
 from quorum_backend.core.config import get_settings
 from quorum_backend.core.embeddings import EmbeddingError
+from quorum_backend.features.action_approval import (
+    PendingActionNotApprovable,
+    PendingActionNotFound,
+    approve_pending_action,
+    reject_pending_action,
+)
+from quorum_backend.features.agent_telemetry import REAL_DOMAIN_AGENTS, fetch_agent_stats
 from quorum_backend.features.career_digest import (
     fetch_company_digest,
     make_groq_compile_digest_call,
@@ -65,8 +75,10 @@ from quorum_backend.features.career_digest import (
 )
 from quorum_backend.features.briefing import run_briefing
 from quorum_backend.features.career_pipeline import fetch_career_pipeline
+from quorum_backend.features.connection_health import get_connection_health
 from quorum_backend.features.deadline_watch import run_deadline_watch
 from quorum_backend.features.email_ingestion import run_email_ingestion
+from quorum_backend.features.email_overview import fetch_known_recipients, fetch_recent_drafts, fetch_sent_history
 from quorum_backend.features.follow_up import run_follow_up
 from quorum_backend.features.gate_reveal import fetch_gate_reveal
 from quorum_backend.features.honesty_log import fetch_honesty_feed
@@ -85,9 +97,17 @@ from quorum_backend.features.retry_queue_drainer import drain_due_jobs
 from quorum_backend.features.search import search as run_search
 from quorum_backend.features.self_test_harness import ScenarioResult, run_self_test, summarize
 from quorum_backend.features.spend_alert import run_spend_alert
+from quorum_backend.features.expenses import fetch_recent_expenses
 from quorum_backend.features.subscription_detective import fetch_detected_subscriptions
+from quorum_backend.features.task_status import (
+    TaskNotFound,
+    TaskNotUpdatable,
+    cancel_task,
+    complete_task,
+)
 from quorum_backend.features.tasks import fetch_tasks
 from quorum_backend.features.waiting_on import fetch_stale_waiting_on
+from quorum_backend.features.week_summary import fetch_week_summary
 from quorum_backend.features.today import (
     fetch_active_negotiations,
     fetch_pending_actions,
@@ -98,11 +118,15 @@ from quorum_backend.features.quick_capture import (
     QuickCaptureError,
     QuickCaptureResult,
     capture_action_from_extracted_args,
+    capture_action_from_text,
     make_gemini_email_draft_call,
     make_gemini_quick_capture_extraction_call,
 )
 from quorum_backend.features.trust_digest import fetch_trust_digest
-from quorum_backend.gate.llm_calls import make_gemini_judge_call, make_groq_critic_call
+from quorum_backend.core.gemini_quota import GEMINI_GENERATE_CONTENT_DAILY_LIMIT, get_gemini_quota_usage
+from quorum_backend.features.gate_stats import fetch_gate_stats
+from quorum_backend.gate.llm_calls import GEMINI_JUDGE_MODEL, make_gemini_judge_call, make_groq_critic_call
+from quorum_backend.gate.validator_registry import VALIDATOR_REGISTRY
 from quorum_backend.gate.orchestration import InfrastructureFailure
 from quorum_backend.negotiation.downstream_translation import make_gemini_downstream_translation_call
 from quorum_backend.security.account_deletion import delete_account
@@ -316,6 +340,47 @@ async def _resolve_internal_user_id_or_404(pool: asyncpg.Pool, google_sub: str) 
     return internal_user_id
 
 
+async def _resolve_google_access_token_or_none(pool: asyncpg.Pool, *, internal_user_id: str) -> str | None:
+    """`DEC-191` (product rebuild Block C). Real, shared, DEFENSIVE token
+    resolution for every quick-capture route below -- mirrors `features/
+    action_approval.py::approve_pending_action()`'s own already-
+    established pattern for the identical call, factored out here since
+    three separate routes now need it rather than one.
+
+    Returns `None`, never raises, for every real reason a token might
+    be unavailable: Google OAuth genuinely unconfigured on this
+    deployment, no real tokens stored for this user (never connected,
+    or already revoked), or a real refresh attempt that genuinely
+    failed (`GoogleOAuthExchangeFailed` -- an expired/revoked refresh
+    token). A `None` here is NOT an error for a quick-capture request:
+    the overwhelming majority of real capture domains (`tasks`/
+    `finance`/`career`/most of `calendar`) never call a Google API at
+    all, and `execute_approved_action()`'s own branches already handle
+    a missing token for the ones that do with an honest, non-crashing
+    `executed=False` -- exactly the same degraded-but-correct behavior
+    this function's own absence would otherwise have produced for
+    every quick-capture request, Google-dependent or not, before this
+    block existed."""
+    settings = get_settings()
+    if not settings.google_oauth_client_id or not settings.google_oauth_client_secret or settings.google_token_encryption_key is None:
+        return None
+    try:
+        return await get_valid_google_access_token(
+            pool,
+            internal_user_id=internal_user_id,
+            client_id=settings.google_oauth_client_id,
+            client_secret=settings.google_oauth_client_secret,
+            encryption_key=settings.google_token_encryption_key,
+        )
+    except GoogleOAuthExchangeFailed:
+        logger.warning(
+            "Real Google token refresh failed for user_id=%s during quick-capture -- treated as 'no token "
+            "available', not a route error.",
+            internal_user_id,
+        )
+        return None
+
+
 class TokenExchangeRequest(BaseModel):
     """Real request shape for `POST /auth/token` -- a reasoned
     construction against standard OAuth 2.0 Authorization Code + PKCE
@@ -420,6 +485,47 @@ class QuickCaptureExtractedRequest(BaseModel):
     recipient_description: str | None = None
     recipient_email: str | None = None
     user_intent: str | None = None
+    # `DEC-191` (product rebuild Block C). A real, NEW, additive field --
+    # absent from `_QUICK_CAPTURE_EXTRACTION_SCHEMA` (the on-device
+    # extraction contract this request model otherwise mirrors field-
+    # for-field) because no real on-device extraction pass has any way
+    # to know "draft vs. send" intent either. A caller that HAS already
+    # made that determination some other way sets this to the real,
+    # literal string `"create_email_draft"` to request a real,
+    # autonomous Gmail draft instead of the real, S3-gated `SEND_EMAIL`
+    # this route builds by default -- see `features/quick_capture.py::
+    # resolve_and_build_email_proposal()`'s own docstring for the full
+    # account. Any other value, including the field's own default
+    # `None`, is treated identically to today's existing behavior.
+    email_action: str | None = None
+
+
+class CreateApplicationRequest(BaseModel):
+    """`DEC-194` (product rebuild Block F) -- the real request shape for
+    `POST /applications`, a dedicated, structured write path, not a
+    quick-capture envelope. Matches this rebuild's own established
+    design principle (`QUORUM_PRODUCTION_COMPLETION_PLAN.md`'s Part B3):
+    a structured form submission skips extraction entirely and goes
+    straight into Stage A -- zero Gemini quota cost, full real Gate
+    review regardless. Every field is exactly as untrusted as a real
+    extraction result -- `validate_and_build_application_proposal()`
+    re-validates from scratch, the same discipline `QuickCaptureExtractedRequest`
+    already established for its own route."""
+
+    company: str
+    role: str | None = None
+    deadline_iso: str | None = None
+
+
+class ScheduleInterviewRequest(BaseModel):
+    """`DEC-195` (product rebuild Block F, remainder) -- the real
+    request shape for `POST /interviews`, the first real write path
+    the `interviews` table has ever had. Same dedicated, structured
+    (never Gemini-extracted) pattern as `CreateApplicationRequest`."""
+
+    application_id: str
+    scheduled_at_iso: str | None = None
+    format: str | None = None
 
 
 class TokenPairResponse(BaseModel):
@@ -435,15 +541,34 @@ async def health() -> dict[str, str]:
 
 
 def _serialize_scenario_result(result: ScenarioResult) -> dict:
-    # Deliberately excludes the real `verdict` field (a full GateVerdict)
-    # -- QUORUM_DATA_CONTRACTS.md §5.14's own example shows exactly four
-    # fields per scenario, never the full verdict. Serializing it would
-    # be extra, unspecified surface no client here asks for.
+    # `DEC-193` (product rebuild Block E): REAL, DISCLOSED CORRECTION --
+    # this function used to exclude `verdict` (a full `GateVerdict`),
+    # citing `QUORUM_DATA_CONTRACTS.md` §5.14's own example as showing
+    # "exactly four fields per scenario." Re-read directly before this
+    # session: that same example's own `results` field literally reads
+    # `"...every ScenarioResult, never filtered..."` -- the spec's real
+    # intent was always the full object, and `self_test_harness.py`'s
+    # own `SelfTestSummary` docstring already says so explicitly ("every
+    # real ScenarioResult, never filtered"). The narrow four-field shape
+    # was this route's own real, unforced deviation from a contract that
+    # had already specified the richer shape, not a faithful reading of
+    # it. This is the single most compelling artifact the planned Gate
+    # showcase page can show -- the real findings and real Critic/Judge
+    # output behind each adversarial scenario, not just pass/fail --
+    # and it was being computed and thrown away at this exact boundary,
+    # the identical pattern `DEC-189`/`DEC-191` already found and fixed
+    # for `email_recipient` and for Gmail/Calendar execution artifacts.
+    #
+    # `.model_dump(mode="json")`, not the bare default -- the same real
+    # `EvidenceRef.retrieved_at`-is-a-live-datetime trap `retry_queue_
+    # drainer.py::persist_gate_verdict()` already found and fixed once
+    # for this exact Pydantic model shape.
     return {
         "scenario_id": result.scenario_id,
         "expected": result.expected,
         "actual": result.actual,
         "passed": result.passed,
+        "verdict": result.verdict.model_dump(mode="json"),
     }
 
 
@@ -526,6 +651,60 @@ async def tasks(
         }
         for record in records
     ]
+
+
+_TASK_NOT_FOUND_DETAIL = "No task with this id exists for your account."
+
+
+@app.post("/tasks/{task_id}/complete")
+async def complete_task_endpoint(
+    task_id: str,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live task completion -- closes a real, previously-
+    undiscovered gap: `tasks_screen.dart`'s own trailing status `Chip`
+    has looked like a button since it was written, but no real backend
+    route anywhere has ever let a real, signed-in user actually mark a
+    task done. See `features/task_status.py`'s own top-of-file docstring
+    for the full real account of why this is a direct route (skipping
+    the Gate entirely), not a new quick-capture natural-language path.
+    Real per-user scoped from this route's first line."""
+    try:
+        task_uuid = uuid.UUID(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND_DETAIL) from exc
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    try:
+        await complete_task(pool, user_id=internal_user_id, task_id=str(task_uuid))
+    except TaskNotFound as exc:
+        raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND_DETAIL) from exc
+    except TaskNotUpdatable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "done"}
+
+
+@app.post("/tasks/{task_id}/cancel")
+async def cancel_task_endpoint(
+    task_id: str,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live task cancellation -- the real, one other closed
+    transition `features/task_status.py` supports. Real per-user scoped
+    from this route's first line."""
+    try:
+        task_uuid = uuid.UUID(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND_DETAIL) from exc
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    try:
+        await cancel_task(pool, user_id=internal_user_id, task_id=str(task_uuid))
+    except TaskNotFound as exc:
+        raise HTTPException(status_code=404, detail=_TASK_NOT_FOUND_DETAIL) from exc
+    except TaskNotUpdatable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "cancelled"}
 
 
 @app.post("/quick_capture")
@@ -713,19 +892,30 @@ async def quick_capture_endpoint(
     critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
     judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
     draft_call = make_gemini_email_draft_call(api_key=settings.gemini_api_key)
+    # `DEC-191`: resolved BEFORE extraction, for the identical real
+    # reason extraction itself already runs before `pool.acquire()`
+    # above -- never hold a real network call inside an open
+    # transaction. `None` whenever Google OAuth isn't configured or no
+    # real token is available; `execute_approved_action()`'s own
+    # branches already handle that honestly for the one real domain
+    # (`CREATE_EMAIL_DRAFT`) that needs it.
+    google_access_token = await _resolve_google_access_token_or_none(pool, internal_user_id=internal_user_id)
 
     try:
         args = await extraction_call(body.text)
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                result = await capture_action_from_extracted_args(
-                    conn,
-                    user_id=internal_user_id,
-                    args=args,
-                    critic_call=critic_call,
-                    judge_call=judge_call,
-                    draft_call=draft_call,
-                )
+        async with httpx.AsyncClient(timeout=15.0) as google_http_client:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    result = await capture_action_from_extracted_args(
+                        conn,
+                        user_id=internal_user_id,
+                        args=args,
+                        critic_call=critic_call,
+                        judge_call=judge_call,
+                        draft_call=draft_call,
+                        google_access_token=google_access_token,
+                        http_client=google_http_client,
+                    )
     except QuickCaptureError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except InfrastructureFailure as exc:
@@ -757,6 +947,328 @@ async def quick_capture_endpoint(
     return _quick_capture_result_to_dict(result)
 
 
+def _sse_frame(payload: dict) -> str:
+    """One real Server-Sent Events frame.
+
+    A single `data:` line carrying JSON with the event name INSIDE it,
+    rather than SSE's named-`event:` form. Deliberate: a named event
+    requires the client to register a listener per event type, and this
+    pipeline's event vocabulary genuinely grows as validators are wired
+    in (Block C adds three). Carrying the name in the payload means a
+    new event type reaches the client as data it can choose to render or
+    ignore, instead of silently going nowhere because nobody registered
+    a listener for it.
+
+    `json.dumps` with no newlines in the output is what makes a single
+    `data:` line valid -- an embedded raw newline would terminate the
+    frame early and corrupt the stream. `ensure_ascii=True` (the
+    default) guarantees that, since it escapes every control character.
+    """
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+# Real, strong references to in-flight capture tasks. See
+# `capture_stream_endpoint()` for why a disconnected client must NOT
+# cancel a real capture, and why that makes an explicit reference set
+# necessary: `asyncio.create_task` only holds a weak reference, so
+# without this the garbage collector can collect a still-running task
+# mid-transaction. Entries remove themselves on completion.
+_IN_FLIGHT_CAPTURES: set[asyncio.Task] = set()
+
+
+@app.post("/capture/stream")
+async def capture_stream_endpoint(
+    body: QuickCaptureRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+):
+    """REAL, NEW (`DEC-189` Block B): the same real capture pipeline as
+    `POST /quick_capture`, streamed stage by stage as it genuinely
+    happens.
+
+    WHY THIS EXISTS. `QUORUM_ARCHITECTURE_DESIGN_DOCUMENT.md` §12.1
+    names the interaction this product should own: *"a verification
+    check resolving is a real, literal, satisfying interaction, not a
+    metaphor buried in copy."* Every screen built so far renders a
+    finished verdict instead -- the app shows state and never process,
+    which is the direct, diagnosed cause of the real complaint that it
+    does not feel like an agentic AI app. This route is what makes the
+    Gate's work visible while it is still happening.
+
+    WHY SSE AND NOT THE SPECIFIED POLLING DESIGN, a real, disclosed
+    deviation from `QUORUM_DATA_CONTRACTS.md` §5.3. That section
+    specifies `GET /actions/{action_id}/status` with an incrementally-
+    populated `findings_so_far` and a 1-2s client poll. Polling requires
+    the pipeline's mid-flight state to be observable from a DIFFERENT
+    request than the one doing the work -- which means the work must
+    outlive its request, i.e. a background worker. This deployment is
+    deliberately, fully serverless (Cloud Run, scale-to-zero,
+    `--concurrency=1`), and `CLAUDE.md` names "a persistent background
+    worker or long-running process" as an architectural drift pattern to
+    actively prevent. SSE streams progress from inside the one request
+    that is already running: identical duration, no new infrastructure,
+    and no process that has to stay alive between invocations. The
+    spec's own intent -- watch checks resolve live -- is honored; its
+    assumed mechanism is not, because that mechanism contradicts a
+    harder constraint. `GET /actions/{proposal_id}/status` still exists
+    (below) for replaying a PAST decision, which is the half of §5.3
+    that polling genuinely suited.
+
+    EVERY PRECONDITION IS CHECKED BEFORE THE STREAM OPENS, deliberately
+    and load-bearingly: auth, user resolution and provider
+    configuration all run before `StreamingResponse` is constructed. An
+    SSE response commits to `200 OK` the instant its first byte is sent,
+    so a failure discovered after that point can only be reported as an
+    in-band error event, which a client could miss or mishandle. A real
+    `401`/`404`/`503` is strictly more honest, so anything knowable up
+    front is raised as a real HTTP status up front.
+
+    A DISCONNECTED CLIENT DOES NOT CANCEL THE CAPTURE. This is a real,
+    considered choice, not an oversight. Cancelling the task would abort
+    its open transaction and roll back the user's real captured action
+    -- so closing the app at the wrong moment would silently discard
+    work the user had already asked for and the Gate may already have
+    approved. Letting it finish means the action is genuinely committed
+    and simply shows up the next time they look, which is what a user
+    actually expects. The cost is that the final result is not delivered
+    to that client; the row is in `action_events` and
+    `GET /actions/{proposal_id}/status` replays the whole timeline, so
+    nothing is lost.
+    """
+    settings = get_settings()
+    if settings.gemini_api_key is None:
+        raise HTTPException(status_code=503, detail="Quick capture is not currently available -- the extraction provider isn't configured.")
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+
+    if body.on_device_attempted:
+        logger.info(
+            "Quick-capture (streaming) fell back to cloud extraction: user_id=%s reason=%s",
+            internal_user_id, body.on_device_failure_reason,
+        )
+
+    extraction_call = make_gemini_quick_capture_extraction_call(api_key=settings.gemini_api_key)
+    critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
+    judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
+    draft_call = make_gemini_email_draft_call(api_key=settings.gemini_api_key)
+    # `DEC-191` -- resolved up front, alongside this route's own other
+    # preconditions, for the same reason named in this route's own
+    # docstring: everything knowable before the stream opens should be
+    # resolved before it opens.
+    google_access_token = await _resolve_google_access_token_or_none(pool, internal_user_id=internal_user_id)
+
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+
+    def sink(record: dict) -> None:
+        # `put_nowait` on an unbounded queue, called from inside the
+        # running event loop -- a real sync method, which is exactly
+        # what `GateTimelineSink` requires, since a `StageACheck` is a
+        # sync callable and cannot await. Unbounded is safe here because
+        # one capture emits a small, bounded number of events (one per
+        # validator plus a handful of stage markers), and the alternative
+        # -- a bounded queue -- could drop a real event or block a real
+        # Gate review, both worse than the memory this uses.
+        queue.put_nowait(record)
+
+    async def run_capture() -> dict:
+        # `DEC-191`: this real `httpx.AsyncClient` is deliberately
+        # constructed and closed HERE, inside the task itself, rather
+        # than via an `async with` around the whole route -- this task
+        # is deliberately kept alive by `_IN_FLIGHT_CAPTURES` even after
+        # a client disconnects and this route function has already
+        # returned, so a client scoped to the route's own stack frame
+        # would already be closed by the time a real `CREATE_EMAIL_
+        # DRAFT` execution tried to use it. Closed in `finally` so a
+        # real connection is never leaked on any exit path.
+        google_http_client = httpx.AsyncClient(timeout=15.0)
+        try:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    result = await capture_action_from_text(
+                        conn,
+                        user_id=internal_user_id,
+                        free_text=body.text,
+                        extraction_call=extraction_call,
+                        critic_call=critic_call,
+                        judge_call=judge_call,
+                        draft_call=draft_call,
+                        timeline_sink=sink,
+                        google_access_token=google_access_token,
+                        http_client=google_http_client,
+                    )
+            return _quick_capture_result_to_dict(result)
+        finally:
+            await google_http_client.aclose()
+
+    async def event_stream() -> AsyncIterator[str]:
+        task = asyncio.create_task(run_capture())
+        _IN_FLIGHT_CAPTURES.add(task)
+        task.add_done_callback(_IN_FLIGHT_CAPTURES.discard)
+        try:
+            while True:
+                # A real heartbeat timeout rather than a bare `await
+                # queue.get()`. Two genuine reasons, both specific to
+                # this deployment: a real Gemini extraction call can
+                # take tens of seconds with nothing to report, and an
+                # idle TCP connection through Cloud Run's own proxy can
+                # be closed before the first stage ever completes. An
+                # SSE comment line (`: ...`) is valid, ignored by every
+                # conformant client, and enough to keep the connection
+                # genuinely alive.
+                try:
+                    record = await asyncio.wait_for(queue.get(), timeout=10.0)
+                except asyncio.TimeoutError:
+                    if task.done():
+                        break
+                    yield ": keepalive\n\n"
+                    continue
+                yield _sse_frame(record)
+
+            # Drain anything the sink enqueued after the last successful
+            # `get()` but before the task finished -- without this, the
+            # final stage events of a fast pipeline could be dropped
+            # purely because of loop scheduling order.
+            while not queue.empty():
+                yield _sse_frame(queue.get_nowait())
+
+            try:
+                result = task.result()
+            except QuickCaptureError as exc:
+                yield _sse_frame({"event": "error", "status": 502, "detail": str(exc)})
+                return
+            except InfrastructureFailure as exc:
+                logger.warning("Streaming capture hit a real Gate infrastructure failure: %s", exc)
+                yield _sse_frame({
+                    "event": "error",
+                    "status": 503,
+                    "detail": "The Gate's reviewer is temporarily unavailable -- please try again shortly.",
+                })
+                return
+            except asyncpg.PostgresError as exc:
+                logger.warning("Streaming capture hit a real Postgres error: %s", exc)
+                yield _sse_frame({
+                    "event": "error",
+                    "status": 502,
+                    "detail": "Couldn't turn that into a real action -- please try rephrasing it.",
+                })
+                return
+            except Exception as exc:  # noqa: BLE001
+                # A genuinely unexpected failure. Logged in full, and
+                # reported to the client WITHOUT the exception text --
+                # this route handles untrusted free text and an
+                # arbitrary exception message could carry internals a
+                # client should never see, the same reasoning the
+                # non-streaming route's own handlers already follow.
+                logger.exception("Streaming capture failed unexpectedly")
+                yield _sse_frame({
+                    "event": "error",
+                    "status": 500,
+                    "detail": "Something went wrong turning that into an action.",
+                    "error_type": type(exc).__name__,
+                })
+                return
+
+            yield _sse_frame({"event": "result", **result})
+        finally:
+            # Deliberately NOT `task.cancel()`. See this route's own
+            # docstring: cancelling here would roll back a real,
+            # in-flight transaction and silently discard an action the
+            # user genuinely asked for, just because they closed the
+            # screen. The task keeps its strong reference via
+            # `_IN_FLIGHT_CAPTURES` and runs to completion.
+            if not task.done():
+                logger.info("SSE client left before the capture finished -- letting it complete rather than rolling it back")
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Disables response buffering on nginx-family proxies. Without
+            # it an intermediary can hold the whole stream and release it
+            # at once, which would defeat the entire purpose of this route
+            # while still looking like it worked.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/actions/{proposal_id}/status")
+async def action_status_endpoint(
+    proposal_id: str,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """REAL, NEW (`DEC-189` Block B): replays the recorded Gate timeline
+    for one real past action -- `QUORUM_DATA_CONTRACTS.md` §5.3's
+    endpoint, finally built.
+
+    This is the half of §5.3 that its polling design genuinely suited.
+    Watching a review happen live is served by `POST /capture/stream`
+    (see that route for why polling could not be, in a serverless
+    deployment); replaying a decision that already resolved is a plain
+    read, and this is it.
+
+    `gate_timeline`, `revision_count` and `pre_revision_payload` are all
+    nullable by design (migration `0021`) -- every `action_events` row
+    written before that migration genuinely has no recorded timeline.
+    This route returns `timeline: null` for those rather than an empty
+    list, and the distinction is load-bearing: an empty list would tell a
+    client the Gate ran no checks, which is false. A client must render
+    an honest "not recorded for this action" state.
+    """
+    try:
+        parsed_id = uuid.UUID(proposal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="proposal_id must be a real UUID") from exc
+
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+
+    # Scoped by `user_id` in the query itself, never filtered after the
+    # fetch -- a real action belonging to another user must be
+    # indistinguishable from one that does not exist, so this returns
+    # 404 for both. Matches every other per-user read in this backend.
+    row = await pool.fetchrow(
+        "SELECT proposal_id, action_type, stakes, gate_decision, outcome, created_at, resolved_at, "
+        "       payload, findings, objections, gate_timeline, revision_count, pre_revision_payload, artifact "
+        "FROM action_events WHERE proposal_id = $1 AND user_id = $2",
+        parsed_id,
+        uuid.UUID(internal_user_id),
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="No such action for this user.")
+
+    def _json_column(value):
+        # asyncpg returns a JSONB column as a `str` unless a codec is
+        # registered, and this pool registers none -- confirmed directly
+        # rather than assumed, since getting this wrong would ship a
+        # JSON-encoded string where the client expects an object.
+        if value is None or not isinstance(value, str):
+            return value
+        return json.loads(value)
+
+    return {
+        "proposal_id": str(row["proposal_id"]),
+        "action_type": row["action_type"],
+        "stakes": row["stakes"],
+        "gate_decision": row["gate_decision"],
+        "outcome": row["outcome"],
+        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+        "resolved_at": row["resolved_at"].isoformat() if row["resolved_at"] else None,
+        "payload": _json_column(row["payload"]),
+        "findings": _json_column(row["findings"]),
+        "objections": _json_column(row["objections"]),
+        # Genuinely null for any action resolved before migration `0021`.
+        "timeline": _json_column(row["gate_timeline"]),
+        "revision_count": row["revision_count"],
+        "pre_revision_payload": _json_column(row["pre_revision_payload"]),
+        # `DEC-191`, migration `0022`. Genuinely null for any action
+        # resolved before that migration, or whose own real execution
+        # never called a Google API at all -- never a fabricated id.
+        "artifact": _json_column(row["artifact"]),
+    }
+
+
 def _quick_capture_result_to_dict(result: QuickCaptureResult) -> dict:
     """Real, shared response-shape builder -- extracted this session
     (`QUORUM_FINAL_COMPLETION_PLAN.md` Session 8) so `POST /quick_capture`
@@ -780,6 +1292,22 @@ def _quick_capture_result_to_dict(result: QuickCaptureResult) -> dict:
         "calendar_action": result.calendar_action,
         "company": result.company,
         "new_status": result.new_status,
+        # REAL, FOUND BUG, fixed `DEC-189`: these two were the only fields
+        # on `QuickCaptureResult` this builder never serialized, so every
+        # real email-domain capture reached the client as `domain: "email"`
+        # with every email field null -- the backend genuinely computed
+        # `email_recipient`/`email_action` (quick_capture.py:1916-1917) and
+        # then silently dropped them at the HTTP boundary. This is a direct,
+        # confirmed cause of the real user-reported symptom "I never saw the
+        # app do real-time Gmail drafting": it was drafting, and the response
+        # said nothing about it.
+        "email_recipient": result.email_recipient,
+        "email_action": result.email_action,
+        # `DEC-191`: the real, structured external id a Google API call
+        # returned on success -- what lets a real client turn a
+        # completed action into a real tappable link into Gmail. `None`
+        # for every domain/outcome that never produces one.
+        "artifact": result.artifact,
         "findings": [finding.model_dump(mode="json") for finding in result.findings],
         "objections": [objection.model_dump(mode="json") for objection in result.objections],
     }
@@ -838,18 +1366,24 @@ async def quick_capture_extracted_endpoint(
     critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
     judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
     draft_call = make_gemini_email_draft_call(api_key=settings.gemini_api_key) if settings.gemini_api_key else None
+    # `DEC-191` -- see `POST /quick_capture`'s own identical real
+    # reasoning above.
+    google_access_token = await _resolve_google_access_token_or_none(pool, internal_user_id=internal_user_id)
 
     try:
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                result = await capture_action_from_extracted_args(
-                    conn,
-                    user_id=internal_user_id,
-                    args=body.model_dump(),
-                    critic_call=critic_call,
-                    judge_call=judge_call,
-                    draft_call=draft_call,
-                )
+        async with httpx.AsyncClient(timeout=15.0) as google_http_client:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    result = await capture_action_from_extracted_args(
+                        conn,
+                        user_id=internal_user_id,
+                        args=body.model_dump(),
+                        critic_call=critic_call,
+                        judge_call=judge_call,
+                        draft_call=draft_call,
+                        google_access_token=google_access_token,
+                        http_client=google_http_client,
+                    )
     except QuickCaptureError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except InfrastructureFailure as exc:
@@ -861,6 +1395,289 @@ async def quick_capture_extracted_endpoint(
         raise HTTPException(status_code=502, detail="Couldn't turn that into a real action -- please try rephrasing it.") from exc
 
     return _quick_capture_result_to_dict(result)
+
+
+@app.post("/applications")
+async def create_application_endpoint(
+    body: CreateApplicationRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """`DEC-194` (product rebuild Block F) -- real, new. Closes the
+    single most explicitly-named backend gap from the original rebuild
+    mandate: no real code path anywhere in this backend's history has
+    ever created a NEW `applications` row (`UPDATE_APPLICATION_STATUS`
+    only ever mutates an existing one).
+
+    A third, real, structured entry point into the SAME real `capture_
+    action_from_extracted_args()` pipeline `POST /quick_capture`/`POST
+    /quick_capture/extracted` already use -- never calls Gemini
+    extraction at all, matching this rebuild's own B3 design principle
+    (a structured write skips extraction but still goes through the
+    real Gate). `CREATE_APPLICATION` is real `Stakes.S1`, so this
+    executes the moment Stage A clears it -- no separate human-approval
+    step, same as `POST /tasks`-equivalent creates elsewhere in this
+    backend."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    settings = get_settings()
+    critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
+    judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                result = await capture_action_from_extracted_args(
+                    conn,
+                    user_id=internal_user_id,
+                    args={"domain": "career", "operation": "create", **body.model_dump()},
+                    critic_call=critic_call,
+                    judge_call=judge_call,
+                )
+    except QuickCaptureError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except InfrastructureFailure as exc:
+        raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
+    except asyncpg.PostgresError as exc:
+        raise HTTPException(status_code=502, detail="Couldn't create that application -- please try again.") from exc
+
+    return _quick_capture_result_to_dict(result)
+
+
+@app.post("/interviews")
+async def schedule_interview_endpoint(
+    body: ScheduleInterviewRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """`DEC-195` (product rebuild Block F, remainder) -- real, new. The
+    `interviews` table (migration `0001`) has never been read or
+    written by any code in this backend's history until this route.
+
+    `CREATE_INTERVIEW` is real `Stakes.S1`, so this executes the
+    moment Stage A clears it -- no separate human approval, the same
+    as `POST /applications`. On a genuine execution, `action_executor.
+    py`'s own `CREATE_INTERVIEW` branch also queues a real, async
+    `interview_prep_tasks` job (`features/retry_queue_drainer.py::
+    process_interview_prep_tasks_job()`), drained on the same real
+    5-minute `pg_cron` schedule `/internal/drain-retry-queue` already
+    runs on -- three real, individually Gate-reviewed prep tasks, not
+    a same-transaction write that would bypass that review."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    settings = get_settings()
+    critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
+    judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                result = await capture_action_from_extracted_args(
+                    conn,
+                    user_id=internal_user_id,
+                    args={"domain": "career", "operation": "schedule_interview", **body.model_dump()},
+                    critic_call=critic_call,
+                    judge_call=judge_call,
+                )
+    except QuickCaptureError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except InfrastructureFailure as exc:
+        raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
+    except asyncpg.PostgresError as exc:
+        raise HTTPException(status_code=502, detail="Couldn't schedule that interview -- please try again.") from exc
+
+    return _quick_capture_result_to_dict(result)
+
+
+@app.get("/agents")
+async def agents_endpoint(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """REAL, NEW (`DEC-192`, product rebuild Block D) -- backs the
+    Agents index, the page this whole rebuild exists to make possible:
+    the five domain agents as first-class entities a real, signed-in
+    user can actually see, each with its own real lifetime track
+    record, not a static list of names.
+
+    Every number here is computed fresh from `action_events` on every
+    call -- nothing is cached or precomputed, matching this backend's
+    own established "the database is the only source of truth"
+    discipline. See `features/agent_telemetry.py` for the real,
+    exhaustive `ActionType` -> agent mapping and the real outcome
+    partition this reuses directly from `honesty_log.py`."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    stats = await fetch_agent_stats(pool, user_id=internal_user_id)
+    return {
+        "agents": [
+            {
+                "domain": agent_stats.domain,
+                "lifetime_actions": agent_stats.lifetime_actions,
+                "success_count": agent_stats.success_count,
+                "caught_count": agent_stats.caught_count,
+                "rejected_count": agent_stats.rejected_count,
+                "uncertain_count": agent_stats.uncertain_count,
+                "success_rate": agent_stats.success_rate,
+                "last_activity": agent_stats.last_activity.isoformat() if agent_stats.last_activity else None,
+            }
+            for agent_stats in (stats[domain] for domain in REAL_DOMAIN_AGENTS)
+        ],
+    }
+
+
+@app.get("/email/overview")
+async def email_overview_endpoint(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """REAL, NEW (`DEC-199`, product rebuild). The real Email agent
+    workspace -- closes `DEC-197`'s own disclosed gap (Email had no
+    real workspace screen at all, only an honest "not built yet"
+    SnackBar). Every real list here already existed in this backend
+    before this session (`action_events`, `sent_messages`); this is
+    the first endpoint to read them together as a real agent's own
+    real tool. See `features/email_overview.py` for the full real
+    reasoning behind each of its three real queries."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    drafts = await fetch_recent_drafts(pool, user_id=internal_user_id)
+    sent_history = await fetch_sent_history(pool, user_id=internal_user_id)
+    known_recipients = await fetch_known_recipients(pool, user_id=internal_user_id)
+    return {
+        "drafts": [
+            {
+                "proposal_id": d.proposal_id,
+                "created_at": d.created_at.isoformat(),
+                "recipient": d.recipient,
+                "subject": d.subject,
+                "draft_id": d.draft_id,
+            }
+            for d in drafts
+        ],
+        "sent_history": [
+            {
+                "recipient": m.recipient,
+                "subject": m.subject,
+                "sent_at": m.sent_at.isoformat(),
+                "replied_at": m.replied_at.isoformat() if m.replied_at else None,
+            }
+            for m in sent_history
+        ],
+        "known_recipients": [
+            {
+                "recipient": r.recipient,
+                "last_contacted_at": r.last_contacted_at.isoformat(),
+                "message_count": r.message_count,
+            }
+            for r in known_recipients
+        ],
+    }
+
+
+@app.get("/gate/validators")
+async def gate_validators_endpoint(
+    _google_sub: str = Depends(_require_auth),
+) -> dict:
+    """REAL, NEW (`DEC-193`, product rebuild Block E) -- the real
+    Stage A validator roster, backing the "how it works" half of the
+    Gate showcase page named in the product owner's own 11-point
+    mandate: "showcase how the backend workflow, how the gate checks
+    and validates, in a separate page, so that judges will understand
+    it is real working."
+
+    No real per-user data here at all -- this roster is the same for
+    every real user, since it describes the Gate's own code, not any
+    one person's history (`GET /gate/stats` below is where the real
+    per-user numbers live). Still requires a real, valid access token:
+    this is a real, authenticated product surface, not a public
+    marketing page, and gating it the same way every other real route
+    in this backend already is costs nothing and keeps the pattern
+    uniform."""
+    return {
+        "validators": [
+            {
+                "name": v.name,
+                "function_name": v.function_name,
+                "description": v.description,
+                "evidence_source": v.evidence_source,
+                "wired": v.wired,
+            }
+            for v in VALIDATOR_REGISTRY
+        ],
+    }
+
+
+@app.get("/gate/stats")
+async def gate_stats_endpoint(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """REAL, NEW (`DEC-193`, product rebuild Block E) -- the real,
+    per-user Gate performance numbers for the showcase page: a real
+    stakes-tier distribution, a real catch rate, how often Stage B
+    genuinely ran, how often the Gate genuinely revised a payload, and
+    real, current Gemini quota headroom -- every number computed fresh
+    on every call, never hardcoded copy describing a system that
+    doesn't exist.
+
+    `quota_used`/`quota_limit` are `None` together only when Upstash
+    genuinely isn't configured on this deployment (`get_gemini_quota_
+    usage()`'s own real, honest fail-open) -- a client must render that
+    as "quota status unavailable," never as "0 used.\""""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    stats = await fetch_gate_stats(pool, user_id=internal_user_id)
+    # `GEMINI_JUDGE_MODEL` is reused here rather than a fourth hardcoded
+    # literal -- confirmed directly that it, `GEMINI_EXTRACTION_MODEL`,
+    # and `GEMINI_TRANSLATION_MODEL` are the exact same real string
+    # today, so all three real callers already share one real quota
+    # bucket; reading under this one name reads that same real bucket.
+    quota_used = await get_gemini_quota_usage(model=GEMINI_JUDGE_MODEL)
+    return {
+        "total_resolved": stats.total_resolved,
+        "stakes_counts": stats.stakes_counts,
+        "success_count": stats.success_count,
+        "caught_count": stats.caught_count,
+        "rejected_count": stats.rejected_count,
+        "uncertain_count": stats.uncertain_count,
+        "catch_rate": stats.catch_rate,
+        "rows_with_recorded_timeline": stats.rows_with_recorded_timeline,
+        "stage_b_ran_count": stats.stage_b_ran_count,
+        "revised_count": stats.revised_count,
+        "quota_used": quota_used,
+        "quota_limit": GEMINI_GENERATE_CONTENT_DAILY_LIMIT if quota_used is not None else None,
+    }
+
+
+@app.get("/connections")
+async def connections_endpoint(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """REAL, NEW (`DEC-198`, product rebuild). The real, disclosed root
+    cause this rebuild's own research named first: a real, revoked or
+    stale Google grant silently dams the entire Gmail/Calendar/Career
+    surface, and nothing anywhere in this app has ever told a signed-in
+    user that's what happened. This is that real, honest signal --
+    whether a grant exists, its real granted scopes, when it was last
+    written, and whether it can genuinely be refreshed right now,
+    checked live. See `features/connection_health.py` for why this
+    deliberately does not invent a "last successful ingestion"
+    timestamp this backend has never persisted per-user."""
+    settings = get_settings()
+    if not settings.google_oauth_client_id or not settings.google_oauth_client_secret or settings.google_token_encryption_key is None:
+        raise HTTPException(status_code=503, detail="Google OAuth is not configured on this deployment.")
+
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    health = await get_connection_health(
+        pool,
+        internal_user_id=internal_user_id,
+        client_id=settings.google_oauth_client_id,
+        client_secret=settings.google_oauth_client_secret,
+        encryption_key=settings.google_token_encryption_key,
+    )
+    return {
+        "connected": health.connected,
+        "granted_scopes": health.granted_scopes,
+        "last_updated_at": health.last_updated_at.isoformat() if health.last_updated_at else None,
+        "token_refreshable": health.token_refreshable,
+    }
 
 
 @app.get("/predictive_risk")
@@ -945,6 +1762,27 @@ async def today(
     }
 
 
+@app.get("/today/summary")
+async def today_summary_endpoint(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live -- the redesign's own new "This week across your
+    agents" cross-domain strip (see `features/week_summary.py`'s own
+    top-of-file docstring for the full real reasoning). Real per-user
+    scoped from this route's first line, matching every other real
+    domain route in this backend."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    summary = await fetch_week_summary(pool, user_id=internal_user_id)
+    return {
+        "tasks_due_this_week": summary.tasks_due_this_week,
+        "month_to_date_spend": summary.month_to_date_spend,
+        "monthly_budget_limit": summary.monthly_budget_limit,
+        "applications_in_progress": summary.applications_in_progress,
+        "waiting_on_count": summary.waiting_on_count,
+    }
+
+
 @app.get("/negotiations/{negotiation_id}")
 async def negotiation_detail_endpoint(
     negotiation_id: str,
@@ -1017,7 +1855,15 @@ async def gate_reveal_endpoint(
     bundle = await fetch_gate_reveal(pool, user_id=internal_user_id, proposal_id=str(proposal_uuid))
     if bundle is None:
         raise HTTPException(status_code=404, detail=_GATE_REVEAL_NOT_FOUND_DETAIL)
-    return {"stakes": bundle.stakes, "findings": bundle.findings, "objections": bundle.objections}
+    return {
+        "stakes": bundle.stakes,
+        "findings": bundle.findings,
+        "objections": bundle.objections,
+        "action_type": bundle.action_type,
+        "gate_decision": bundle.gate_decision,
+        "resolved_at": bundle.resolved_at,
+        "payload": bundle.payload,
+    }
 
 
 @app.post("/negotiations/{negotiation_id}/choose", status_code=202)
@@ -1059,6 +1905,88 @@ async def choose_negotiation_option_endpoint(
     except InvalidChosenOption as exc:
         raise HTTPException(status_code=400, detail=f"'{body.chosen_option}' is not one of this negotiation's real options.") from exc
     return {"status": "accepted"}
+
+
+_PENDING_ACTION_NOT_FOUND_DETAIL = "No pending action with this id exists for your account."
+
+
+@app.post("/actions/{proposal_id}/approve")
+async def approve_action_endpoint(
+    proposal_id: str,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live human approval of a pending S3 action -- closes a
+    real, previously-undiscovered gap: `action_executor.py`'s own S3
+    human-approval backstop (`approved_by_user_id == user_id`) has
+    existed since it was written, but no real caller anywhere has ever
+    supplied it, so a genuine Gate `approve` on `SEND_EMAIL`/`CREATE_
+    CALENDAR_EVENT_EXTERNAL` has never once been able to actually
+    execute. Real per-user scoped from this route's first line, the
+    same discipline `GET /gate_reveal`/`POST /negotiations/.../choose`
+    already established. See `features/action_approval.py`'s own
+    top-of-file docstring for the full real scope boundary (exactly
+    which action types this can execute, and why)."""
+    try:
+        proposal_uuid = uuid.UUID(proposal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=_PENDING_ACTION_NOT_FOUND_DETAIL) from exc
+    # REAL, DISCLOSED FIX (found live by this session's own CI run, not
+    # hypothetical): this route used to reject EVERY approve attempt
+    # with a real 503 the moment Google OAuth wasn't configured --
+    # before ever checking whether the real row even exists, or whether
+    # the Gate actually approved it. That's wrong for the real 404/409
+    # cases, which never need a real Google credential at all (confirmed
+    # directly: `approve_pending_action()`'s own not-found/not-approvable
+    # checks all run before it ever touches `client_id`/`client_secret`/
+    # `encryption_key`). Real Google OAuth settings are now passed
+    # through as-is (possibly `None`) -- `approve_pending_action()`
+    # itself owns the honest "Google OAuth isn't configured" failure,
+    # and only produces it once execution has genuinely reached the
+    # point of needing a real Google credential.
+    settings = get_settings()
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    try:
+        result = await approve_pending_action(
+            pool,
+            user_id=internal_user_id,
+            proposal_id=str(proposal_uuid),
+            client_id=settings.google_oauth_client_id,
+            client_secret=settings.google_oauth_client_secret,
+            encryption_key=settings.google_token_encryption_key,
+        )
+    except PendingActionNotFound as exc:
+        raise HTTPException(status_code=404, detail=_PENDING_ACTION_NOT_FOUND_DETAIL) from exc
+    except PendingActionNotApprovable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not result.executed:
+        raise HTTPException(status_code=502, detail=result.detail)
+    return {"status": "approved", "detail": result.detail}
+
+
+@app.post("/actions/{proposal_id}/reject")
+async def reject_action_endpoint(
+    proposal_id: str,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """Real, live dismissal of any pending action this user owns --
+    deliberately broader than approval (works regardless of
+    `gate_decision`/`action_type`; see `features/action_approval.py`'s
+    own top-of-file docstring for why). Never executes anything. Real
+    per-user scoped from this route's first line."""
+    try:
+        proposal_uuid = uuid.UUID(proposal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=_PENDING_ACTION_NOT_FOUND_DETAIL) from exc
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    try:
+        await reject_pending_action(pool, user_id=internal_user_id, proposal_id=str(proposal_uuid))
+    except PendingActionNotFound as exc:
+        raise HTTPException(status_code=404, detail=_PENDING_ACTION_NOT_FOUND_DETAIL) from exc
+    except PendingActionNotApprovable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "rejected"}
 
 
 @app.get("/search")
@@ -1270,6 +2198,29 @@ async def finance_subscriptions(
             "average_amount": record.average_amount,
             "occurrences": record.occurrences,
             "average_interval_days": record.average_interval_days,
+        }
+        for record in records
+    ]
+
+
+@app.get("/finance/expenses")
+async def finance_expenses(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> list[dict]:
+    """Real, live -- the redesign's own new "Finance hub" work: a
+    person's actual real expense rows, most recent first, backing the
+    new recent-expenses list above the existing subscriptions section.
+    See `features/expenses.py`'s own top-of-file docstring for the real
+    gap this closes. Real per-user scoped from this route's first line."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    records = await fetch_recent_expenses(pool, user_id=internal_user_id)
+    return [
+        {
+            "expense_id": record.expense_id,
+            "payee": record.payee,
+            "amount": record.amount,
+            "occurred_at": record.occurred_at,
         }
         for record in records
     ]

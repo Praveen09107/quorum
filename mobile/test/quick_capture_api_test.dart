@@ -92,6 +92,32 @@ void main() {
       expect(result.findings.first.validator, 'provenance_check');
     });
 
+    test('REAL, DISCLOSED FIX -- parses real Stage B objections, not silently dropped', () async {
+      final client = MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'executed': false,
+            'decision': 'escalate_to_human',
+            'stakes': 'S3',
+            'domain': 'email',
+            'title': null,
+            'findings': [],
+            'objections': [
+              {'category': 'tone', 'severity': 'medium', 'description': 'Reads as more confident than the evidence supports.', 'signed_off': false},
+            ],
+          }),
+          200,
+        );
+      });
+
+      final capture = createQuickCaptureFetcher(getAccessToken: () async => 'token', client: client);
+      final result = await capture('send an urgent email to the client');
+
+      expect(result.objections, hasLength(1));
+      expect(result.objections.first.category, 'tone');
+      expect(result.objections.first.signedOff, isFalse);
+    });
+
     test('a real, genuine Stage A refusal parses to executed=false with a real title of null', () async {
       final client = MockClient((request) async {
         return http.Response(

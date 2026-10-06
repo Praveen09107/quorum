@@ -65,6 +65,32 @@ class ActionType(str, Enum):
     UPDATE_APPLICATION_STATUS = "update_application_status"
     ARCHIVE_EMAIL = "archive_email"
     LABEL_EMAIL = "label_email"
+    # `DEC-191` (product rebuild Block C). A real, DISTINCT action from
+    # `SEND_EMAIL` -- a draft is genuinely reversible (it sits in the
+    # user's own Gmail Drafts folder until THEY decide to send it, and
+    # can be edited or deleted there with zero external effect), so it
+    # does not carry `SEND_EMAIL`'s own irreversibility and does not
+    # need that action's S3 human-approval backstop. See `router.
+    # STAKES_TABLE` for the real stakes value this earns from that
+    # distinction, and `agents/email_agent.py::build_draft_proposal()`
+    # for the real agent that proposes it.
+    CREATE_EMAIL_DRAFT = "create_email_draft"
+    # `DEC-194` (product rebuild Block F). The real, confirmed gap this
+    # closes: no real code path anywhere in this backend's history has
+    # ever created a NEW `applications` row -- `UPDATE_APPLICATION_
+    # STATUS` above only ever mutates an existing one. A fresh create,
+    # matching `CREATE_TASK`/`LOG_EXPENSE`'s own precedent exactly (a
+    # new, purely internal row with no existing data to corrupt), not
+    # `UPDATE_APPLICATION_STATUS`'s "mutate an existing row" risk
+    # profile. See `router.STAKES_TABLE` for the stakes value this
+    # earns from that distinction.
+    CREATE_APPLICATION = "create_application"
+    # `DEC-195` (product rebuild Block F, remainder). The real, first
+    # `ActionType` for the `interviews` table -- unused by any code in
+    # this backend's history since migration `0001`. `S1`, matching
+    # `CREATE_APPLICATION`/`CREATE_TASK`'s own precedent: a fresh,
+    # additive create of a purely internal row.
+    CREATE_INTERVIEW = "create_interview"
 
 
 class EvidenceRef(BaseModel):

@@ -2,15 +2,19 @@
 // was written. Structurally correct against Flutter's documented widget
 // API; `flutter analyze` on a real machine is the actual verification.
 //
-// Typography as the visualization, literally, not just in principle: the
-// computed numbers render as large numerals directly -- no chart widget,
-// no gauge, no decorative graphic standing in for the number. The locked
-// design principle from the ADD, implemented exactly as written. (A
-// real, disclosed correction: this line used to hardcode "36px, weight
-// 600" -- accurate only before Phase 8 Session 2 (`DEC-156`) replaced
-// that literal `TextStyle` with `QuorumTextStyles.metric()`, this app's
-// real, shared numeric-readout style. Stated generally here now, rather
-// than re-pinning a specific size this file no longer controls.)
+// REAL, DISCLOSED OVERRIDE (the redesign's own real "instrument panel"
+// work) -- this header used to say, as a locked ADD design principle,
+// that these numbers render as bare typography with "no chart widget,
+// no gauge, no decorative graphic standing in for the number." That
+// claim is now deliberately, honestly superseded: this session's own
+// approved redesign plan named a real gauge explicitly ("Capacity and
+// budget become real gauges... literalizes the 'instrument panel'
+// metaphor the ADD already named"), a considered reinterpretation of the
+// ADD's own "instrument-grade clarity" language, not a silent drift away
+// from it. The numeral itself is NOT removed -- see `QuorumGauge`
+// (`theme/quorum_gauge.dart`) for the real reasoning: it's centered
+// inside the new real gauge, so this is a real addition around the
+// existing typography, not a replacement of it.
 //
 // The F4 fix's UI requirement, honored to the letter: when a number's
 // source is DataSource.localMirror, the card shows "Offline estimate"
@@ -41,6 +45,7 @@ import 'package:quorum_mobile/features/computed_state.dart';
 import 'package:quorum_mobile/features/today/holding_steady_logic.dart';
 import 'package:quorum_mobile/features/today_widget_bridge.dart';
 import 'package:quorum_mobile/theme/motion.dart';
+import 'package:quorum_mobile/theme/quorum_gauge.dart';
 import 'package:quorum_mobile/theme/quorum_theme.dart';
 import 'package:quorum_mobile/theme/spacing.dart';
 
@@ -98,22 +103,26 @@ class _HoldingSteadyZoneState extends State<HoldingSteadyZone> {
           children: [
             Text(headline, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: QuorumSpacing.md),
-            _ComputedNumberRow(
-              label: 'Capacity remaining today',
-              valueText: '${widget.capacity.hoursRemainingToday.toStringAsFixed(1)}h',
-              source: widget.capacity.source,
-            ),
-            // A real, disclosed 12px -> 8px tightening (`DEC-156` review
-            // finding), not an accidental token-rounding artifact:
-            // QuorumSpacing has no `12` value, and `sm` (8) reads as a
-            // deliberately tighter pairing between these two conceptually
-            // paired metrics than the looser `md` (16) gap already used
-            // above, between the headline and the first number.
-            const SizedBox(height: QuorumSpacing.sm),
-            _ComputedNumberRow(
-              label: 'Budget remaining this month',
-              valueText: '${(widget.budget.remainingFraction * 100).round()}%',
-              source: widget.budget.source,
+            Row(
+              children: [
+                Expanded(
+                  child: _GaugeMetric(
+                    label: 'Capacity remaining today',
+                    valueText: '${widget.capacity.hoursRemainingToday.toStringAsFixed(1)}h',
+                    fraction: widget.capacity.remainingFraction,
+                    source: widget.capacity.source,
+                  ),
+                ),
+                const SizedBox(width: QuorumSpacing.md),
+                Expanded(
+                  child: _GaugeMetric(
+                    label: 'Budget remaining this month',
+                    valueText: '${(widget.budget.remainingFraction * 100).round()}%',
+                    fraction: widget.budget.remainingFraction,
+                    source: widget.budget.source,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -122,53 +131,55 @@ class _HoldingSteadyZoneState extends State<HoldingSteadyZone> {
   }
 }
 
-class _ComputedNumberRow extends StatelessWidget {
+/// REAL, NEW -- the real gauge-plus-numeral readout `QuorumGauge`'s own
+/// docstring explains the reasoning for. Replaces the former `_
+/// ComputedNumberRow`; the real numeral, its `AnimatedSwitcher` cross-
+/// fade on change, and the real offline-estimate badge are all kept
+/// exactly as they were, now centered inside the gauge and below it
+/// respectively, rather than removed.
+class _GaugeMetric extends StatelessWidget {
   final String label;
   final String valueText;
+  final double fraction;
   final DataSource source;
 
-  const _ComputedNumberRow({
+  const _GaugeMetric({
     required this.label,
     required this.valueText,
+    required this.fraction,
     required this.source,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+    return Column(
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: Theme.of(context).textTheme.bodySmall),
-              // Typography IS the visualization -- no chart, no gauge.
-              // IBM Plex Mono, tabular figures (Phase 8, `DEC-156`) --
-              // this is exactly the "prominent numeric readout"
-              // QuorumTextStyles.metric() was built for.
-              //
-              // Real motion (Phase 8 Session 4, `DEC-158`): "Today's
-              // capacity/budget numbers updating" is one of this plan's
-              // own three explicitly named real motion targets --
-              // `AnimatedSwitcher`, keyed by the value text itself, so a
-              // real change (e.g. "8.0h" -> "7.5h" after a task is
-              // logged) cross-fades rather than snapping instantly. A
-              // rebuild carrying the SAME value text never re-triggers
-              // the transition -- the key is unchanged, so
-              // `AnimatedSwitcher` recognizes it as the same child.
-              AnimatedSwitcher(
-                duration: QuorumMotion.resolve(context, QuorumMotion.transition),
-                child: Text(
-                  valueText,
-                  key: ValueKey(valueText),
-                  style: QuorumTextStyles.metric(context),
-                ),
-              ),
-            ],
+        QuorumGauge(
+          fraction: fraction,
+          // Real motion (Phase 8 Session 4, `DEC-158`): "Today's
+          // capacity/budget numbers updating" is one of this plan's own
+          // three explicitly named real motion targets -- `Animated
+          // Switcher`, keyed by the value text itself, so a real change
+          // (e.g. "8.0h" -> "7.5h" after a task is logged) cross-fades
+          // rather than snapping instantly. A rebuild carrying the SAME
+          // value text never re-triggers the transition -- the key is
+          // unchanged, so `AnimatedSwitcher` recognizes it as the same
+          // child.
+          child: AnimatedSwitcher(
+            duration: QuorumMotion.resolve(context, QuorumMotion.transition),
+            child: Text(
+              valueText,
+              key: ValueKey(valueText),
+              style: QuorumTextStyles.metricSmall(context),
+            ),
           ),
         ),
-        if (source == DataSource.localMirror) const _OfflineEstimateBadge(),
+        const SizedBox(height: QuorumSpacing.sm),
+        Text(label, style: Theme.of(context).textTheme.bodySmall, textAlign: TextAlign.center),
+        if (source == DataSource.localMirror) ...[
+          const SizedBox(height: QuorumSpacing.xs),
+          const _OfflineEstimateBadge(),
+        ],
       ],
     );
   }
