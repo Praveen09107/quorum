@@ -14,17 +14,29 @@ probing and caused unrelated tests to fail as collateral; a later
 on-device session hit the identical wall trying to generate real
 negotiation detail).
 
-**REAL, DISCLOSED SCOPE NARROWING, `DEC-166`:** `QUORUM_FINAL_
-COMPLETION_PLAN.md` Session 1's real AI-provider rebalancing moved
-every one of those five real call sites EXCEPT the Judge onto Groq
-(`negotiation/groq_calls.py`, renamed from `gemini_calls.py`;
-`downstream_translation.py`; `quick_capture.py`; `career_digest.py`) --
-this module's own real, shared, atomic slot reservation is now
-exercised by exactly ONE real call site, `gate/llm_calls.py`'s Judge
-(`make_gemini_judge_call`). This module is NOT deleted -- that one real
-call site still shares this same real 20-request/day free-tier budget
-with nothing else in this backend now, and still genuinely needs this
-guard for the identical real reason it was built.
+**REAL, DISCLOSED CORRECTION to this paragraph's own original claim,
+found while diagnosing a real, live quota exhaustion this rebuild hit
+mid-session:** this paragraph previously claimed `QUORUM_FINAL_
+COMPLETION_PLAN.md` Session 1's "AI-provider rebalancing" moved EVERY
+real call site except the Judge onto Groq. Checked directly against
+the actual code, not the plan document's own narrative: only
+`negotiation/groq_calls.py` (renamed from `gemini_calls.py`) and
+`features/career_digest.py` genuinely moved. `features/quick_capture.py`
+(extraction AND email-draft generation) and `negotiation/
+downstream_translation.py` still call Gemini directly today, confirmed
+by reading their own real import lines and URL constants -- and for a
+real, deliberate, already-documented reason, not an oversight:
+`quick_capture.py::build_extraction_prompt()`'s own docstring explains
+that moving extraction to Groq would collide with the Critic (also
+Groq) on a real S3 calendar-with-invitee proposal, the exact
+Generator/Critic provider-collision CLAUDE.md's own architecture rule
+exists to prevent. This module's real, shared, atomic slot reservation
+is therefore still exercised by FOUR real call sites, not one: the
+Judge (`gate/llm_calls.py`), extraction and email-draft generation
+(`features/quick_capture.py`), and negotiation translation
+(`negotiation/downstream_translation.py`) -- all four now cascade
+across `GEMINI_MODEL_CASCADE` below rather than a single hardcoded
+model, see that constant's own docstring.
 
 THE REAL, LIVE-CONFIRMED NUMBER THIS GUARDS AGAINST, not a guess:
 Google's own real `429` response body, hit live against this project's
@@ -227,6 +239,39 @@ logger = logging.getLogger("quorum_backend")
 # see this file's own top-of-file docstring for exactly how it was
 # confirmed, live, against this project's own real Google account.
 GEMINI_GENERATE_CONTENT_DAILY_LIMIT = 20
+
+# REAL, LIVE-CONFIRMED MODEL CASCADE, 2026-10-06 -- Google's own quota
+# metric is `GenerateRequestsPerDayPerProjectPerModel-FreeTier` (see
+# this file's own docstring above): quota is tracked PER MODEL NAME,
+# not per project as a whole, so a genuinely different model string
+# against this SAME real API key has its own separate, independent
+# 20-request/day bucket. This list is every model confirmed, live,
+# by a direct `generateContent` call against this project's real key,
+# to (a) actually exist and respond on this account and (b) not
+# already be exhausted at confirmation time. Order matters: the
+# primary model first, then confirmed-working fallbacks.
+#
+# Real candidates tried and REJECTED, so they are never silently
+# re-added later without re-verifying live first:
+#   - gemini-2.5-flash / gemini-2.5-flash-lite: real, live 404
+#     NOT_FOUND -- "no longer available to new users" despite still
+#     being listed by `GET /v1beta/models`. Listed is not available;
+#     confirmed by calling it, not by trusting the list.
+#   - gemini-pro-latest: real, live RESOURCE_EXHAUSTED on the very
+#     first call of the day -- the free tier gives this model no
+#     real daily allowance to exhaust in the first place.
+#   - gemini-3.5-flash / gemini-3.7-flash: real, live UNAVAILABLE
+#     ("experiencing high demand") at confirmation time -- not a
+#     quota signal, genuinely ambiguous (could clear on retry), but
+#     excluded from the primary cascade for reliability since an
+#     interactive capture needs a fast, predictable fallback, not a
+#     third coin flip.
+GEMINI_MODEL_CASCADE: tuple[str, ...] = (
+    "gemini-3.6-flash",
+    "gemini-flash-lite-latest",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+)
 
 # Real hygiene only, not correctness -- see the module docstring's own
 # "REAL, ATOMIC RESERVATION" section for why 2 days (not exactly 1) is

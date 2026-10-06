@@ -412,7 +412,7 @@ from quorum_backend.agents.career_agent import build_status_update_proposal
 from quorum_backend.agents.email_agent import LlmCall, build_draft_proposal, build_reply_proposal
 from quorum_backend.agents.finance_agent import build_finance_proposal
 from quorum_backend.agents.tasks_agent import build_task_deletion_proposal
-from quorum_backend.core.gemini_quota import GeminiQuotaExhaustedError, reserve_gemini_quota_slot
+from quorum_backend.core.gemini_quota import GEMINI_MODEL_CASCADE, GeminiQuotaExhaustedError, reserve_gemini_quota_slot
 from quorum_backend.features.retry_queue_drainer import (
     DownstreamTranslationError,
     build_stage_a_checks_for_domain,
@@ -432,7 +432,10 @@ logger = logging.getLogger("quorum_backend")
 QuickCaptureExtractionCall = Callable[[str], Awaitable[dict]]
 
 GEMINI_EXTRACTION_MODEL = "gemini-3.6-flash"
-_EXTRACTION_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_EXTRACTION_MODEL}:generateContent"
+
+
+def _extraction_url(model: str) -> str:
+    return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 # A real, unified, multi-domain schema (`DEC-153` originally shipped a
 # tasks-only version of this) -- every field is `nullable`, since exactly
@@ -730,7 +733,9 @@ def build_extraction_prompt(free_text: str) -> str:
     )
 
 
-async def _call_gemini_json(prompt: str, *, api_key: str, max_retries: int = 2, retry_delay_seconds: float = 2.0) -> dict:
+async def _call_gemini_json(
+    prompt: str, *, api_key: str, models: tuple[str, ...] = GEMINI_MODEL_CASCADE, max_retries: int = 2, retry_delay_seconds: float = 2.0
+) -> dict:
     """Real, live call to Gemini's `generateContent`, structured JSON
     output, real retry on transient failure -- the same, now four-times-
     repeated local-helper pattern `negotiation/gemini_calls.py`, `gate/
@@ -765,7 +770,27 @@ async def _call_gemini_json(prompt: str, *, api_key: str, max_retries: int = 2, 
     reserved BEFORE EACH real network attempt below, inside the retry
     loop itself, not once above it -- Google counts every real attempt,
     not just the final one; see `core/gemini_quota.py`'s own
-    top-of-file docstring for the full real reasoning."""
+    top-of-file docstring for the full real reasoning.
+
+    REAL, LIVE-CONFIRMED MODEL CASCADE, added after this project's own
+    real 20/day quota was exhausted mid-rebuild by this session's own
+    CI/test traffic against the SAME production key: `models` defaults
+    to `core.gemini_quota.GEMINI_MODEL_CASCADE`, a real, ordered list of
+    model IDs each confirmed LIVE to work and each guarded by its own
+    SEPARATE quota bucket (Google's own quota metric is per-project
+    PER MODEL, not per-project overall -- see that module's own
+    docstring for the live confirmation). `GEMINI_EXTRACTION_MODEL`
+    (`gemini-3.6-flash`) is the cascade's own first/primary entry, so a
+    normal day with headroom behaves exactly as before -- this only
+    changes behavior once that model is genuinely exhausted. This is a
+    deliberate, disclosed choice to stay on ONE real provider for
+    extraction rather than falling through to Groq: `build_extraction_
+    prompt()`'s own top-of-file docstring already explains why a
+    Groq-backed extraction call would collide with the Critic (also
+    Groq) on a real S3 calendar-with-invitee proposal -- CLAUDE.md's own
+    "Critic runs on a genuinely different provider" rule. Falling
+    through models within the SAME provider preserves that guarantee
+    exactly; falling through to a different provider would not."""
     last_error: Exception | None = None
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -774,32 +799,40 @@ async def _call_gemini_json(prompt: str, *, api_key: str, max_retries: int = 2, 
             "responseSchema": _QUICK_CAPTURE_EXTRACTION_SCHEMA,
         },
     }
-    for attempt in range(max_retries):
-        if attempt > 0:
-            await asyncio.sleep(retry_delay_seconds)
-        try:
-            await reserve_gemini_quota_slot(model=GEMINI_EXTRACTION_MODEL)
-        except GeminiQuotaExhaustedError as exc:
-            raise QuickCaptureError("The extraction service's shared real quota is exhausted for today -- please try again later.") from exc
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(_EXTRACTION_URL, headers={"x-goog-api-key": api_key}, json=body)
-            if response.status_code != 200:
-                logger.warning(
-                    "Real Gemini extraction call rejected: status=%s body=%s", response.status_code, response.text[:500]
-                )
-                last_error = QuickCaptureError(f"Gemini generateContent returned a real {response.status_code}")
-                continue
-            data = response.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-            return json.loads(text)
-        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-            logger.warning("Real Gemini extraction call failed: %r", exc)
-            last_error = exc
+    for model in models:
+        url = _extraction_url(model)
+        for attempt in range(max_retries):
+            if attempt > 0:
+                await asyncio.sleep(retry_delay_seconds)
+            try:
+                await reserve_gemini_quota_slot(model=model)
+            except GeminiQuotaExhaustedError as exc:
+                logger.warning("Real Gemini extraction quota exhausted for model=%s, trying next cascade entry if any", model)
+                last_error = exc
+                break
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(url, headers={"x-goog-api-key": api_key}, json=body)
+                if response.status_code != 200:
+                    logger.warning(
+                        "Real Gemini extraction call rejected: model=%s status=%s body=%s", model, response.status_code, response.text[:500]
+                    )
+                    last_error = QuickCaptureError(f"Gemini generateContent returned a real {response.status_code}")
+                    continue
+                data = response.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                return json.loads(text)
+            except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+                logger.warning("Real Gemini extraction call failed: model=%s error=%r", model, exc)
+                last_error = exc
+    if isinstance(last_error, GeminiQuotaExhaustedError):
+        raise QuickCaptureError("The extraction service's shared real quota is exhausted for today -- please try again later.") from last_error
     raise QuickCaptureError("The extraction service failed -- please try again.") from last_error
 
 
-async def _call_gemini_text(prompt: str, *, api_key: str, max_retries: int = 2, retry_delay_seconds: float = 2.0) -> str:
+async def _call_gemini_text(
+    prompt: str, *, api_key: str, models: tuple[str, ...] = GEMINI_MODEL_CASCADE, max_retries: int = 2, retry_delay_seconds: float = 2.0
+) -> str:
     """Real, live call to Gemini's `generateContent`, PLAIN TEXT output
     -- Session 7's own new real call site, needed because `agents/
     email_agent.py::LlmCall` is `Callable[[str], Awaitable[str]]` (a
@@ -807,33 +840,47 @@ async def _call_gemini_text(prompt: str, *, api_key: str, max_retries: int = 2, 
     every other real call in this module produces. Otherwise an exact,
     deliberate mirror of `_call_gemini_json()` immediately above --
     same real retry/quota-reservation/error-handling discipline, same
-    real model (`GEMINI_EXTRACTION_MODEL`/`_EXTRACTION_URL`, reused
-    directly rather than a second model constant for what is genuinely
+    real model cascade (`core.gemini_quota.GEMINI_MODEL_CASCADE`,
+    reused directly rather than a second cascade for what is genuinely
     the same real Gemini deployment), same real "log the raw upstream
-    body server-side only, never in a user-facing exception" rule."""
+    body server-side only, never in a user-facing exception" rule.
+
+    This same call backs BOTH the real S1 `CREATE_EMAIL_DRAFT` path
+    (no Critic review) AND the real S3 `SEND_EMAIL` path (Groq Critic
+    DOES review) -- confirmed directly in `main.py`'s own three real
+    call sites before this cascade was added. Falling through to
+    another Gemini model preserves the Generator/Critic provider
+    split for the S3 path exactly as `_call_gemini_json()`'s own
+    docstring explains; falling through to Groq would not."""
     last_error: Exception | None = None
     body = {"contents": [{"parts": [{"text": prompt}]}]}
-    for attempt in range(max_retries):
-        if attempt > 0:
-            await asyncio.sleep(retry_delay_seconds)
-        try:
-            await reserve_gemini_quota_slot(model=GEMINI_EXTRACTION_MODEL)
-        except GeminiQuotaExhaustedError as exc:
-            raise QuickCaptureError("The email-drafting service's shared real quota is exhausted for today -- please try again later.") from exc
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(_EXTRACTION_URL, headers={"x-goog-api-key": api_key}, json=body)
-            if response.status_code != 200:
-                logger.warning(
-                    "Real Gemini email-draft call rejected: status=%s body=%s", response.status_code, response.text[:500]
-                )
-                last_error = QuickCaptureError(f"Gemini generateContent returned a real {response.status_code}")
-                continue
-            data = response.json()
-            return data["candidates"][0]["content"]["parts"][0]["text"]
-        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-            logger.warning("Real Gemini email-draft call failed: %r", exc)
-            last_error = exc
+    for model in models:
+        url = _extraction_url(model)
+        for attempt in range(max_retries):
+            if attempt > 0:
+                await asyncio.sleep(retry_delay_seconds)
+            try:
+                await reserve_gemini_quota_slot(model=model)
+            except GeminiQuotaExhaustedError as exc:
+                logger.warning("Real Gemini email-draft quota exhausted for model=%s, trying next cascade entry if any", model)
+                last_error = exc
+                break
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(url, headers={"x-goog-api-key": api_key}, json=body)
+                if response.status_code != 200:
+                    logger.warning(
+                        "Real Gemini email-draft call rejected: model=%s status=%s body=%s", model, response.status_code, response.text[:500]
+                    )
+                    last_error = QuickCaptureError(f"Gemini generateContent returned a real {response.status_code}")
+                    continue
+                data = response.json()
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+            except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+                logger.warning("Real Gemini email-draft call failed: model=%s error=%r", model, exc)
+                last_error = exc
+    if isinstance(last_error, GeminiQuotaExhaustedError):
+        raise QuickCaptureError("The email-drafting service's shared real quota is exhausted for today -- please try again later.") from last_error
     raise QuickCaptureError("The email-drafting service failed -- please try again.") from last_error
 
 
