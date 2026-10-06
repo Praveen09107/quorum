@@ -892,7 +892,12 @@ void main() {
     await openAgentsTab(tester);
     await scrollToAndTapAgentCard(tester, 'Tasks');
 
-    expect(find.widgetWithText(AppBar, 'Tasks'), findsOneWidget);
+    // `DEC-210` (product rebuild Part C visual pass): `TasksScreen` now
+    // renders its own real agent header in-body on a transparent app
+    // bar, matching `calendar_screen.dart`'s own `DEC-209` precedent --
+    // the real "Tasks" identification moved out of the `AppBar` title.
+    expect(find.widgetWithText(AppBar, 'Tasks'), findsNothing);
+    expect(find.text('Tasks'), findsOneWidget);
   });
 
   testWidgets('tapping the real Finance agent card opens the real Finance screen', (tester) async {

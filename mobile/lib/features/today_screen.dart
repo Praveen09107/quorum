@@ -310,8 +310,14 @@ class TasksLoaderState extends State<TasksLoader> {
 
   @override
   Widget build(BuildContext context) {
+    // `DEC-210` (product rebuild Part C, visual pass): `TasksScreen`
+    // now renders its own real agent header on its own ambient
+    // background, matching `calendar_screen.dart`'s own identical
+    // `DEC-209` precedent -- the pushed app bar is transparent and
+    // back-button-only.
     return Scaffold(
-      appBar: AppBar(title: const Text('Tasks')),
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0, scrolledUnderElevation: 0),
       floatingActionButton: widget.onCreateTask == null
           ? null
           : FloatingActionButton(onPressed: _openNewTaskSheet, tooltip: 'New task', child: const Icon(Icons.add)),
