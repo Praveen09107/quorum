@@ -27,10 +27,11 @@ sync mechanism" discipline this project already uses elsewhere (e.g.
 `wired` is the one field that is NOT narrative -- it reflects the real,
 current, confirmed fact (checked directly against `retry_queue_
 drainer.py::build_stage_a_checks_for_domain()` before writing this)
-that only `provenance_check` and `deadline_conflict_check` have any
-real production caller today. This is itself part of the showcase's
-own honesty: a judge should see which checks are live right now, not
-be led to believe all nine run on every real action.
+that only `provenance_check`, `deadline_conflict_check`, and (`DEC-202`)
+`recipient_check` have any real production caller today. This is itself
+part of the showcase's own honesty: a judge should see which checks are
+live right now, not be led to believe all nine run on every real
+action.
 """
 from __future__ import annotations
 
@@ -76,7 +77,7 @@ VALIDATOR_REGISTRY: tuple[ValidatorInfo, ...] = (
         function_name="recipient_check",
         description="Confirms an email's resolved recipient is a real, known contact, never an unverified address the model invented.",
         evidence_source="The user's own real sent-message history (who they have genuinely emailed before).",
-        wired=False,
+        wired=True,
     ),
     ValidatorInfo(
         name="PIILeakCheck",

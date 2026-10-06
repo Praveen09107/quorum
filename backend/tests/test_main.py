@@ -3777,7 +3777,7 @@ def test_gate_validators_endpoint_returns_all_nine_real_validators():
     assert "ProvenanceCheck" in names
     assert "DeadlineConflictCheck" in names
     wired = {v["name"] for v in body["validators"] if v["wired"]}
-    assert wired == {"ProvenanceCheck", "DeadlineConflictCheck"}
+    assert wired == {"ProvenanceCheck", "DeadlineConflictCheck", "RecipientCheck"}
 
 
 # --- GET /gate/stats (`DEC-193`, product rebuild Block E) ---

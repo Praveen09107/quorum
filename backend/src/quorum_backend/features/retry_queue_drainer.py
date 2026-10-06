@@ -94,6 +94,7 @@ import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from email.utils import getaddresses
 
 import asyncpg
 import httpx
@@ -105,9 +106,9 @@ from quorum_backend.agents.tasks_agent import build_task_proposal
 from quorum_backend.features.action_executor import ExecutionResult, execute_approved_action
 from quorum_backend.features.today import TODAY_WORKING_HOURS_PER_DAY
 from quorum_backend.gate.orchestration import CriticCall, JudgeCall, StageACheck, review
-from quorum_backend.gate.schemas import ActionProposal, GateVerdict, Stakes
+from quorum_backend.gate.schemas import ActionProposal, Finding, GateVerdict, Stakes
 from quorum_backend.gate.timeline import GateTimeline
-from quorum_backend.gate.validators import deadline_conflict_check, provenance_check
+from quorum_backend.gate.validators import deadline_conflict_check, provenance_check, recipient_check
 from quorum_backend.negotiation.downstream_translation import (
     DownstreamTranslationCall,
     DownstreamTranslationError,
@@ -220,6 +221,75 @@ def available_hours_before_deadline(deadline: datetime, *, now: datetime | None 
     return whole_days * TODAY_WORKING_HOURS_PER_DAY
 
 
+async def _is_known_email_contact(conn: asyncpg.Connection, *, user_id: str, email_address: str) -> bool:
+    """Real, live check: has this user ever sent to this exact real
+    address before? `sent_messages.recipient` is the real, raw Gmail
+    `To` header (confirmed in `quick_capture.py`'s own top-of-file
+    docstring), which can genuinely name more than one real address in
+    a group thread -- `email.utils.getaddresses()` (stdlib, RFC 5322-
+    aware) parses every real address out of it correctly, the same
+    real, reviewed technique `quick_capture.py::_fetch_known_
+    recipients()` already established for the identical parsing
+    problem. Kept as an independent, self-contained copy here rather
+    than a cross-module import of that function: `quick_capture.py`
+    already imports `build_stage_a_checks_for_domain` FROM this module,
+    so importing back would be a real circular import."""
+    rows = await conn.fetch("SELECT DISTINCT recipient FROM sent_messages WHERE user_id = $1", uuid.UUID(user_id))
+    target = email_address.strip().lower()
+    for row in rows:
+        for _display_name, addr in getaddresses([row["recipient"]]):
+            if addr.strip().lower() == target:
+                return True
+    return False
+
+
+@dataclass(frozen=True)
+class _StaticContactsAdapter:
+    """A real, prefetched `ContactsAdapter` -- the real DB lookup
+    already happened in `build_stage_a_checks_for_domain()` (an async
+    caller), so this sync adapter the check closure actually calls
+    just reports what was already found, the same real "prefetch, then
+    adapt" split `PrefetchedCommittedHoursAdapter` below already
+    establishes for `deadline_conflict_check`."""
+
+    known: bool
+
+    def is_known_contact(self, email: str) -> bool:
+        return self.known
+
+
+def _email_recipient_check(recipient_email: str | None, is_known_contact: bool) -> Finding:
+    """Wraps the real `recipient_check()` with one real, disclosed,
+    Preethish-confirmed deviation from its own default severity for
+    THIS caller specifically: a hard `verified_false` would block
+    EVERY first-time email to a genuinely new, legitimate real
+    contact, not only a hostile or hallucinated one -- `thread_
+    participants` is always honestly empty here (no real Gmail thread
+    lookup happens at proposal-build time), so a recipient who isn't
+    yet a known contact is, today, indistinguishable from a
+    genuinely new but entirely legitimate one. Downgraded to `no_data_
+    found` ("flagged, not blocked") rather than `verified_false`,
+    matching the validator's own existing reply-all-hazard precedent
+    for the identical real tension -- this still reaches Stage B /
+    the real S3 human-approval backstop, it just never auto-blocks on
+    its own. `recipient_check()` itself is left completely unchanged;
+    this is a caller-local decision, not a change to what the
+    validator means for any other real caller."""
+    finding = recipient_check(
+        recipient_email=recipient_email,
+        thread_participants=[],
+        contacts=_StaticContactsAdapter(known=is_known_contact),
+    )
+    if finding.evidence_state != "verified_false":
+        return finding
+    return Finding(
+        validator=finding.validator,
+        claim=f"{finding.claim} (flagged, not blocked -- no real thread lookup exists yet to rule out a legitimate first-time recipient)",
+        evidence_state="no_data_found",
+        confidence=finding.confidence,
+    )
+
+
 async def build_stage_a_checks_for_domain(
     conn: asyncpg.Connection, *, domain: str, proposal: ActionProposal, user_id: str
 ) -> list[StageACheck]:
@@ -231,8 +301,18 @@ async def build_stage_a_checks_for_domain(
     reuse) -- never fabricated either way. `deadline_conflict_check`
     additionally for `tasks`, backed by a real, live-fetched committed-
     hours value (see module docstring for why `finance`/`calendar` don't
-    get an equivalent real ground-truth check)."""
+    get an equivalent real ground-truth check). `recipient_check`
+    (`DEC-202`) additionally for `email` -- see `_email_recipient_
+    check()` above for the one real, disclosed deviation from its
+    default severity this caller applies."""
     checks: list[StageACheck] = [lambda p: provenance_check(justification_sources=["user_request"])]
+
+    if domain == "email":
+        recipient_email = proposal.payload.get("to")
+        is_known = False
+        if isinstance(recipient_email, str) and recipient_email.strip():
+            is_known = await _is_known_email_contact(conn, user_id=user_id, email_address=recipient_email)
+        checks.append(lambda p, r=recipient_email, known=is_known: _email_recipient_check(r, known))
 
     if domain == "tasks":
         deadline = proposal.payload.get("deadline")

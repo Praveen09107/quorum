@@ -20,9 +20,12 @@ import pytest_asyncio
 from quorum_backend.auth.user_provisioning import get_or_create_user
 from quorum_backend.core import db
 from quorum_backend.features.retry_queue_drainer import (
+    _email_recipient_check,
+    _is_known_email_contact,
     _mark_job_failed,
     persist_gate_verdict,
     available_hours_before_deadline,
+    build_stage_a_checks_for_domain,
     drain_due_jobs,
     map_verdict_to_outcome,
     process_interview_prep_tasks_job,
@@ -32,6 +35,7 @@ from quorum_backend.features.retry_queue_drainer import (
     validate_and_build_interview_proposal,
     validate_and_build_task_proposal,
 )
+from quorum_backend.features.waiting_on import record_sent_message
 from quorum_backend.gate.schemas import (
     ActionProposal,
     ActionType,
@@ -62,6 +66,9 @@ async def user_id(pool):
     # DEC-128: real execution now genuinely writes real expenses rows
     # for a real, approved log_expense verdict -- cleaned up here too.
     await pool.execute("DELETE FROM expenses WHERE user_id = $1", uuid.UUID(uid))
+    # `DEC-202`: real sent-message history is now a real Stage A input
+    # (`RecipientCheck`) -- cleaned up here too.
+    await pool.execute("DELETE FROM sent_messages WHERE user_id = $1", uuid.UUID(uid))
     await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(uid))
 
 
@@ -1005,3 +1012,96 @@ async def test_drain_due_jobs_dispatches_a_real_interview_prep_tasks_job(pool, u
     assert await pool.fetchrow("SELECT 1 FROM retry_queue") is None
     tasks = await pool.fetch("SELECT 1 FROM tasks WHERE user_id = $1", uuid.UUID(user_id))
     assert len(tasks) == 3
+
+
+# --- RecipientCheck wiring into the email domain (`DEC-202`) ---
+
+
+def test_email_recipient_check_a_known_contact_is_verified_true():
+    finding = _email_recipient_check("sarah@example.com", True)
+    assert finding.validator == "RecipientCheck"
+    assert finding.evidence_state == "verified_true"
+
+
+def test_email_recipient_check_an_unknown_recipient_is_downgraded_to_no_data_found_not_verified_false():
+    """The real, disclosed, Preethish-confirmed deviation from
+    `recipient_check()`'s own default severity for this one caller:
+    a hard `verified_false` would block every genuinely new, legitimate
+    first-time recipient, not just a hostile one -- downgraded here to
+    `no_data_found`, never a hard Stage A block."""
+    finding = _email_recipient_check("new-person@example.com", False)
+    assert finding.validator == "RecipientCheck"
+    assert finding.evidence_state == "no_data_found"
+    assert "flagged, not blocked" in finding.claim
+
+
+def test_email_recipient_check_no_recipient_at_all_is_honestly_no_data_found():
+    finding = _email_recipient_check(None, False)
+    assert finding.evidence_state == "no_data_found"
+
+
+async def test_is_known_email_contact_true_after_a_real_sent_message(pool, user_id):
+    await record_sent_message(
+        pool, user_id=user_id, message_id="m1", thread_id="t1", recipient="sarah@example.com",
+        subject="s", sent_at=datetime.now(timezone.utc),
+    )
+    assert await _is_known_email_contact(pool, user_id=user_id, email_address="sarah@example.com") is True
+    assert await _is_known_email_contact(pool, user_id=user_id, email_address="SARAH@EXAMPLE.COM") is True
+
+
+async def test_is_known_email_contact_false_for_a_genuinely_new_address(pool, user_id):
+    assert await _is_known_email_contact(pool, user_id=user_id, email_address="never-emailed@example.com") is False
+
+
+async def test_is_known_email_contact_correctly_parses_a_real_multi_recipient_header(pool, user_id):
+    """`sent_messages.recipient` is the real, raw Gmail `To` header,
+    which can genuinely name more than one address in a group thread
+    -- a bare substring/equality match on the whole header would miss
+    a real, known recipient named only alongside others."""
+    await record_sent_message(
+        pool, user_id=user_id, message_id="m1", thread_id="t1",
+        recipient="Sarah Jones <sarah@example.com>, Bob K <bob@example.com>",
+        subject="s", sent_at=datetime.now(timezone.utc),
+    )
+    assert await _is_known_email_contact(pool, user_id=user_id, email_address="bob@example.com") is True
+
+
+async def test_build_stage_a_checks_for_domain_email_includes_a_real_recipient_check(pool, user_id):
+    await record_sent_message(
+        pool, user_id=user_id, message_id="m1", thread_id="t1", recipient="sarah@example.com",
+        subject="s", sent_at=datetime.now(timezone.utc),
+    )
+    proposal = ActionProposal(action_type=ActionType.CREATE_EMAIL_DRAFT, payload={"to": "sarah@example.com", "body": "hi"})
+
+    checks = await build_stage_a_checks_for_domain(pool, domain="email", proposal=proposal, user_id=user_id)
+
+    assert len(checks) == 2
+    findings = [check(proposal) for check in checks]
+    validators = {f.validator for f in findings}
+    assert validators == {"ProvenanceCheck", "RecipientCheck"}
+    recipient_finding = next(f for f in findings if f.validator == "RecipientCheck")
+    assert recipient_finding.evidence_state == "verified_true"
+
+
+async def test_build_stage_a_checks_for_domain_email_a_genuinely_new_recipient_is_flagged_not_blocked(pool, user_id):
+    proposal = ActionProposal(action_type=ActionType.CREATE_EMAIL_DRAFT, payload={"to": "new-person@example.com", "body": "hi"})
+
+    checks = await build_stage_a_checks_for_domain(pool, domain="email", proposal=proposal, user_id=user_id)
+    findings = [check(proposal) for check in checks]
+
+    recipient_finding = next(f for f in findings if f.validator == "RecipientCheck")
+    assert recipient_finding.evidence_state == "no_data_found"
+
+
+async def test_build_stage_a_checks_for_domain_other_domains_are_genuinely_unaffected(pool, user_id):
+    """A real, direct regression guard: wiring `RecipientCheck` into
+    `email` must never add it (or any other new check) to a domain
+    that was never named -- `finance`/`calendar` stay exactly
+    `[provenance_check]`, matching this function's own pre-`DEC-202`
+    behavior byte for byte."""
+    proposal = ActionProposal(action_type=ActionType.UPDATE_BUDGET, payload={"amount": 1000, "category": "x"})
+
+    checks = await build_stage_a_checks_for_domain(pool, domain="finance", proposal=proposal, user_id=user_id)
+
+    assert len(checks) == 1
+    assert checks[0](proposal).validator == "ProvenanceCheck"
