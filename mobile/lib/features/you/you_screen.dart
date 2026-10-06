@@ -1020,8 +1020,14 @@ class FinanceLoaderState extends State<FinanceLoader> {
 
   @override
   Widget build(BuildContext context) {
+    // `DEC-211` (product rebuild Part C, visual pass): `FinanceScreen`
+    // now renders its own real agent header on its own ambient
+    // background, matching `calendar_screen.dart`'s/`tasks_screen.dart`'s
+    // own identical precedent -- the pushed app bar is transparent and
+    // back-button-only.
     return Scaffold(
-      appBar: AppBar(title: const Text('Finance')),
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0, scrolledUnderElevation: 0),
       floatingActionButton: widget.onUpdateBudget == null
           ? null
           : FloatingActionButton(onPressed: _openSetBudgetSheet, tooltip: 'Set budget', child: const Icon(Icons.edit_outlined)),
