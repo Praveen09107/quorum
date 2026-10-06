@@ -528,6 +528,24 @@ class ScheduleInterviewRequest(BaseModel):
     format: str | None = None
 
 
+class UpdateBudgetRequest(BaseModel):
+    """`DEC-200` (product rebuild) -- the real request shape for `PUT
+    /finance/budget`. Budget-setting has worked end to end through
+    free text since `DEC-148` (`UPDATE_BUDGET`, real `Stakes.S2`); this
+    is a dedicated, structured entry point into the identical real
+    dispatcher, matching this rebuild's own Part B3 design principle.
+    `category` defaults to a real, honest, non-fabricated label
+    describing what actually changed -- `validate_and_build_finance_
+    proposal()` requires a real, non-empty category (it survives into
+    `action_events.payload` as real audit context even though
+    `UPDATE_BUDGET` itself is a single, whole-account ceiling with no
+    per-category column), and a direct "set the budget" control has no
+    real spending category of its own to offer in its place."""
+
+    amount: float
+    category: str = "Monthly budget"
+
+
 class TokenPairResponse(BaseModel):
     access_token: str
     refresh_token: str
@@ -2224,6 +2242,52 @@ async def finance_expenses(
         }
         for record in records
     ]
+
+
+@app.put("/finance/budget")
+async def update_budget_endpoint(
+    body: UpdateBudgetRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """`DEC-200` (product rebuild) -- real, new. Closes a real, named
+    gap: budget-setting has only ever been reachable by routing free
+    text through Gemini extraction and the Gate, even though it's a
+    single, direct, structured number a person should be able to set
+    without writing a sentence.
+
+    A fourth, real, structured entry point into the SAME real
+    `capture_action_from_extracted_args()` pipeline `POST /applications`/
+    `POST /interviews` already use -- never calls Gemini extraction,
+    matching this rebuild's own B3 design principle. `UPDATE_BUDGET`
+    is real `Stakes.S2`, so -- unlike those two `S1` siblings -- the
+    real Judge genuinely reviews this (no Critic; Stage B's own S2
+    row in `router.STAKES_TABLE`), but still executes the moment that
+    review clears, no separate human-approval step (`S2` never
+    requires one, only `S3` does)."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    settings = get_settings()
+    critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
+    judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                result = await capture_action_from_extracted_args(
+                    conn,
+                    user_id=internal_user_id,
+                    args={"domain": "finance", "action": "update_budget", "amount": body.amount, "category": body.category},
+                    critic_call=critic_call,
+                    judge_call=judge_call,
+                )
+    except QuickCaptureError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except InfrastructureFailure as exc:
+        raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
+    except asyncpg.PostgresError as exc:
+        raise HTTPException(status_code=502, detail="Couldn't update your budget -- please try again.") from exc
+
+    return _quick_capture_result_to_dict(result)
 
 
 @app.get("/auth/callback")

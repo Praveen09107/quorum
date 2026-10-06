@@ -121,6 +121,7 @@ import 'package:quorum_mobile/api/today_api.dart';
 import 'package:quorum_mobile/api/trust_api.dart';
 import 'package:quorum_mobile/api/create_application_api.dart';
 import 'package:quorum_mobile/api/schedule_interview_api.dart';
+import 'package:quorum_mobile/api/update_budget_api.dart';
 import 'package:quorum_mobile/api/gate_showcase_api.dart';
 import 'package:quorum_mobile/features/onboarding/onboarding_screen.dart';
 import 'package:quorum_mobile/features/onboarding/onboarding_store.dart';
@@ -378,6 +379,12 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             fetchFinance: createFinanceFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-200` (product rebuild) -- Finance's first real
+            // write control.
+            onUpdateBudget: createUpdateBudgetFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),

@@ -3690,6 +3690,74 @@ async def test_email_overview_endpoint_reflects_a_real_approved_draft_and_a_real
     assert body["known_recipients"][0]["message_count"] == 1
 
 
+# --- PUT /finance/budget (`DEC-200`, product rebuild) ---
+
+
+def test_update_budget_endpoint_requires_real_auth():
+    with TestClient(app) as client:
+        response = client.put("/finance/budget", json={"amount": 60000.0})
+    assert response.status_code == 401
+
+
+async def test_update_budget_endpoint_rejects_a_non_positive_amount_with_a_real_502_not_a_500(pool, provisioned_users):
+    headers, _ = await _provisioned_auth_header(pool, provisioned_users)
+    with TestClient(app) as client:
+        response = client.put("/finance/budget", json={"amount": 0}, headers=headers)
+    assert response.status_code == 502
+
+
+async def test_update_budget_endpoint_is_real_and_live_sets_a_real_new_budget_ceiling_end_to_end(pool, provisioned_users):
+    """`UPDATE_BUDGET` is real `Stakes.S2` -- unlike `POST /applications`/
+    `POST /interviews`'s own `S1` precedent, the real Judge genuinely
+    runs here, which needs a real, live, configured `GEMINI_API_KEY`
+    and spends real, shared daily quota (the same real, disclosed cost
+    `test_capture_action_from_text_a_real_live_update_budget_reaches_
+    the_real_gemini_judge_and_never_the_critic` already accepts for
+    the identical real action type reached through free text)."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    new_limit = 72345.0
+
+    try:
+        with TestClient(app) as client:
+            response = client.put(
+                "/finance/budget",
+                json={"amount": new_limit, "category": "Groceries and rent"},
+                headers=headers,
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["stakes"] == "S2"
+        assert body["domain"] == "finance"
+        assert body["executed"] is True
+
+        row = await pool.fetchrow("SELECT monthly_budget_limit FROM users WHERE user_id = $1", uuid.UUID(internal_user_id))
+        assert row["monthly_budget_limit"] == new_limit
+    finally:
+        await pool.execute("UPDATE users SET monthly_budget_limit = 50000.0 WHERE user_id = $1", uuid.UUID(internal_user_id))
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
+async def test_update_budget_endpoint_a_real_default_category_is_used_when_none_is_supplied(pool, provisioned_users):
+    """`category` is genuinely optional on this real, structured route
+    -- a direct "set the budget" control has no real spending category
+    of its own, unlike free-text capture. Confirms the real, honest
+    default (`"Monthly budget"`, never a fabricated spend category)
+    satisfies `validate_and_build_finance_proposal()`'s own real,
+    non-empty-string requirement without the caller supplying one."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+
+    try:
+        with TestClient(app) as client:
+            response = client.put("/finance/budget", json={"amount": 61000.0}, headers=headers)
+
+        assert response.status_code == 200
+        assert response.json()["executed"] is True
+    finally:
+        await pool.execute("UPDATE users SET monthly_budget_limit = 50000.0 WHERE user_id = $1", uuid.UUID(internal_user_id))
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
 # --- GET /gate/validators (`DEC-193`, product rebuild Block E) ---
 
 

@@ -41,6 +41,7 @@ import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/api/create_application_api.dart';
 import 'package:quorum_mobile/api/schedule_interview_api.dart';
+import 'package:quorum_mobile/api/update_budget_api.dart';
 import 'package:quorum_mobile/db/database.dart';
 import 'package:quorum_mobile/features/calendar/calendar_screen.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
@@ -91,6 +92,11 @@ class YouScreen extends StatefulWidget {
   final ScheduleInterviewFetcher? scheduleInterview;
   final Future<List<DetectedSubscriptionData>> Function()? fetchFinance;
 
+  /// `DEC-200` (product rebuild) -- Finance's first real write
+  /// control. Optional and additive, same honest-gating pattern as
+  /// `createApplication` above.
+  final UpdateBudgetFetcher? onUpdateBudget;
+
   /// REAL, NEW (the redesign's own real "Finance hub" work) -- see
   /// `FinanceLoader`'s own docstring for the full real reasoning.
   final Future<List<ExpenseData>> Function()? fetchExpenses;
@@ -125,6 +131,7 @@ class YouScreen extends StatefulWidget {
     this.createApplication,
     this.scheduleInterview,
     this.fetchFinance,
+    this.onUpdateBudget,
     this.fetchExpenses,
     this.fetchWaitingOn,
     this.fetchSearch,
@@ -265,6 +272,7 @@ class _YouScreenState extends State<YouScreen> {
                         fetch: widget.fetchFinance!,
                         fetchExpenses: widget.fetchExpenses,
                         weekSummaryFuture: _weekSummaryFuture,
+                        onUpdateBudget: widget.onUpdateBudget,
                       ),
                     ),
                   ),
@@ -933,17 +941,46 @@ class _CareerDigestLoader extends StatelessWidget {
 /// `weekSummaryFuture` for the real budget-bar numbers -- never a third,
 /// separate fetch for data `WeekSummaryStrip`'s own preview card already
 /// triggered once.
-class FinanceLoader extends StatelessWidget {
+class FinanceLoader extends StatefulWidget {
   final Future<List<DetectedSubscriptionData>> Function() fetch;
   final Future<List<ExpenseData>> Function()? fetchExpenses;
   final Future<WeekSummaryData>? weekSummaryFuture;
 
-  const FinanceLoader({super.key, required this.fetch, this.fetchExpenses, this.weekSummaryFuture});
+  /// `DEC-200` (product rebuild) -- the Finance screen's first real
+  /// write control. Optional and additive, same honest-gating pattern
+  /// as `createApplication` on `CareerPipelineLoader`.
+  final UpdateBudgetFetcher? onUpdateBudget;
+
+  const FinanceLoader({super.key, required this.fetch, this.fetchExpenses, this.weekSummaryFuture, this.onUpdateBudget});
+
+  @override
+  State<FinanceLoader> createState() => FinanceLoaderState();
+}
+
+class FinanceLoaderState extends State<FinanceLoader> {
+  late Future<({List<DetectedSubscriptionData> subscriptions, List<ExpenseData> expenses})> _future;
+
+  /// Real, local override of the month's budget ceiling, set the
+  /// moment a real `PUT /finance/budget` call reports a genuine
+  /// execution -- the shared `weekSummaryFuture` this screen was
+  /// handed from outside is a one-shot snapshot owned by `YouScreen`,
+  /// not a re-callable fetcher this loader can refresh on its own, so
+  /// a local override is the honest, real way to reflect the real,
+  /// final amount the Gate actually applied (which a Judge revision
+  /// can genuinely change from what was submitted) without a second,
+  /// separate real round trip.
+  double? _budgetOverride;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
 
   Future<({List<DetectedSubscriptionData> subscriptions, List<ExpenseData> expenses})> _load() async {
-    final fetchExpenses = this.fetchExpenses;
+    final fetchExpenses = widget.fetchExpenses;
     final results = await Future.wait([
-      fetch(),
+      widget.fetch(),
       if (fetchExpenses != null) fetchExpenses() else Future.value(<ExpenseData>[]),
     ]);
     return (
@@ -952,12 +989,32 @@ class FinanceLoader extends StatelessWidget {
     );
   }
 
+  Future<void> _openSetBudgetSheet() async {
+    final onUpdateBudget = widget.onUpdateBudget;
+    if (onUpdateBudget == null) return;
+    final result = await showModalBottomSheet<UpdateBudgetResult>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _SetBudgetSheet(onUpdateBudget: onUpdateBudget),
+    );
+    if (result == null || !mounted) return;
+    if (result.executed && result.amount != null) {
+      setState(() => _budgetOverride = result.amount);
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result.executed ? 'Budget updated to ${formatCurrency(result.amount ?? 0)}.' : 'The Gate declined to update your budget.')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Finance')),
+      floatingActionButton: widget.onUpdateBudget == null
+          ? null
+          : FloatingActionButton(onPressed: _openSetBudgetSheet, tooltip: 'Set budget', child: const Icon(Icons.edit_outlined)),
       body: FutureBuilder(
-        future: _load(),
+        future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
@@ -967,18 +1024,103 @@ class FinanceLoader extends StatelessWidget {
           }
           final data = snapshot.data!;
           return FutureBuilder<WeekSummaryData>(
-            future: weekSummaryFuture,
+            future: widget.weekSummaryFuture,
             builder: (context, summarySnapshot) {
               final summary = summarySnapshot.data;
               return FinanceScreen(
                 subscriptions: data.subscriptions,
                 recentExpenses: data.expenses,
                 monthToDateSpend: summary?.monthToDateSpend,
-                monthlyBudgetLimit: summary?.monthlyBudgetLimit,
+                monthlyBudgetLimit: _budgetOverride ?? summary?.monthlyBudgetLimit,
               );
             },
           );
         },
+      ),
+    );
+  }
+}
+
+/// `DEC-200` (product rebuild) -- the real form behind Finance's first
+/// write control. Matches `_NewApplicationSheet`'s own established
+/// shape exactly.
+class _SetBudgetSheet extends StatefulWidget {
+  final UpdateBudgetFetcher onUpdateBudget;
+
+  const _SetBudgetSheet({required this.onUpdateBudget});
+
+  @override
+  State<_SetBudgetSheet> createState() => _SetBudgetSheetState();
+}
+
+class _SetBudgetSheetState extends State<_SetBudgetSheet> {
+  final _amountController = TextEditingController();
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final amount = double.tryParse(_amountController.text.trim());
+    if (amount == null || amount <= 0) {
+      setState(() => _error = 'Enter a real, positive amount first.');
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final result = await widget.onUpdateBudget(amount: amount);
+      if (!mounted) return;
+      Navigator.of(context).pop(result);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16, right: 16, top: 16,
+        bottom: 16 + MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Set monthly budget', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _amountController,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: 'New monthly budget'),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ],
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: _submitting ? null : _submit,
+              child: _submitting
+                  ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('Update budget'),
+            ),
+          ),
+        ],
       ),
     );
   }
