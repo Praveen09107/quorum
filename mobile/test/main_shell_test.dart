@@ -21,11 +21,18 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:quorum_mobile/shell/main_shell.dart';
 
 void main() {
-  testWidgets('all four real tabs are present, in the real, exact order', (WidgetTester tester) async {
+  testWidgets('all five real tabs are present, in the real, exact order', (WidgetTester tester) async {
+    // REAL, DISCLOSED UPDATE (`DEC-192`, product rebuild Block D):
+    // `Agents` is new -- a deliberately scoped-down version of this
+    // rebuild's own planned four-tab structure (Today/Agents/Gate/
+    // Activity), added without the larger, riskier full IA rebuild
+    // (folding Trust into Gate, moving You behind the avatar, renaming
+    // Log to Activity) that real consolidation would need. Five tabs
+    // today is the real, disclosed interim state.
     await tester.pumpWidget(const ProviderScope(child: MaterialApp(home: MainShell())));
 
     final navigationBar = tester.widget<NavigationBar>(find.byType(NavigationBar));
-    expect(navigationBar.destinations.length, 4);
+    expect(navigationBar.destinations.length, 5);
     // NavigationBar.destinations is typed List<Widget> by the Flutter
     // API itself -- a real cast to the concrete NavigationDestination
     // type (what main_shell.dart's own NavigationBar actually populates
@@ -33,7 +40,16 @@ void main() {
     // found by this session's first-ever real `flutter analyze` run,
     // not a style nit.
     final labels = navigationBar.destinations.map((d) => (d as NavigationDestination).label).toList();
-    expect(labels, ['Today', 'Log', 'Trust', 'You']);
+    expect(labels, ['Today', 'Agents', 'Log', 'Trust', 'You']);
+  });
+
+  testWidgets('the Agents tab shows the real, honest not-connected state when unconfigured', (WidgetTester tester) async {
+    await tester.pumpWidget(const ProviderScope(child: MaterialApp(home: MainShell())));
+
+    await tester.tap(find.text('Agents'));
+    await tester.pump();
+
+    expect(find.byKey(const Key('not_connected_agents')), findsOneWidget);
   });
 
   testWidgets('tapping a tab genuinely switches which real content is shown', (WidgetTester tester) async {

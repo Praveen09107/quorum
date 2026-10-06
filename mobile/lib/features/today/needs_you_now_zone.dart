@@ -79,13 +79,57 @@ class _NeedsYouNowCard extends StatelessWidget {
       _ => (Icons.info_outline, colorScheme.onSurfaceVariant),
     };
 
+    // REAL, NEW (the redesign's own real "urgency-tiered visual
+    // treatment" work) -- a real, colored accent stripe down the left
+    // edge of the card itself, not just the small leading icon badge:
+    // closes the plan's own named gap ("S3/urgent cards get a distinct,
+    // stronger visual weight... reuse QuorumStatusColors as real card
+    // accents"). S0/S1 genuinely gets no stripe at all (zero width) --
+    // this app's own real "not every status needs a loud visual
+    // treatment" restraint, matching `QuorumStatusColors.uncertain`'s own
+    // documented "softer, non-alarming" role for non-urgent real states.
+    final accentWidth = switch (action.stakes) {
+      'S3' => 4.0,
+      'S2' => 3.0,
+      _ => 0.0,
+    };
+
     return Card(
-      child: ListTile(
+      clipBehavior: Clip.antiAlias,
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (accentWidth > 0) Container(width: accentWidth, color: color),
+            Expanded(child: _buildTile(context, summary, icon, color)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTile(BuildContext context, ActionSummaryText summary, IconData icon, Color color) {
+    return ListTile(
         leading: QuorumIconBadge(icon: icon, color: color),
         title: Text(summary.headline),
-        subtitle: Text(summary.stakesLabel),
+        // REAL, DISCLOSED FIX (the redesign's own real bug-fix work):
+        // closes a real, confirmed-live complaint -- two real "Send an
+        // email / Needs your approval" cards looked identical. `detail`
+        // (the real recipient/title/payee this specific action is
+        // actually about) now renders as the primary subtitle line when
+        // the real payload has one; `stakesLabel` moves to a smaller,
+        // muted second line rather than disappearing, so neither real
+        // signal is lost.
+        subtitle: summary.detail == null
+            ? Text(summary.stakesLabel)
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(summary.detail!),
+                  Text(summary.stakesLabel, style: Theme.of(context).textTheme.bodySmall),
+                ],
+              ),
         onTap: onTap == null ? null : () => onTap!(action),
-      ),
     );
   }
 }
