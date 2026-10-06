@@ -16,6 +16,7 @@ arrive) is proven separately, not assumed to be the same as "not detected."
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Awaitable, Callable, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -134,6 +135,44 @@ def build_status_update_proposal(application_id: str, new_status: str, company: 
     return ActionProposal(
         action_type=ActionType.UPDATE_APPLICATION_STATUS,
         payload={"application_id": application_id, "status": _normalize_application_status(new_status), "company": company},
+    )
+
+
+def build_create_application_proposal(
+    company: str, role: str | None = None, deadline: datetime | None = None
+) -> ActionProposal:
+    """`DEC-194` (product rebuild Block F) -- the real, first proposal
+    builder in this backend's history for a NEW `applications` row.
+    `company`/`role`/`deadline` are passed through verbatim; this
+    function trusts its caller to have already validated them (matching
+    `build_task_proposal()`'s own identical division of labor -- real
+    shape validation lives in `features/retry_queue_drainer.py::
+    validate_and_build_application_proposal()`, not here)."""
+    authorize_tool_call("career.create_application", calling_agent_domain="career")
+    return ActionProposal(
+        action_type=ActionType.CREATE_APPLICATION,
+        payload={"company": company, "role": role, "deadline": deadline.isoformat() if deadline else None},
+    )
+
+
+def build_schedule_interview_proposal(
+    application_id: str, scheduled_at: datetime | None = None, format: str | None = None
+) -> ActionProposal:
+    """`DEC-195` (product rebuild Block F, remainder) -- the real,
+    first proposal builder for the `interviews` table, unused by any
+    code in this backend's history since migration `0001`. Ownership
+    of `application_id` is verified later, in `action_executor.py`'s
+    own real `CREATE_INTERVIEW` branch (the real database connection
+    this function deliberately never receives) -- matches `build_
+    status_update_proposal()`'s own identical division of labor."""
+    authorize_tool_call("career.schedule_interview", calling_agent_domain="career")
+    return ActionProposal(
+        action_type=ActionType.CREATE_INTERVIEW,
+        payload={
+            "application_id": application_id,
+            "scheduled_at": scheduled_at.isoformat() if scheduled_at else None,
+            "format": format,
+        },
     )
 
 

@@ -156,6 +156,7 @@ String? _tryParseDetail(String body) {
 
 QuickCaptureResultData _parseQuickCaptureResult(Map<String, dynamic> json) {
   final findingsJson = json['findings'] as List<dynamic>;
+  final objectionsJson = json['objections'] as List<dynamic>;
   return QuickCaptureResultData(
     executed: json['executed'] as bool,
     decision: json['decision'] as String,
@@ -196,6 +197,15 @@ QuickCaptureResultData _parseQuickCaptureResult(Map<String, dynamic> json) {
           validator: (findingJson as Map<String, dynamic>)['validator'] as String,
           claim: findingJson['claim'] as String,
           visualState: visualStateForEvidence(findingJson['evidence_state'] as String),
+        ),
+    ],
+    objections: [
+      for (final objectionJson in objectionsJson)
+        ObjectionSummary(
+          category: (objectionJson as Map<String, dynamic>)['category'] as String,
+          severity: objectionJson['severity'] as String,
+          description: objectionJson['description'] as String,
+          signedOff: objectionJson['signed_off'] as bool,
         ),
     ],
   );
