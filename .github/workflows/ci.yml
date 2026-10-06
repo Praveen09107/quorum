@@ -10,29 +10,62 @@ name: CI
 #   service container (the same real image DEC-010 first proved this
 #   migration against locally), never the live Supabase project -- a real
 #   PR must never be able to touch live, production-adjacent data.
-# - `test_auth_google_oauth.py` (whole file) and two further real tests in
+# - `test_auth_google_oauth.py` (whole file) and four further real tests in
 #   `test_main.py`/`test_google_token_refresh.py`
 #   (`test_auth_token_with_a_fake_code_fails_loud_with_a_real_400`,
 #   `test_a_real_deliberately_invalid_refresh_token_is_genuinely_rejected_by_googles_real_endpoint`
 #   -- the second found live on `DEC-137`'s own first real CI run, the
-#   same real gap as the first, not assumed in advance) are deliberately
-#   excluded from this CI run. Each needs the real, live GOOGLE_OAUTH_
-#   CLIENT_ID/SECRET to distinguish a real `invalid_grant`/`400` from
-#   `invalid_client`/`503`/`invalid_request` (see `DEC-101`) -- this
-#   environment's own permission boundary blocked programmatically
-#   provisioning those as real GitHub Actions secrets during `DEC-115`'s
-#   own session, so rather than silently skip them with no record, or work
-#   around that denial, every exclusion is disclosed here, in this
-#   file, in plain text. Genuinely still open in STATUS_INDEX.md -- if
-#   GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET are ever added
-#   as real repo secrets, remove all three exclusions below. This file's own
-#   JWT_SIGNING_KEY/GOOGLE_TOKEN_ENCRYPTION_KEY stay CI-only dummy values
-#   regardless, always distinct from the real, deployed ones (`DEC-114`,
-#   `DEC-137`) -- unlike the OAuth client credentials above, this key is a
-#   real, self-generated application secret, not tied to any external
-#   account, so a real, disposable CI-only value is a real, safe thing to
-#   commit here in plain text (it decrypts nothing this CI run doesn't
-#   also encrypt itself, in the same disposable database).
+#   same real gap as the first, not assumed in advance;
+#   `test_connections_endpoint_is_honestly_not_connected_for_a_real_user_who_never_granted_google_access`/
+#   `test_connections_endpoint_reflects_a_real_stored_grant_and_its_real_scopes`
+#   -- the identical real gap, found live the same way on `DEC-198`'s own
+#   first real CI run on this PR, not caught sooner because every local
+#   verification that session used the real `.env`'s real client
+#   credentials) are deliberately excluded from this CI run. Each needs
+#   the real, live GOOGLE_OAUTH_CLIENT_ID/SECRET to distinguish a real
+#   `invalid_grant`/`400` from `invalid_client`/`503`/`invalid_request`
+#   (see `DEC-101`) -- this environment's own permission boundary blocked
+#   programmatically provisioning those as real GitHub Actions secrets
+#   during `DEC-115`'s own session, so rather than silently skip them with
+#   no record, or work around that denial, every exclusion is disclosed
+#   here, in this file, in plain text. Genuinely still open in
+#   STATUS_INDEX.md -- if GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET
+#   are ever added as real repo secrets, remove all five exclusions below.
+#   This file's own JWT_SIGNING_KEY/GOOGLE_TOKEN_ENCRYPTION_KEY stay
+#   CI-only dummy values regardless, always distinct from the real,
+#   deployed ones (`DEC-114`, `DEC-137`) -- unlike the OAuth client
+#   credentials above, this key is a real, self-generated application
+#   secret, not tied to any external account, so a real, disposable
+#   CI-only value is a real, safe thing to commit here in plain text (it
+#   decrypts nothing this CI run doesn't also encrypt itself, in the same
+#   disposable database).
+# - Three further real tests in `test_capture_stream.py`
+#   (`test_capture_stream_streams_the_real_gate_stages_then_the_result`,
+#   `test_capture_stream_persists_the_real_timeline_onto_the_action_row`,
+#   `test_action_status_replays_the_real_recorded_timeline`) and two in
+#   `test_main.py` (`test_update_budget_endpoint_is_real_and_live_sets_a_real_new_budget_ceiling_end_to_end`,
+#   `test_update_budget_endpoint_a_real_default_category_is_used_when_none_is_supplied`)
+#   are ALSO excluded, for a genuinely different real reason, found the
+#   same way on the same `DEC-198`-through-`DEC-205` PR: `POST /capture/
+#   stream` checks `settings.gemini_api_key is None` and fails loud with a
+#   real 503 BEFORE ever reaching extraction -- correct, deliberate
+#   behavior (`QUORUM_GATE_SPECIFICATION.md`'s own "fail honestly, not
+#   silently" rule), but this means the first three tests' own real,
+#   deliberate Gemini-extraction MOCK (see that file's own header
+#   docstring) can never be reached without a real, non-null
+#   `GEMINI_API_KEY` configured at all -- this project has deliberately
+#   never added one to CI, real or dummy, specifically so no CI run can
+#   ever accidentally burn a slot of the real, shared, 20-request/day
+#   quota. The two `UPDATE_BUDGET` tests are a materially different case
+#   from the first three -- `UPDATE_BUDGET` is real `Stakes.S2`, so Stage
+#   B genuinely runs and these two tests need a REAL, live Gemini Judge
+#   round-trip to mean anything at all (the same real, disclosed
+#   dependency `DEC-200`'s own commit message already names) -- a dummy
+#   key would not fix these two, only disguise the real reason they
+#   cannot pass without a real, quota-backed key. Genuinely still open in
+#   STATUS_INDEX.md: if this project ever decides a real (or CI-dummy, for
+#   the first three only) `GEMINI_API_KEY`/`GROQ_API_KEY` is worth adding
+#   as a real GitHub Actions secret, revisit all five of these exclusions.
 
 on:
   pull_request:
@@ -96,13 +129,20 @@ jobs:
         working-directory: backend
         run: ruff check .
 
-      - name: pytest (excludes the real tests needing a live Google OAuth client secret -- see this file's own header comment)
+      - name: pytest (excludes the real tests needing a live Google OAuth client secret or a real GEMINI_API_KEY -- see this file's own header comment)
         working-directory: backend
         run: |
           PYTHONPATH=src pytest tests -q \
             --ignore=tests/test_auth_google_oauth.py \
             --deselect=tests/test_main.py::test_auth_token_with_a_fake_code_fails_loud_with_a_real_400 \
-            --deselect=tests/test_google_token_refresh.py::test_a_real_deliberately_invalid_refresh_token_is_genuinely_rejected_by_googles_real_endpoint
+            --deselect=tests/test_google_token_refresh.py::test_a_real_deliberately_invalid_refresh_token_is_genuinely_rejected_by_googles_real_endpoint \
+            --deselect=tests/test_main.py::test_connections_endpoint_is_honestly_not_connected_for_a_real_user_who_never_granted_google_access \
+            --deselect=tests/test_main.py::test_connections_endpoint_reflects_a_real_stored_grant_and_its_real_scopes \
+            --deselect=tests/test_capture_stream.py::test_capture_stream_streams_the_real_gate_stages_then_the_result \
+            --deselect=tests/test_capture_stream.py::test_capture_stream_persists_the_real_timeline_onto_the_action_row \
+            --deselect=tests/test_capture_stream.py::test_action_status_replays_the_real_recorded_timeline \
+            --deselect=tests/test_main.py::test_update_budget_endpoint_is_real_and_live_sets_a_real_new_budget_ceiling_end_to_end \
+            --deselect=tests/test_main.py::test_update_budget_endpoint_a_real_default_category_is_used_when_none_is_supplied
 
   mobile:
     runs-on: ubuntu-latest
