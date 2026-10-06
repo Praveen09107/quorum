@@ -1226,8 +1226,16 @@ class _CalendarLoaderState extends State<CalendarLoader> {
 
   @override
   Widget build(BuildContext context) {
+    // `DEC-209` (product rebuild Part C, visual pass): `CalendarScreen`
+    // now renders its own real agent header on its own ambient
+    // background -- a second, opaque `AppBar` title would duplicate
+    // it. `extendBodyBehindAppBar` lets the ambient background paint
+    // all the way up; a transparent, back-button-only app bar is kept
+    // because this screen is PUSHED (not a tab), so real back
+    // navigation still needs a real affordance.
     return Scaffold(
-      appBar: AppBar(title: const Text('Calendar')),
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0, scrolledUnderElevation: 0),
       floatingActionButton: widget.onBookMeeting == null
           ? null
           : FloatingActionButton(onPressed: _openBookMeetingSheet, tooltip: 'Book a meeting', child: const Icon(Icons.add)),

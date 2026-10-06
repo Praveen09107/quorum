@@ -913,7 +913,14 @@ void main() {
     await openAgentsTab(tester);
     await scrollToAndTapAgentCard(tester, 'Calendar');
 
-    expect(find.widgetWithText(AppBar, 'Calendar'), findsOneWidget);
+    // `DEC-209` (product rebuild Part C visual pass): `CalendarScreen`
+    // now renders its own real agent header in-body on a transparent,
+    // `extendBodyBehindAppBar: true` app bar kept only for its real
+    // back button -- the real "Calendar" identification moved out of
+    // the `AppBar` title, matching `agents_index_screen.dart`'s own
+    // established in-body header pattern.
+    expect(find.widgetWithText(AppBar, 'Calendar'), findsNothing);
+    expect(find.text('Calendar'), findsOneWidget);
   });
 
   testWidgets('tapping the real Email agent card opens the real Email agent workspace (`DEC-199`)', (tester) async {
