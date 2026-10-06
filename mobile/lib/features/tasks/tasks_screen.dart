@@ -22,28 +22,20 @@
 // Open and cancelled share the same neutral tone, distinguished only by
 // icon shape -- neither is a "good" or "bad" state on its own.
 //
-// A real, disclosed fix found while applying the new status-color system
-// properly, not a pure reskin: `_PredictiveRiskBanner` previously
-// silently collapsed THREE real, distinct states (genuinely not enough
-// historical data yet; a real predicted busy week; a real all-clear)
-// into just two visual treatments -- "not enough data" rendered
-// identically to "all clear" (both plain, no color). That is exactly the
-// `no_data_found`-collapsed-into-a-pass mistake this project's own
-// `evidence_state` discipline (`CLAUDE.md`) exists to prevent elsewhere;
-// there was no reason this screen should be the one exception. Now: no
-// history -> `needsAttention` (a genuine ambiguity, matching that
-// color's own documented meaning exactly); a real predicted busy week ->
-// `critical` (a real, quantified negative outcome -- corrected by review
-// from an initial, wrong `uncertain` choice; see the inline comment at
-// `_PredictiveRiskBanner` for the full reasoning); a real all-clear ->
-// `verified`. `riskMessage()`'s own three-way logic is untouched -- only
-// which icon/color the UI selects around the same real message changed.
+// `DEC-210` (product rebuild Part C, visual pass): redesigned onto the
+// dark glassmorphic system `calendar_screen.dart` (`DEC-209`) already
+// carried over from `agents_index_screen.dart` -- zero logic change
+// (`sortTasks`/`statusLabel`/`formatHours`/`riskMessage` untouched,
+// same props, same real tap-to-complete/cancel bottom sheet).
 
 import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/features/predictive_risk/predictive_risk_logic.dart';
 import 'package:quorum_mobile/features/tasks/tasks_logic.dart';
-import 'package:quorum_mobile/theme/quorum_theme.dart';
+import 'package:quorum_mobile/theme/agent_identity.dart';
+import 'package:quorum_mobile/theme/glass.dart';
+import 'package:quorum_mobile/theme/quorum_dark_theme.dart';
+import 'package:quorum_mobile/theme/quorum_kit.dart';
 import 'package:quorum_mobile/theme/spacing.dart';
 
 class TasksScreen extends StatelessWidget {
@@ -62,7 +54,12 @@ class TasksScreen extends StatelessWidget {
   final Future<void> Function(String taskId)? onComplete;
   final Future<void> Function(String taskId)? onCancel;
 
-  const TasksScreen({super.key, required this.tasks, this.fetchPredictiveRisk, this.onComplete, this.onCancel});
+  const TasksScreen(
+      {super.key,
+      required this.tasks,
+      this.fetchPredictiveRisk,
+      this.onComplete,
+      this.onCancel});
 
   Future<void> _showActionsFor(BuildContext context, TaskData task) async {
     final messenger = ScaffoldMessenger.of(context);
@@ -74,31 +71,36 @@ class TasksScreen extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.all(QuorumSpacing.md),
-              child: Text(task.title, style: Theme.of(sheetContext).textTheme.titleMedium),
+              child: Text(task.title,
+                  style: Theme.of(sheetContext).textTheme.titleMedium),
             ),
             if (onComplete != null)
               ListTile(
-                leading: const QuorumIconBadge(icon: Icons.check_circle, color: QuorumStatusColors.verified),
+                leading: const Icon(Icons.check_circle,
+                    color: QuorumDarkStatus.verified),
                 title: const Text('Mark as done'),
                 onTap: () async {
                   Navigator.of(sheetContext).pop();
                   try {
                     await onComplete!(task.taskId);
                   } catch (e) {
-                    messenger.showSnackBar(SnackBar(content: Text("Couldn't mark this done: $e")));
+                    messenger.showSnackBar(
+                        SnackBar(content: Text("Couldn't mark this done: $e")));
                   }
                 },
               ),
             if (onCancel != null)
               ListTile(
-                leading: const QuorumIconBadge(icon: Icons.cancel, color: QuorumStatusColors.needsAttention),
+                leading: const Icon(Icons.cancel,
+                    color: QuorumDarkStatus.needsAttention),
                 title: const Text('Cancel task'),
                 onTap: () async {
                   Navigator.of(sheetContext).pop();
                   try {
                     await onCancel!(task.taskId);
                   } catch (e) {
-                    messenger.showSnackBar(SnackBar(content: Text("Couldn't cancel this task: $e")));
+                    messenger.showSnackBar(SnackBar(
+                        content: Text("Couldn't cancel this task: $e")));
                   }
                 },
               ),
@@ -110,57 +112,196 @@ class TasksScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final identity = identityOf(QuorumAgent.tasks);
     final sorted = sortTasks(tasks);
     final riskFetch = fetchPredictiveRisk;
 
-    if (sorted.isEmpty) {
-      return Column(
-        children: [
-          if (riskFetch != null) _PredictiveRiskBanner(fetch: riskFetch),
-          const Expanded(child: Center(child: Text('No tasks yet.'))),
-        ],
-      );
-    }
-
-    return Column(
-      children: [
-        if (riskFetch != null) _PredictiveRiskBanner(fetch: riskFetch),
-        Expanded(
-          child: ListView.separated(
-            padding: const EdgeInsets.all(QuorumSpacing.md),
-            itemCount: sorted.length,
-            separatorBuilder: (_, __) => const SizedBox(height: QuorumSpacing.sm),
-            itemBuilder: (context, index) {
-              final task = sorted[index];
-              final onSurfaceVariant = Theme.of(context).colorScheme.onSurfaceVariant;
-              final (icon, color) = switch (task.status) {
-                TaskStatus.done => (Icons.check_circle, QuorumStatusColors.verified),
-                TaskStatus.open => (Icons.radio_button_unchecked, onSurfaceVariant),
-                TaskStatus.cancelled => (Icons.cancel, onSurfaceVariant),
-              };
-              final canAct = task.status == TaskStatus.open && (onComplete != null || onCancel != null);
-              return Card(
-                child: ListTile(
-                  leading: QuorumIconBadge(icon: icon, color: color),
-                  title: Text(task.title),
-                  subtitle: Text(
-                    task.deadline == null
-                        ? formatHours(task.estimatedHours)
-                        : '${formatHours(task.estimatedHours)} · due ${task.deadline!.toIso8601String().split('T').first}',
-                  ),
-                  trailing: Chip(
-                    label: Text(statusLabel(task.status)),
-                    backgroundColor: color.withValues(alpha: 0.12),
-                    labelStyle: TextStyle(color: color),
-                    side: BorderSide.none,
-                  ),
-                  onTap: canAct ? () => _showActionsFor(context, task) : null,
+    return QuorumAmbientBackground(
+      accent: identity.accent,
+      child: SafeArea(
+        child: Padding(
+          // Same real reason `calendar_screen.dart` pads below the
+          // toolbar: this screen is PUSHED behind a transparent,
+          // `extendBodyBehindAppBar: true` app bar kept only for its
+          // real back button, since the real "Tasks" identification
+          // now lives in this screen's own in-body header.
+          padding:
+              const EdgeInsets.only(top: kToolbarHeight - QuorumSpacing.md),
+          child: sorted.isEmpty
+              ? Column(
+                  children: [
+                    _AgentHeader(identity: identity),
+                    if (riskFetch != null)
+                      _PredictiveRiskBanner(
+                          fetch: riskFetch, accent: identity.accent),
+                    const Expanded(
+                      child: Center(
+                        child: HonestEmptyState(
+                          icon: Icons.task_alt_outlined,
+                          headline: 'No tasks yet',
+                          detail:
+                              'Add one with the button below, or capture it in free text.',
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(
+                      QuorumSpacing.md, 0, QuorumSpacing.md, QuorumSpacing.xxl),
+                  itemCount: sorted.length + 2,
+                  separatorBuilder: (_, index) => index == 0
+                      ? const SizedBox.shrink()
+                      : const SizedBox(height: QuorumSpacing.sm),
+                  itemBuilder: (context, index) {
+                    if (index == 0) return _AgentHeader(identity: identity);
+                    if (index == 1) {
+                      return riskFetch == null
+                          ? const SizedBox.shrink()
+                          : Padding(
+                              padding: const EdgeInsets.only(
+                                  bottom: QuorumSpacing.sm),
+                              child: _PredictiveRiskBanner(
+                                  fetch: riskFetch, accent: identity.accent),
+                            );
+                    }
+                    final task = sorted[index - 2];
+                    final (icon, color) = switch (task.status) {
+                      TaskStatus.done => (
+                          Icons.check_circle,
+                          QuorumDarkStatus.verified
+                        ),
+                      TaskStatus.open => (
+                          Icons.radio_button_unchecked,
+                          identity.accent
+                        ),
+                      TaskStatus.cancelled => (
+                          Icons.cancel,
+                          QuorumDarkGround.textTertiary
+                        ),
+                    };
+                    final canAct = task.status == TaskStatus.open &&
+                        (onComplete != null || onCancel != null);
+                    return _TaskRow(
+                      task: task,
+                      icon: icon,
+                      color: color,
+                      onTap:
+                          canAct ? () => _showActionsFor(context, task) : null,
+                    );
+                  },
                 ),
-              );
-            },
+        ),
+      ),
+    );
+  }
+}
+
+class _AgentHeader extends StatelessWidget {
+  final AgentIdentity identity;
+
+  const _AgentHeader({required this.identity});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding:
+          const EdgeInsets.fromLTRB(0, QuorumSpacing.md, 0, QuorumSpacing.sm),
+      child: Row(
+        children: [
+          const AgentBadge(agent: QuorumAgent.tasks, compact: true),
+          const SizedBox(width: QuorumSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(identity.name,
+                    style: Theme.of(context)
+                        .textTheme
+                        .headlineSmall
+                        ?.copyWith(color: QuorumDarkGround.textPrimary)),
+                Text(identity.purpose,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: QuorumDarkGround.textSecondary)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TaskRow extends StatelessWidget {
+  final TaskData task;
+  final IconData icon;
+  final Color color;
+  final VoidCallback? onTap;
+
+  const _TaskRow(
+      {required this.task,
+      required this.icon,
+      required this.color,
+      this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    // `Material` is required here, not decorative -- `InkWell` needs a
+    // `Material` ancestor to render its ink response at all, and a
+    // bare `Container` doesn't provide one (confirmed live by this
+    // row's own widget test: "No Material widget found" before this
+    // fix). Transparent so it never paints over the real decoration
+    // below, the same real pattern `glass.dart::GlassPanel` already
+    // establishes for its own `onTap`.
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(QuorumRadius.md),
+        child: Container(
+          padding: const EdgeInsets.all(QuorumSpacing.md),
+          decoration: solidPanelDecoration(accent: color),
+          child: Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.14),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: color.withValues(alpha: 0.4)),
+                ),
+                child: Icon(icon, size: 18, color: color),
+              ),
+              const SizedBox(width: QuorumSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(task.title,
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleSmall
+                            ?.copyWith(color: QuorumDarkGround.textPrimary)),
+                    const SizedBox(height: 2),
+                    Text(
+                      task.deadline == null
+                          ? formatHours(task.estimatedHours)
+                          : '${formatHours(task.estimatedHours)} · due ${task.deadline!.toIso8601String().split('T').first}',
+                      style: QuorumMono.detail(context),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: QuorumSpacing.sm),
+              StatusPill(
+                  label: statusLabel(task.status), icon: icon, color: color),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 }
@@ -172,15 +313,18 @@ class TasksScreen extends StatelessWidget {
 /// shows a real message.
 class _PredictiveRiskBanner extends StatelessWidget {
   final Future<RiskAssessmentData> Function() fetch;
+  final Color accent;
 
-  const _PredictiveRiskBanner({required this.fetch});
+  const _PredictiveRiskBanner({required this.fetch, required this.accent});
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<RiskAssessmentData>(
       future: fetch(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done || snapshot.hasError || !snapshot.hasData) {
+        if (snapshot.connectionState != ConnectionState.done ||
+            snapshot.hasError ||
+            !snapshot.hasData) {
           return const SizedBox.shrink();
         }
         final risk = snapshot.data!;
@@ -205,17 +349,25 @@ class _PredictiveRiskBanner extends StatelessWidget {
         // don't know," backwards from what a predictive-risk warning
         // should communicate.
         final (IconData icon, Color color) = risk.matchingHistoricalWeeks == 0
-            ? (Icons.help_outline, QuorumStatusColors.needsAttention)
+            ? (Icons.help_outline, QuorumDarkStatus.needsAttention)
             : risk.isAtRisk
-                ? (Icons.warning_amber_rounded, QuorumStatusColors.critical)
-                : (Icons.check_circle_outline, QuorumStatusColors.verified);
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(QuorumSpacing.md, QuorumSpacing.md, QuorumSpacing.md, 0),
-          child: Card(
-            child: ListTile(
-              leading: QuorumIconBadge(icon: icon, color: color),
-              title: Text(riskMessage(risk)),
-            ),
+                ? (Icons.warning_amber_rounded, QuorumDarkStatus.critical)
+                : (Icons.check_circle_outline, QuorumDarkStatus.verified);
+        return GlassPanel(
+          accent: color,
+          accentStrength: risk.matchingHistoricalWeeks == 0 ? 0.4 : 1.0,
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(width: QuorumSpacing.sm),
+              Expanded(
+                child: Text(riskMessage(risk),
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(color: QuorumDarkGround.textPrimary)),
+              ),
+            ],
           ),
         );
       },
