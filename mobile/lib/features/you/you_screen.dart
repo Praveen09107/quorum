@@ -648,8 +648,13 @@ class CareerPipelineLoaderState extends State<CareerPipelineLoader> {
 
   @override
   Widget build(BuildContext context) {
+    // `DEC-212` (product rebuild Part C, visual pass): `CareerPipelineScreen`
+    // now renders its own real agent header on its own ambient
+    // background, matching the established precedent -- the pushed
+    // app bar is transparent and back-button-only.
     return Scaffold(
-      appBar: AppBar(title: const Text('Career pipeline')),
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0, scrolledUnderElevation: 0),
       floatingActionButton: widget.createApplication == null
           ? null
           : FloatingActionButton(onPressed: _openNewApplicationSheet, child: const Icon(Icons.add)),
