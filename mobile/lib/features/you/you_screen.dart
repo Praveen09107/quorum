@@ -40,6 +40,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/api/create_application_api.dart';
+import 'package:quorum_mobile/api/create_calendar_event_api.dart';
 import 'package:quorum_mobile/api/schedule_interview_api.dart';
 import 'package:quorum_mobile/api/update_budget_api.dart';
 import 'package:quorum_mobile/db/database.dart';
@@ -53,6 +54,7 @@ import 'package:quorum_mobile/features/connections/connections_logic.dart';
 import 'package:quorum_mobile/features/connections/connections_screen.dart';
 import 'package:quorum_mobile/features/finance/finance_logic.dart';
 import 'package:quorum_mobile/features/finance/finance_screen.dart';
+import 'package:quorum_mobile/features/gate_pipeline/gate_pipeline_screen.dart' show CreateLocalEventCall;
 import 'package:quorum_mobile/features/memory_transparency/memory_transparency_logic.dart';
 import 'package:quorum_mobile/features/memory_transparency/memory_transparency_screen.dart';
 import 'package:quorum_mobile/features/search/search_logic.dart';
@@ -105,6 +107,12 @@ class YouScreen extends StatefulWidget {
   final Future<CalendarSyncResult> Function()? syncCalendar;
   final Future<List<CalendarMirrorData>> Function()? fetchCalendarEvents;
 
+  /// `DEC-206` (product rebuild) -- Calendar's first real write
+  /// control. Optional and additive, matching every sibling fetcher's
+  /// own honest gating.
+  final CreateCalendarEventFetcher? onBookMeeting;
+  final CreateLocalEventCall? onCreateLocalEvent;
+
   /// REAL, NEW (the redesign's own real You-tab promotion work) -- the
   /// same real `/today/summary` fetcher `TodayScreen` already uses,
   /// reused here for three of this screen's five real preview numbers
@@ -137,6 +145,8 @@ class YouScreen extends StatefulWidget {
     this.fetchSearch,
     this.syncCalendar,
     this.fetchCalendarEvents,
+    this.onBookMeeting,
+    this.onCreateLocalEvent,
     this.fetchWeekSummary,
     this.onSignOut,
   });
@@ -311,6 +321,8 @@ class _YouScreenState extends State<YouScreen> {
                       builder: (_) => CalendarLoader(
                         sync: widget.syncCalendar!,
                         fetchEvents: widget.fetchCalendarEvents!,
+                        onBookMeeting: widget.onBookMeeting,
+                        onCreateLocalEvent: widget.onCreateLocalEvent,
                       ),
                     ),
                   ),
@@ -1136,24 +1148,91 @@ class _SetBudgetSheetState extends State<_SetBudgetSheet> {
 /// events a PRIOR successful sync already stored -- `CalendarScreen`
 /// itself decides the honest empty-state message from the combination
 /// of `permissionGranted` and `events`, not this loader.
-class CalendarLoader extends StatelessWidget {
+class CalendarLoader extends StatefulWidget {
   final Future<CalendarSyncResult> Function() sync;
   final Future<List<CalendarMirrorData>> Function() fetchEvents;
 
-  const CalendarLoader({super.key, required this.sync, required this.fetchEvents});
+  /// `DEC-206` (product rebuild) -- the real "Book a meeting" control,
+  /// the first write path this screen has ever had. Both optional and
+  /// independently gated, matching `FinanceLoader`'s `onUpdateBudget`
+  /// precedent exactly: [onBookMeeting] alone still shows the Gate's
+  /// real decision; [onCreateLocalEvent] is what performs the actual
+  /// on-device write once the Gate approves.
+  final CreateCalendarEventFetcher? onBookMeeting;
+  final CreateLocalEventCall? onCreateLocalEvent;
+
+  const CalendarLoader({
+    super.key,
+    required this.sync,
+    required this.fetchEvents,
+    this.onBookMeeting,
+    this.onCreateLocalEvent,
+  });
+
+  @override
+  State<CalendarLoader> createState() => _CalendarLoaderState();
+}
+
+class _CalendarLoaderState extends State<CalendarLoader> {
+  late Future<({CalendarSyncResult syncResult, List<CalendarMirrorData> events})> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
 
   Future<({CalendarSyncResult syncResult, List<CalendarMirrorData> events})> _load() async {
-    final syncResult = await sync();
-    final events = await fetchEvents();
+    final syncResult = await widget.sync();
+    final events = await widget.fetchEvents();
     return (syncResult: syncResult, events: events);
+  }
+
+  Future<void> _openBookMeetingSheet() async {
+    final onBookMeeting = widget.onBookMeeting;
+    if (onBookMeeting == null) return;
+    final result = await showModalBottomSheet<CreateCalendarEventResult>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _BookMeetingSheet(onBookMeeting: onBookMeeting),
+    );
+    if (result == null || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final onCreateLocalEvent = widget.onCreateLocalEvent;
+    final start = result.eventStart;
+    final end = result.eventEnd;
+    final title = result.eventTitle;
+
+    // `CREATE_CALENDAR_EVENT_LOCAL` has no real server-side execution
+    // branch at all -- `executed` stays `false` by design, per
+    // `main.py`'s own `_quick_capture_result_to_dict()` docstring. A
+    // real, genuine Gate approval is what authorizes the ON-DEVICE
+    // write below, never `executed`.
+    if (result.decision == 'approve' && onCreateLocalEvent != null && start != null && end != null && title != null) {
+      final localResult = await onCreateLocalEvent(title: title, start: start, end: end);
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text(localResult.success ? 'Booked "$title" on your real calendar.' : "The Gate approved it, but the on-device write failed: ${localResult.detail}"),
+      ));
+      if (localResult.success) setState(() => _future = _load());
+      return;
+    }
+
+    messenger.showSnackBar(SnackBar(
+      content: Text(result.decision == 'approve' ? 'The Gate approved it.' : 'The Gate declined to book that meeting (${result.decision}).'),
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Calendar')),
+      floatingActionButton: widget.onBookMeeting == null
+          ? null
+          : FloatingActionButton(onPressed: _openBookMeetingSheet, tooltip: 'Book a meeting', child: const Icon(Icons.add)),
       body: FutureBuilder(
-        future: _load(),
+        future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
@@ -1168,6 +1247,132 @@ class CalendarLoader extends StatelessWidget {
             now: DateTime.now(),
           );
         },
+      ),
+    );
+  }
+}
+
+/// `DEC-206` (product rebuild) -- the real form behind Calendar's
+/// first write control. Matches `_SetBudgetSheet`'s/`_NewApplicationSheet`'s
+/// own established shape: a plain, minimal, real form, submitting to
+/// the injected fetcher and popping the real result back to the
+/// caller rather than owning any post-submit side effect itself.
+class _BookMeetingSheet extends StatefulWidget {
+  final CreateCalendarEventFetcher onBookMeeting;
+
+  const _BookMeetingSheet({required this.onBookMeeting});
+
+  @override
+  State<_BookMeetingSheet> createState() => _BookMeetingSheetState();
+}
+
+class _BookMeetingSheetState extends State<_BookMeetingSheet> {
+  final _titleController = TextEditingController();
+  final _inviteeController = TextEditingController();
+  DateTime _start = DateTime.now().add(const Duration(days: 1, hours: 1)).copyWith(minute: 0, second: 0, microsecond: 0, millisecond: 0);
+  Duration _duration = const Duration(minutes: 30);
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _inviteeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickStart() async {
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _start,
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(_start));
+    if (time == null || !mounted) return;
+    setState(() => _start = DateTime(date.year, date.month, date.day, time.hour, time.minute));
+  }
+
+  Future<void> _submit() async {
+    final title = _titleController.text.trim();
+    if (title.isEmpty) {
+      setState(() => _error = 'Enter a real, non-empty title first.');
+      return;
+    }
+    final invitee = _inviteeController.text.trim();
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final result = await widget.onBookMeeting(
+        title: title,
+        start: _start,
+        end: _start.add(_duration),
+        inviteeEmail: invitee.isEmpty ? null : invitee,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(result);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: QuorumSpacing.lg,
+        right: QuorumSpacing.lg,
+        top: QuorumSpacing.lg,
+        bottom: MediaQuery.of(context).viewInsets.bottom + QuorumSpacing.lg,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Book a meeting', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: QuorumSpacing.md),
+          TextField(controller: _titleController, decoration: const InputDecoration(labelText: 'Title')),
+          const SizedBox(height: QuorumSpacing.sm),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text('Starts ${_start.toLocal()}'.split('.').first),
+            trailing: const Icon(Icons.edit_calendar_outlined),
+            onTap: _pickStart,
+          ),
+          DropdownButtonFormField<Duration>(
+            initialValue: _duration,
+            decoration: const InputDecoration(labelText: 'Duration'),
+            items: const [
+              DropdownMenuItem(value: Duration(minutes: 15), child: Text('15 minutes')),
+              DropdownMenuItem(value: Duration(minutes: 30), child: Text('30 minutes')),
+              DropdownMenuItem(value: Duration(hours: 1), child: Text('1 hour')),
+              DropdownMenuItem(value: Duration(hours: 2), child: Text('2 hours')),
+            ],
+            onChanged: (value) => setState(() => _duration = value ?? _duration),
+          ),
+          const SizedBox(height: QuorumSpacing.sm),
+          TextField(
+            controller: _inviteeController,
+            decoration: const InputDecoration(labelText: 'Invite someone (optional, real email)'),
+            keyboardType: TextInputType.emailAddress,
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: QuorumSpacing.sm),
+            Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ],
+          const SizedBox(height: QuorumSpacing.md),
+          FilledButton(
+            onPressed: _submitting ? null : _submit,
+            child: _submitting ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Book it'),
+          ),
+        ],
       ),
     );
   }

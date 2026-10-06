@@ -648,6 +648,67 @@ async def test_schedule_interview_endpoint_rejects_an_unowned_application_with_a
         await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
 
 
+# --- POST /calendar/events (`DEC-206`, product rebuild) ---
+
+
+def test_create_calendar_event_endpoint_requires_real_auth():
+    with TestClient(app) as client:
+        response = client.post(
+            "/calendar/events",
+            json={"title": "Sync", "start_iso": "2027-03-01T10:00:00+00:00", "end_iso": "2027-03-01T10:30:00+00:00"},
+        )
+    assert response.status_code == 401
+
+
+@pytest.mark.skipif(get_settings().gemini_api_key is None, reason="no real GEMINI_API_KEY configured in this environment")
+async def test_create_calendar_event_endpoint_is_real_and_live_books_a_local_event_end_to_end(pool, provisioned_users):
+    """`CREATE_CALENDAR_EVENT_LOCAL` (no `invitee_email`) is real
+    `Stakes.S2` -- the real Judge genuinely runs here (unlike `POST
+    /applications`/`POST /interviews`'s own `S1` precedent), the same
+    real, live, shared-quota cost `test_update_budget_endpoint_is_real_
+    and_live_sets_a_real_new_budget_ceiling_end_to_end` already accepts
+    for its own identical `S2` case. The real `event_start`/`event_end`/
+    `event_title` fields -- what `CalendarScreen`'s own new "Book a
+    meeting" control needs to perform the actual on-device write -- are
+    asserted present, not just `executed`."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    marker = f"Real cascade test meeting {uuid.uuid4()}"
+
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/calendar/events",
+                json={"title": marker, "start_iso": "2027-03-01T10:00:00+00:00", "end_iso": "2027-03-01T10:30:00+00:00"},
+                headers=headers,
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["stakes"] == "S2"
+        assert body["domain"] == "calendar"
+        assert body["operation"] == "create"
+        assert body["event_title"] == marker
+        assert body["event_start"] is not None
+        assert body["event_end"] is not None
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
+async def test_create_calendar_event_endpoint_rejects_an_empty_title_with_a_real_502_not_a_500(pool, provisioned_users):
+    """An empty title fails `validate_and_build_calendar_proposal()`'s
+    own real, pre-existing check before any real Gate/Judge call is
+    ever made -- matching `POST /applications`'s own identical real
+    precedent for an empty `company`, needing no live LLM key."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    with TestClient(app) as client:
+        response = client.post(
+            "/calendar/events",
+            json={"title": "   ", "start_iso": "2027-03-01T10:00:00+00:00", "end_iso": "2027-03-01T10:30:00+00:00"},
+            headers=headers,
+        )
+    assert response.status_code == 502
+
+
 @pytest.mark.skipif(get_settings().gemini_api_key is None, reason="no real GEMINI_API_KEY configured in this environment")
 async def test_quick_capture_endpoint_is_real_and_live_creates_a_real_expense_end_to_end(pool, provisioned_users):
     """The real, live, end-to-end Finance-domain proof `QUORUM_FINAL_
