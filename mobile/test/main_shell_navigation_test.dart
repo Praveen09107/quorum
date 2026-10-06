@@ -932,7 +932,7 @@ void main() {
         total: 1,
         successRate: 1.0,
         successes: [
-          LoggedActionData(actionId: 'p1', timestamp: DateTime(2026, 10, 1), outcome: 'approved_unchanged', description: 'A real, distinctive logged action'),
+          LoggedActionData(actionId: 'p1', timestamp: DateTime(2026, 10, 1), outcome: 'approved_unchanged', description: 'A real, distinctive logged action', actionType: 'create_task', stakes: 'S1', domain: 'tasks'),
         ],
         failuresAndCatches: const [],
         genuinelyUncertain: const [],

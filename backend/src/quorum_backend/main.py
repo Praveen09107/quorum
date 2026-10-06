@@ -67,7 +67,7 @@ from quorum_backend.features.action_approval import (
     approve_pending_action,
     reject_pending_action,
 )
-from quorum_backend.features.agent_telemetry import REAL_DOMAIN_AGENTS, fetch_agent_stats
+from quorum_backend.features.agent_telemetry import REAL_DOMAIN_AGENTS, agent_for_action_type, fetch_agent_stats
 from quorum_backend.features.career_digest import (
     fetch_company_digest,
     make_groq_compile_digest_call,
@@ -2172,6 +2172,15 @@ async def honesty_log(
                 "timestamp": action.timestamp,
                 "outcome": action.outcome,
                 "description": action.description,
+                # `DEC-205` (product rebuild) -- the real Activity
+                # screen's own filter-by-agent/filter-by-stakes
+                # requirement. `domain` reuses `agent_telemetry.py`'s
+                # own real, exhaustive mapping rather than a second,
+                # parallel one -- `None` only for `CREATE_NOTE`, the
+                # one real action type no agent has ever proposed.
+                "action_type": action.action_type,
+                "stakes": action.stakes,
+                "domain": agent_for_action_type(action.action_type),
             }
             for action in actions
         ]

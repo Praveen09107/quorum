@@ -2148,8 +2148,13 @@ async def test_honesty_log_endpoint_is_real_and_live_not_mocked_with_a_real_vali
         assert set(body.keys()) == {"total", "success_rate", "successes", "failures_and_catches", "genuinely_uncertain"}
         assert len(body["successes"]) == 1
         assert body["successes"][0]["description"] == "Created task: A real end-to-end task"
+        # `DEC-205`: the real Activity screen's own filter fields.
+        assert body["successes"][0]["action_type"] == "create_task"
+        assert body["successes"][0]["stakes"] == "S1"
+        assert body["successes"][0]["domain"] == "tasks"
         assert len(body["failures_and_catches"]) == 1
         assert body["failures_and_catches"][0]["outcome"] == "caught_by_gate"
+        assert body["failures_and_catches"][0]["domain"] == "email"
         assert len(body["genuinely_uncertain"]) == 1
     finally:
         await pool.execute(

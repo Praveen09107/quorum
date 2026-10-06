@@ -72,13 +72,13 @@ void main() {
         total: 3,
         successRate: 0.667,
         successes: [
-          LoggedActionData(actionId: '1', timestamp: DateTime(2026, 8, 10), outcome: 'approved_unchanged', description: 'Replied to Priya'),
+          LoggedActionData(actionId: '1', timestamp: DateTime(2026, 8, 10), outcome: 'approved_unchanged', description: 'Replied to Priya', actionType: 'create_task', stakes: 'S1', domain: 'tasks'),
         ],
         failuresAndCatches: [
-          LoggedActionData(actionId: '2', timestamp: DateTime(2026, 8, 11), outcome: 'caught_by_gate', description: 'Draft claimed a meeting that did not exist'),
+          LoggedActionData(actionId: '2', timestamp: DateTime(2026, 8, 11), outcome: 'caught_by_gate', description: 'Draft claimed a meeting that did not exist', actionType: 'create_task', stakes: 'S1', domain: 'tasks'),
         ],
         genuinelyUncertain: [
-          LoggedActionData(actionId: '3', timestamp: DateTime(2026, 8, 12), outcome: 'no_data_found', description: 'Could not verify a claim either way'),
+          LoggedActionData(actionId: '3', timestamp: DateTime(2026, 8, 12), outcome: 'no_data_found', description: 'Could not verify a claim either way', actionType: 'create_task', stakes: 'S1', domain: 'tasks'),
         ],
       );
 
@@ -93,7 +93,7 @@ void main() {
         total: 2,
         successRate: 1.0,
         successes: [
-          LoggedActionData(actionId: '1', timestamp: DateTime(2026, 8, 10), outcome: 'approved_unchanged', description: 'x'),
+          LoggedActionData(actionId: '1', timestamp: DateTime(2026, 8, 10), outcome: 'approved_unchanged', description: 'x', actionType: 'create_task', stakes: 'S1', domain: 'tasks'),
         ],
         failuresAndCatches: const [],
         genuinelyUncertain: const [],

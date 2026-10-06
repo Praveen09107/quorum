@@ -79,6 +79,9 @@ List<LoggedActionData> _parseActions(dynamic rawList) {
       timestamp: DateTime.parse(item['timestamp'] as String),
       outcome: item['outcome'] as String,
       description: item['description'] as String,
+      actionType: item['action_type'] as String,
+      stakes: item['stakes'] as String,
+      domain: item['domain'] as String?,
     );
   }).toList();
 }

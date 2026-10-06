@@ -29,6 +29,7 @@
 
 import 'package:flutter/material.dart';
 
+import 'package:quorum_mobile/features/activity/activity_screen.dart';
 import 'package:quorum_mobile/features/honesty_log/honesty_log_logic.dart';
 import 'package:quorum_mobile/theme/quorum_theme.dart';
 import 'package:quorum_mobile/theme/spacing.dart';
@@ -53,6 +54,23 @@ class HonestyLogScreen extends StatelessWidget {
         Text(
           '${formatSuccessRate(feed.successRate)} of ${feed.total} actions succeeded as drafted',
           style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: QuorumSpacing.md),
+        // `DEC-205` (product rebuild) -- the plan's own named
+        // "Activity" screen: the same real feed this screen already
+        // has, merged into one real chronological timeline, grouped
+        // by day, filterable by agent/outcome/stakes. No new fetch --
+        // a real drill-through, not a new fetcher to thread through.
+        Card(
+          child: ListTile(
+            leading: QuorumIconBadge(icon: Icons.history, color: Theme.of(context).colorScheme.primary),
+            title: const Text('Full activity timeline'),
+            subtitle: const Text('Every real action, filterable by agent, outcome, or stakes'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => ActivityScreen(feed: feed, onTapAction: onTapAction)),
+            ),
+          ),
         ),
         const SizedBox(height: QuorumSpacing.md),
         // Every section below shares identical heading and card styling

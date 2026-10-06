@@ -103,6 +103,15 @@ class LoggedAction:
     outcome: str
     description: str
 
+    # `DEC-205` (product rebuild) -- the real Activity screen's own
+    # filter-by-agent/filter-by-stakes requirement. Both were already
+    # being selected and read here (`action_type` to build `description`
+    # above; `stakes` not previously selected at all) -- additive,
+    # never a new query shape, just real fields this module was already
+    # positioned to carry through and never did.
+    action_type: str
+    stakes: str
+
 
 @dataclass(frozen=True)
 class HonestyFeed:
@@ -201,22 +210,24 @@ UNCERTAIN_OUTCOMES = frozenset(
 )
 
 
-def build_honesty_feed(rows: list[tuple[str, datetime, str, str, dict]]) -> HonestyFeed:
+def build_honesty_feed(rows: list[tuple[str, datetime, str, str, str, dict]]) -> HonestyFeed:
     """Pure, real, deterministic grouping -- takes already-fetched
-    `(action_id, timestamp, outcome, action_type, payload)` tuples
-    (real DB access lives in `fetch_honesty_feed()` below, mirroring
-    `trust_digest.py`/`subscription_detective.py`'s own established
-    split between pure computation and live querying)."""
+    `(action_id, timestamp, outcome, action_type, stakes, payload)`
+    tuples (real DB access lives in `fetch_honesty_feed()` below,
+    mirroring `trust_digest.py`/`subscription_detective.py`'s own
+    established split between pure computation and live querying)."""
     successes: list[LoggedAction] = []
     failures_and_catches: list[LoggedAction] = []
     genuinely_uncertain: list[LoggedAction] = []
 
-    for action_id, timestamp, outcome, action_type, payload in rows:
+    for action_id, timestamp, outcome, action_type, stakes, payload in rows:
         entry = LoggedAction(
             action_id=action_id,
             timestamp=timestamp,
             outcome=outcome,
             description=describe_action(action_type, payload),
+            action_type=action_type,
+            stakes=stakes,
         )
         if outcome in SUCCESS_OUTCOMES:
             successes.append(entry)
@@ -272,14 +283,14 @@ async def fetch_honesty_feed(pool: asyncpg.Pool, *, user_id: str) -> HonestyFeed
     aggregation gap here (see this module's own top-of-file docstring,
     disclosed separately, not fixed by this session)."""
     rows = await pool.fetch(
-        "SELECT proposal_id, COALESCE(resolved_at, created_at) AS ts, outcome, action_type, payload "
+        "SELECT proposal_id, COALESCE(resolved_at, created_at) AS ts, outcome, action_type, stakes, payload "
         "FROM action_events WHERE user_id = $1 AND outcome IS NOT NULL "
         "ORDER BY COALESCE(resolved_at, created_at) DESC",
         uuid.UUID(user_id),
     )
     return build_honesty_feed(
         [
-            (str(row["proposal_id"]), row["ts"], row["outcome"], row["action_type"], json.loads(row["payload"]))
+            (str(row["proposal_id"]), row["ts"], row["outcome"], row["action_type"], row["stakes"], json.loads(row["payload"]))
             for row in rows
         ]
     )

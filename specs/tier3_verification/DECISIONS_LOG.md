@@ -4915,4 +4915,22 @@ Gemini quota consumed by this verification was checked before spending it (11 of
 
 ---
 
-*Next entry: DEC-205*
+## DEC-205: the real, filterable Activity screen
+
+**Closes the plan's own named Activity screen: "the full timeline, grouped by day, filterable by agent / outcome / stakes."** `GET /honesty_log` already carried every real, resolved action across three real buckets (successes/failures-and-catches/genuinely-uncertain), each already correctly ordered -- but no mobile screen ever showed them merged back into one real chronological view, and the per-row fields needed to filter by agent or stakes were never exposed at all.
+
+**A real, small, additive backend extension, not a new query shape.** `fetch_honesty_feed()`'s own SQL already selected `action_type` (to build `description`); it now also selects `stakes`, and `LoggedAction` gains real `action_type`/`stakes` fields to carry both through. `GET /honesty_log`'s own per-row serialization adds `action_type`, `stakes`, and a real `domain` -- reusing `agent_telemetry.py::agent_for_action_type()` directly rather than a second, parallel mapping, with the exact same honest `None` result for `CREATE_NOTE` that function already establishes.
+
+**`mergeActivityTimeline()`** (new, pure) -- a real three-way merge of the three already-sorted buckets back into one chronological list, most-recent-first. Deliberately a merge, not a concatenate-then-sort: concatenating would put every success before every failure regardless of real timestamp, misrepresenting the order these actions actually happened in. `groupActivityByDay()` and `applyActivityFilter()` (both new, pure) handle the real day-grouping and the real domain/outcome/stakes filtering, including a genuinely distinct `matchUnassignedDomain` filter value so a real `CREATE_NOTE` row (which has no domain at all) stays reachable by an explicit choice rather than silently excluded forever.
+
+**`ActivityScreen`** (new) -- reached as a real drill-through from the existing Log tab's own header, re-using the exact same `HonestyFeedData` that screen already fetched once (no new network call), with filter chips for every real domain/stakes-tier/outcome and day-grouped rows tapping through into the already-real Decision Trace screen (`DEC-201`).
+
+**A real test break found and fixed by the full suite, not missed:** the new "Full activity timeline" entry point carries its own real chevron unconditionally (the Activity screen itself is always reachable; only its individual rows' tap-through is gated by `onTapAction`) -- this collided with an existing test asserting zero chevrons anywhere on the Log screen when `onTapAction` was unconfigured. Fixed by scoping that assertion to the specific action row it was actually about, rather than the whole screen -- the real gating behavior itself was never wrong, only the test's own reach.
+
+**Verification.** `ruff check backend` clean. `flutter analyze` zero issues. `flutter test`: **933 passed** (up from 913 at the `DEC-204` checkpoint -- 20 new: pure logic tests for the merge/group/filter functions, the real `ActivityScreen` widget tests, and new assertions on `honesty_log_api_test.dart`'s own extended fixtures). Full backend suite re-run: 1138 passed, 15 failed -- all 15 the familiar, already-disclosed shared-Gemini-quota-exhaustion class, none new, none touching this entry.
+
+**Not done, named rather than assumed:** no real device was connected to confirm this screen renders and behaves correctly on-device. The remaining four full agent workspaces, the four-tab IA consolidation, the mini-player, the Gate "Live" real-time streaming screen, and the rest of Block G all remain exactly as deferred as `DEC-204` left them. `PIILeakCheck`/`CommitmentCheck`/`AvailabilityCheck`/`TemporalFactCheck`/`CoverageCheck` remain unwired. Nothing from this rebuild is deployed to the live Cloud Run backend or witnessed on a real device -- fifteen real PRs (`#99` through this entry's own) remain open and unmerged.
+
+---
+
+*Next entry: DEC-206*
