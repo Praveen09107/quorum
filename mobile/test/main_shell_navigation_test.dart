@@ -944,7 +944,12 @@ void main() {
     await openAgentsTab(tester);
     await scrollToAndTapAgentCard(tester, 'Email');
 
-    expect(find.widgetWithText(AppBar, 'Email agent'), findsOneWidget);
+    // `DEC-213` (product rebuild Part C visual pass): `EmailWorkspaceScreen`
+    // now renders its own real agent header in-body on a transparent
+    // app bar, matching every other redesigned workspace's precedent --
+    // the real "Email" identification moved out of the `AppBar` title.
+    expect(find.widgetWithText(AppBar, 'Email agent'), findsNothing);
+    expect(find.text('Email'), findsOneWidget);
     expect(find.text('A real, distinctive draft subject'), findsOneWidget);
   });
 
