@@ -51,6 +51,17 @@ class GateEvent {
     if (decoded is! Map<String, dynamic>) {
       throw const FormatException('Gate event payload was not a JSON object');
     }
+    return GateEvent.fromMap(decoded);
+  }
+
+  /// `DEC-201` (product rebuild) -- the real Decision Trace screen's
+  /// own entry point into this exact same parser. A stored, replayed
+  /// event (`GET /actions/{id}/status`'s own `timeline` field) arrives
+  /// already decoded, as a real `Map`, not a raw SSE `data:` string --
+  /// `fromJson` above now delegates here after its own `jsonDecode`,
+  /// so both the live stream and a static replay share one real
+  /// parsing rule, never two that could silently drift apart.
+  factory GateEvent.fromMap(Map<String, dynamic> decoded) {
     final name = decoded['event'];
     if (name is! String || name.isEmpty) {
       throw const FormatException('Gate event payload carried no event name');

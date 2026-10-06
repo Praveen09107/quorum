@@ -83,6 +83,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:quorum_mobile/api/action_approval_api.dart';
+import 'package:quorum_mobile/api/action_status_api.dart';
 import 'package:quorum_mobile/api/connections_api.dart';
 import 'package:quorum_mobile/api/email_overview_api.dart';
 import 'package:quorum_mobile/api/expenses_api.dart';
@@ -99,6 +100,7 @@ import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
 import 'package:quorum_mobile/features/email/email_workspace_screen.dart';
 import 'package:quorum_mobile/features/career_digest/career_digest_logic.dart';
+import 'package:quorum_mobile/features/decision_trace/decision_trace_screen.dart';
 import 'package:quorum_mobile/features/finance/finance_logic.dart';
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_screen.dart';
@@ -165,6 +167,11 @@ class MainShell extends ConsumerStatefulWidget {
   /// matching every sibling fetcher's own honest gating.
   final EmailOverviewFetcher? fetchEmailOverview;
   final HonestyFeedFetcher? fetchHonestyFeed;
+
+  /// `DEC-201` (product rebuild) -- the real Decision Trace screen.
+  /// Optional and additive, matching every sibling fetcher's own
+  /// honest gating.
+  final ActionStatusFetcher? fetchActionStatus;
   final TrustFetcher? fetchTrust;
   final TrustDigestFetcher? fetchTrustDigest;
   final GateValidatorsFetcher? fetchGateValidators;
@@ -289,6 +296,7 @@ class MainShell extends ConsumerStatefulWidget {
     this.fetchAgents,
     this.fetchEmailOverview,
     this.fetchHonestyFeed,
+    this.fetchActionStatus,
     this.fetchTrust,
     this.fetchTrustDigest,
     this.fetchGateValidators,
@@ -541,7 +549,7 @@ class _MainShellState extends ConsumerState<MainShell> {
         if (fetchAgents == null) return const _NotConnectedState(label: 'Agents');
         return AgentsIndexScreen(fetch: fetchAgents, onTapAgent: (agent) => _openAgentWorkspace(context, agent));
       case 2:
-        return _HonestyLogTab(fetch: widget.fetchHonestyFeed);
+        return _HonestyLogTab(fetch: widget.fetchHonestyFeed, fetchActionStatus: widget.fetchActionStatus);
       case 3:
         return _TrustTab(
           fetch: widget.fetchTrust,
@@ -1035,7 +1043,13 @@ class _NegotiationLoaderState extends State<_NegotiationLoader> {
 class _HonestyLogTab extends StatelessWidget {
   final HonestyFeedFetcher? fetch;
 
-  const _HonestyLogTab({this.fetch});
+  /// `DEC-201` (product rebuild) -- the real Decision Trace drill-
+  /// through. Optional and additive; absent leaves every row non-
+  /// interactive, matching this shell's own established honest-gating
+  /// convention for every other real fetcher.
+  final ActionStatusFetcher? fetchActionStatus;
+
+  const _HonestyLogTab({this.fetch, this.fetchActionStatus});
 
   @override
   Widget build(BuildContext context) {
@@ -1051,7 +1065,17 @@ class _HonestyLogTab extends StatelessWidget {
         if (snapshot.hasError) {
           return Center(child: Text("Couldn't load the Log: ${snapshot.error}"));
         }
-        return HonestyLogScreen(feed: snapshot.data!);
+        final fetchActionStatus = this.fetchActionStatus;
+        return HonestyLogScreen(
+          feed: snapshot.data!,
+          onTapAction: fetchActionStatus == null
+              ? null
+              : (action) => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => DecisionTraceScreen(proposalId: action.actionId, fetch: fetchActionStatus),
+                    ),
+                  ),
+        );
       },
     );
   }

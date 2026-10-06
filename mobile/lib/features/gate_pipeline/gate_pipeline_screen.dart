@@ -339,7 +339,7 @@ class _GatePipelineScreenState extends State<GatePipelineScreen> {
           child: ListView(
             padding: const EdgeInsets.all(QuorumSpacing.md),
             children: [
-              for (final row in _view.rows) _PipelineRowTile(key: ValueKey(row.id), row: row),
+              for (final row in _view.rows) PipelineRowTile(key: ValueKey(row.id), row: row),
               if (_view.error != null) _ErrorCard(error: _view.error!),
             ],
           ),
@@ -519,10 +519,10 @@ class _GatePipelineScreenState extends State<GatePipelineScreen> {
   }
 }
 
-class _PipelineRowTile extends StatelessWidget {
+class PipelineRowTile extends StatelessWidget {
   final PipelineRow row;
 
-  const _PipelineRowTile({super.key, required this.row});
+  const PipelineRowTile({super.key, required this.row});
 
   @override
   Widget build(BuildContext context) {

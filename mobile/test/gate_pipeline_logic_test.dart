@@ -88,6 +88,23 @@ void main() {
       expect(() => GateEvent.fromJson('{"event":""}'), throwsFormatException);
       expect(() => GateEvent.fromJson('[]'), throwsFormatException);
     });
+
+    test('fromMap (`DEC-201`) parses an already-decoded event identically to fromJson', () {
+      // The real Decision Trace screen's own entry point -- a stored,
+      // replayed timeline event arrives as an already-decoded `Map`
+      // (from `GET /actions/{id}/status`'s own JSON response), never a
+      // raw SSE `data:` string.
+      final event = GateEvent.fromMap({'event': 'stage_a.check', 'at_ms': 120, 'duration_ms': 3, 'validator': 'x'});
+      expect(event.name, 'stage_a.check');
+      expect(event.atMs, 120);
+      expect(event.durationMs, 3);
+      expect(event.data['validator'], 'x');
+    });
+
+    test('fromMap rejects a payload with no event name, same as fromJson', () {
+      expect(() => GateEvent.fromMap({'at_ms': 1}), throwsFormatException);
+      expect(() => GateEvent.fromMap({'event': ''}), throwsFormatException);
+    });
   });
 
   group('statusForEvidence', () {

@@ -100,6 +100,7 @@ import 'package:http/http.dart' as http;
 
 import 'package:quorum_mobile/api/account_api.dart';
 import 'package:quorum_mobile/api/action_approval_api.dart';
+import 'package:quorum_mobile/api/action_status_api.dart';
 import 'package:quorum_mobile/api/agents_api.dart';
 import 'package:quorum_mobile/api/capture_stream_api.dart';
 import 'package:quorum_mobile/api/career_digest_api.dart';
@@ -426,6 +427,12 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             fetchHonestyFeed: createHonestyLogFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-201` (product rebuild) -- the real Decision Trace
+            // screen's drill-through from Activity.
+            fetchActionStatus: createActionStatusFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),

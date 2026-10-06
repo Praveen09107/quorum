@@ -10,8 +10,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:quorum_mobile/api/action_status_api.dart';
 import 'package:quorum_mobile/db/database.dart';
 import 'package:quorum_mobile/features/agents/agents_logic.dart';
+import 'package:quorum_mobile/features/honesty_log/honesty_log_logic.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
 import 'package:quorum_mobile/features/career_digest/career_digest_logic.dart';
@@ -298,6 +300,8 @@ Future<WeekSummaryData> _fakeFetchWeekSummary() async {
 Widget _harness({
   Future<List<CalendarMirrorData>> Function()? fetchCalendarEvents,
   Future<TodayScreenData> Function()? fetchToday,
+  Future<HonestyFeedData> Function()? fetchHonestyFeed,
+  ActionStatusFetcher? fetchActionStatus,
   bool startWithCapture = false,
 }) {
   return ProviderScope(
@@ -306,6 +310,8 @@ Widget _harness({
         fetchToday: fetchToday ?? _fakeFetchToday,
         fetchAgents: _fakeFetchAgents,
         fetchEmailOverview: _fakeFetchEmailOverview,
+        fetchHonestyFeed: fetchHonestyFeed,
+        fetchActionStatus: fetchActionStatus,
         fetchTasks: _fakeFetchTasks,
         fetchPredictiveRisk: _fakeFetchPredictiveRisk,
         completeTask: _fakeCompleteTask,
@@ -916,5 +922,46 @@ void main() {
 
     expect(find.widgetWithText(AppBar, 'Email agent'), findsOneWidget);
     expect(find.text('A real, distinctive draft subject'), findsOneWidget);
+  });
+
+  // --- Log tab -> real Decision Trace drill-through (`DEC-201`) ---
+
+  testWidgets('the Log tab genuinely reaches a real Decision Trace replay for a tapped action', (tester) async {
+    await tester.pumpWidget(_harness(
+      fetchHonestyFeed: () async => HonestyFeedData(
+        total: 1,
+        successRate: 1.0,
+        successes: [
+          LoggedActionData(actionId: 'p1', timestamp: DateTime(2026, 10, 1), outcome: 'approved_unchanged', description: 'A real, distinctive logged action'),
+        ],
+        failuresAndCatches: const [],
+        genuinelyUncertain: const [],
+      ),
+      fetchActionStatus: (proposalId) async => ActionStatusData(
+        proposalId: proposalId,
+        actionType: 'create_task',
+        stakes: 'S1',
+        gateDecision: 'approve',
+        outcome: 'approved_unchanged',
+        createdAt: DateTime(2026, 10, 1),
+        resolvedAt: DateTime(2026, 10, 1),
+        payload: const {},
+        timeline: const [],
+        revisionCount: 0,
+        preRevisionPayload: null,
+        artifact: null,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Log'));
+    await tester.pumpAndSettle();
+    expect(find.text('A real, distinctive logged action'), findsOneWidget);
+
+    await tester.tap(find.text('A real, distinctive logged action'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(AppBar, 'Decision trace'), findsOneWidget);
+    expect(find.text('Create Task'), findsOneWidget);
   });
 }
