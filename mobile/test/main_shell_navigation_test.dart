@@ -917,7 +917,13 @@ void main() {
     await openAgentsTab(tester);
     await scrollToAndTapAgentCard(tester, 'Career');
 
-    expect(find.widgetWithText(AppBar, 'Career pipeline'), findsOneWidget);
+    // `DEC-212` (product rebuild Part C visual pass): `CareerPipelineScreen`
+    // now renders its own real agent header in-body (the real agent
+    // identity's own name, "Career") on a transparent app bar, matching
+    // the established precedent -- the real identification moved out
+    // of the `AppBar` title entirely.
+    expect(find.widgetWithText(AppBar, 'Career pipeline'), findsNothing);
+    expect(find.text('Career'), findsOneWidget);
   });
 
   testWidgets('tapping the real Calendar agent card opens the real Calendar screen', (tester) async {
