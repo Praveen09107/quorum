@@ -38,8 +38,19 @@ void main() {
     await tester.pumpWidget(_harness(() async => data));
     await tester.pumpAndSettle();
 
+    // `DEC-213`'s own redesign added real header content above the
+    // sections (the agent name/purpose, the "nothing here is
+    // simulated" line), pushing the real Sent History row beyond the
+    // default test viewport's render/cache range -- confirmed by
+    // isolating against a real, much taller surface (not a logic
+    // bug: `scrollUntilVisible` toward the section header alone left
+    // it unmounted too, since ensuring the HEADER is visible doesn't
+    // guarantee the ROW below it, further down, also is).
+    await tester.binding.setSurfaceSize(const Size(400, 3000));
+    await tester.pumpAndSettle();
     expect(find.text('a real unreplied subject'), findsNWidgets(2));
     expect(find.text('Awaiting reply'), findsOneWidget);
+    addTearDown(() => tester.binding.setSurfaceSize(null));
   });
 
   testWidgets('a real, replied sent message shows Replied in Sent history, and never in Awaiting reply', (tester) async {
