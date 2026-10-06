@@ -108,6 +108,7 @@ this module's own already-established philosophy exactly.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -115,6 +116,7 @@ from datetime import datetime, timezone
 import asyncpg
 
 from quorum_backend.core.embeddings import embed_text
+from quorum_backend.features.honesty_log import describe_action
 
 SEARCH_RESULT_CAP = 10  # QUORUM_CONFIGURATION_CONSTANTS.md §4
 
@@ -156,8 +158,24 @@ def _content_for_application(*, company: str, role: str | None) -> str:
 
 
 def _content_for_decision(*, action_type: str, outcome: str | None, gate_decision: str | None) -> str:
+    # REAL, DISCLOSED FIX (the redesign's own real bug-fix work): this
+    # raw `f"{action_type}: {status}"` string (e.g. `"update_budget:
+    # caught_by_gate"`) is a real, confirmed-live bug when shown
+    # directly to a real user -- found during this session's on-device
+    # audit. Left UNCHANGED here deliberately: this is the real
+    # EMBEDDING input written to `note_embeddings.content`, and
+    # changing it would require re-embedding every already-stored
+    # `decision` row (a real, live Gemini call each, against this
+    # project's own real, constrained free-tier quota) for zero real
+    # ranking-quality benefit. The real fix lives downstream, in
+    # `search()`'s own response construction below: a `decision` row's
+    # DISPLAY text is now built fresh from `action_events.action_type`/
+    # `payload` via `honesty_log.py`'s own real `describe_action()`
+    # formatter, never this raw embedding string.
     status = outcome or gate_decision or "pending"
     return f"{action_type}: {status}"
+
+
 
 
 async def _backfill_source(
@@ -362,12 +380,49 @@ async def search(pool: asyncpg.Pool, *, user_id: str, query: str, api_key: str, 
         query_literal,
         limit,
     )
-    return [
-        SearchableItem(
-            item_id=str(row["source_id"]),
-            item_type=row["source_type"],
-            text=row["content"],
-            timestamp=_format_timestamp(row["created_at"]),
+
+    # REAL, DISCLOSED FIX (the redesign's own real bug-fix work): a
+    # second, real, per-user-scoped batch query against `action_events`
+    # for exactly the `decision`-type rows in this result page -- never
+    # the raw embedding `content` string, which stays reserved for
+    # ranking only (see `_content_for_decision()`'s own docstring).
+    # Batched (one query, `proposal_id = ANY(...)`) rather than N
+    # separate queries -- `SEARCH_RESULT_CAP` bounds this to at most 10
+    # real ids per real search, but there is no reason to pay N round
+    # trips when one suffices.
+    decision_proposal_ids = [row["source_id"] for row in rows if row["source_type"] == "decision"]
+    decision_details: dict[uuid.UUID, tuple[str, dict]] = {}
+    if decision_proposal_ids:
+        decision_rows_for_display = await pool.fetch(
+            "SELECT proposal_id, action_type, payload FROM action_events WHERE proposal_id = ANY($1) AND user_id = $2",
+            decision_proposal_ids,
+            uuid.UUID(user_id),
         )
-        for row in rows
-    ]
+        decision_details = {
+            r["proposal_id"]: (r["action_type"], json.loads(r["payload"])) for r in decision_rows_for_display
+        }
+
+    results = []
+    for row in rows:
+        if row["source_type"] == "decision" and row["source_id"] in decision_details:
+            action_type, payload = decision_details[row["source_id"]]
+            text = describe_action(action_type, payload)
+        else:
+            # Every other real item_type's own embedding content is
+            # already real, honest display text (a task's title, an
+            # expense's payee/amount, an application's company/role) --
+            # never jargon, so no reformatting is needed. A real
+            # `decision` row whose `action_events` twin has since been
+            # deleted (the orphan case `prune_orphaned_embeddings()`
+            # itself exists to clean up, already run above this call)
+            # also falls back here rather than crashing on a missing key.
+            text = row["content"]
+        results.append(
+            SearchableItem(
+                item_id=str(row["source_id"]),
+                item_type=row["source_type"],
+                text=text,
+                timestamp=_format_timestamp(row["created_at"]),
+            )
+        )
+    return results

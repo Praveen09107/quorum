@@ -151,6 +151,37 @@ async def test_aggregate_weekly_summary_counts_real_rows_and_excludes_uncertain(
         await pool.execute("DELETE FROM action_events WHERE proposal_id = ANY($1::uuid[])", ids)
 
 
+async def test_aggregate_weekly_summary_counts_rejections_but_not_unknowns(pool):
+    """REAL REGRESSION GUARD, `DEC-189`. `DEC-188` added two values to
+    `action_events_outcome_check` and never revisited this query, so
+    every real human rejection was dropped from `total_actions` -- which
+    silently INFLATED `success_rate`, because a rejected action is a
+    real resolved attempt that did not succeed.
+
+    The dividing line is whether the system KNOWS what happened, not
+    whether the news was good: `rejected_by_user` is fully known and
+    counts; `outcome_unknown` is genuinely unknown and must stay out of
+    both numerator and denominator."""
+    week_start = date(2020, 1, 6)
+    resolved_at = datetime(2020, 1, 7, 12, 0, tzinfo=timezone.utc)
+    ids = [uuid.uuid4() for _ in range(3)]
+    outcomes = ["approved_unchanged", "rejected_by_user", "outcome_unknown"]
+    user_id = uuid.uuid4()
+
+    try:
+        for proposal_id, outcome in zip(ids, outcomes):
+            await _insert_test_event(pool, proposal_id, outcome, resolved_at, user_id=user_id)
+
+        summary = await aggregate_weekly_summary(pool, week_start, user_id=str(user_id))
+
+        # 3 rows in; the rejection counts, the unknown does not.
+        assert summary.total_actions == 2
+        # 0.5, NOT the 1.0 this would have reported before the fix.
+        assert summary.success_rate == 0.5
+    finally:
+        await pool.execute("DELETE FROM action_events WHERE proposal_id = ANY($1::uuid[])", ids)
+
+
 async def test_aggregate_weekly_summary_counts_a_real_row_resolved_late_in_the_final_utc_day(pool, monkeypatch):
     """RESOLVED, a real, live, currently-active bug found on-device
     (Session 2, `QUORUM_FINAL_COMPLETION_PLAN.md`, `DEC-168`): none of

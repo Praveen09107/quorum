@@ -58,4 +58,40 @@ void main() {
       expect(touchpointHeadline(DayTouchpoint.evening), 'How did today go');
     });
   });
+
+  group('greetingForTouchpoint -- the real, new Today-header greeting', () {
+    test('morning gets a real "Good morning" greeting', () {
+      expect(greetingForTouchpoint(DayTouchpoint.morning), 'Good morning');
+    });
+
+    test('midday gets a real "Good afternoon" greeting', () {
+      expect(greetingForTouchpoint(DayTouchpoint.midday), 'Good afternoon');
+    });
+
+    test('evening gets a real "Good evening" greeting', () {
+      expect(greetingForTouchpoint(DayTouchpoint.evening), 'Good evening');
+    });
+
+    test('every real touchpoint gets a genuinely distinct greeting', () {
+      final greetings = DayTouchpoint.values.map(greetingForTouchpoint).toSet();
+      expect(greetings.length, DayTouchpoint.values.length);
+    });
+  });
+
+  group('formatHeaderDate -- the real, hand-written date format', () {
+    test('a real, hand-verified date formats as "Weekday, Month Day"', () {
+      // 2026-10-03 is a real, hand-verified Saturday.
+      expect(formatHeaderDate(DateTime(2026, 10, 3)), 'Saturday, October 3');
+    });
+
+    test('a real January 1st uses the real, correct month name, not an off-by-one', () {
+      // 2026-01-01 is a real, hand-verified Thursday.
+      expect(formatHeaderDate(DateTime(2026, 1, 1)), 'Thursday, January 1');
+    });
+
+    test('a real December 31st uses the real, correct month name, not an off-by-one', () {
+      // 2026-12-31 is a real, hand-verified Thursday.
+      expect(formatHeaderDate(DateTime(2026, 12, 31)), 'Thursday, December 31');
+    });
+  });
 }

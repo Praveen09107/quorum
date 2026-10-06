@@ -13,6 +13,14 @@ import 'package:test/test.dart';
 
 import 'package:quorum_mobile/features/trust/trust_logic.dart';
 
+const _fakeVerdict = ScenarioVerdictData(
+  decision: 'approve',
+  revisionCount: 0,
+  findings: [],
+  objections: [],
+  traceId: 'test-trace',
+);
+
 void main() {
   group('parseTarget -- the real, most important honesty check', () {
     test('real_gate parses to SelfTestTarget.realGate', () {
@@ -71,7 +79,7 @@ void main() {
       const trust = TrustData(
         total: 12,
         caught: 11,
-        missed: [ScenarioResultData(scenarioId: 'S7', expected: 'reject', actual: 'approve', passed: false)],
+        missed: [ScenarioResultData(scenarioId: 'S7', expected: 'reject', actual: 'approve', passed: false, verdict: _fakeVerdict)],
         results: [],
         target: SelfTestTarget.stub,
       );
@@ -89,10 +97,10 @@ void main() {
       const trust = TrustData(
         total: 2,
         caught: 1,
-        missed: [ScenarioResultData(scenarioId: 'S7', expected: 'reject', actual: 'approve', passed: false)],
+        missed: [ScenarioResultData(scenarioId: 'S7', expected: 'reject', actual: 'approve', passed: false, verdict: _fakeVerdict)],
         results: [
-          ScenarioResultData(scenarioId: 'S1', expected: 'approve', actual: 'approve', passed: true),
-          ScenarioResultData(scenarioId: 'S7', expected: 'reject', actual: 'approve', passed: false),
+          ScenarioResultData(scenarioId: 'S1', expected: 'approve', actual: 'approve', passed: true, verdict: _fakeVerdict),
+          ScenarioResultData(scenarioId: 'S7', expected: 'reject', actual: 'approve', passed: false, verdict: _fakeVerdict),
         ],
         target: SelfTestTarget.stub,
       );
