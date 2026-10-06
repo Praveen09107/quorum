@@ -99,8 +99,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:quorum_mobile/api/account_api.dart';
+import 'package:quorum_mobile/api/action_approval_api.dart';
+import 'package:quorum_mobile/api/agents_api.dart';
+import 'package:quorum_mobile/api/capture_stream_api.dart';
 import 'package:quorum_mobile/api/career_digest_api.dart';
+import 'package:quorum_mobile/api/connections_api.dart';
 import 'package:quorum_mobile/api/career_pipeline_api.dart';
+import 'package:quorum_mobile/api/email_overview_api.dart';
+import 'package:quorum_mobile/api/expenses_api.dart';
 import 'package:quorum_mobile/api/finance_api.dart';
 import 'package:quorum_mobile/api/gate_reveal_api.dart';
 import 'package:quorum_mobile/api/health_api.dart';
@@ -109,11 +115,19 @@ import 'package:quorum_mobile/api/negotiation_api.dart';
 import 'package:quorum_mobile/api/predictive_risk_api.dart';
 import 'package:quorum_mobile/api/quick_capture_api.dart';
 import 'package:quorum_mobile/api/search_api.dart';
+import 'package:quorum_mobile/api/task_status_api.dart';
 import 'package:quorum_mobile/api/tasks_api.dart';
 import 'package:quorum_mobile/api/today_api.dart';
 import 'package:quorum_mobile/api/trust_api.dart';
+import 'package:quorum_mobile/api/create_application_api.dart';
+import 'package:quorum_mobile/api/schedule_interview_api.dart';
+import 'package:quorum_mobile/api/update_budget_api.dart';
+import 'package:quorum_mobile/api/gate_showcase_api.dart';
+import 'package:quorum_mobile/features/onboarding/onboarding_screen.dart';
+import 'package:quorum_mobile/features/onboarding/onboarding_store.dart';
 import 'package:quorum_mobile/api/trust_digest_api.dart';
 import 'package:quorum_mobile/api/waiting_on_api.dart';
+import 'package:quorum_mobile/api/week_summary_api.dart';
 import 'package:quorum_mobile/auth/auth_api.dart';
 import 'package:quorum_mobile/auth/auth_controller.dart';
 import 'package:quorum_mobile/auth/login_screen.dart';
@@ -125,7 +139,7 @@ import 'package:quorum_mobile/features/quick_capture/on_device_extraction.dart';
 import 'package:quorum_mobile/features/quick_capture/quick_capture_router.dart';
 import 'package:quorum_mobile/features/you/you_logic.dart';
 import 'package:quorum_mobile/shell/main_shell.dart';
-import 'package:quorum_mobile/theme/quorum_theme.dart';
+import 'package:quorum_mobile/theme/quorum_dark_theme.dart';
 
 void main() {
   runApp(const ProviderScope(child: QuorumApp()));
@@ -138,7 +152,7 @@ class QuorumApp extends StatefulWidget {
   State<QuorumApp> createState() => _QuorumAppState();
 }
 
-enum _SessionState { checking, signedOut, signedIn }
+enum _SessionState { checking, signedOut, onboarding, signedIn }
 
 class _QuorumAppState extends State<QuorumApp> {
   // One real, shared, long-lived client for the whole app's session --
@@ -161,6 +175,14 @@ class _QuorumAppState extends State<QuorumApp> {
   // exactly.
   final QuorumDatabase _db = QuorumDatabase();
   late final CalendarSync _calendarSync;
+
+  // `DEC-196` (product rebuild Block G) -- real, on-device record of
+  // whether this account has ever completed onboarding, and whether
+  // the real `MainShell` about to open should auto-launch the capture
+  // flow (true only immediately after THIS session's own onboarding
+  // completion -- see `_proceedPastLogin()`).
+  final _onboardingStore = const OnboardingStore();
+  bool _startWithCapture = false;
 
   @override
   void initState() {
@@ -196,7 +218,36 @@ class _QuorumAppState extends State<QuorumApp> {
   Future<void> _checkForRealExistingSession() async {
     final token = await _authController.getValidAccessToken();
     if (!mounted) return;
-    setState(() => _sessionState = token != null ? _SessionState.signedIn : _SessionState.signedOut);
+    if (token == null) {
+      setState(() => _sessionState = _SessionState.signedOut);
+      return;
+    }
+    await _proceedPastLogin();
+  }
+
+  /// `DEC-196` -- the real, shared decision both `_checkForRealExisting
+  /// Session()` (an already-valid stored token) and `LoginScreen`'s own
+  /// `onSignedIn` (a brand-new real sign-in) route through: has this
+  /// real account ever completed onboarding? If not, show it now,
+  /// before `MainShell` -- if so, skip straight to `MainShell`, with
+  /// `_startWithCapture` correctly `false` (this is an ordinary return
+  /// visit, not the moment right after finishing onboarding).
+  Future<void> _proceedPastLogin() async {
+    final hasSeenOnboarding = await _onboardingStore.hasSeenOnboarding();
+    if (!mounted) return;
+    setState(() {
+      _startWithCapture = false;
+      _sessionState = hasSeenOnboarding ? _SessionState.signedIn : _SessionState.onboarding;
+    });
+  }
+
+  Future<void> _completeOnboarding() async {
+    await _onboardingStore.markSeen();
+    if (!mounted) return;
+    setState(() {
+      _startWithCapture = true;
+      _sessionState = _SessionState.signedIn;
+    });
   }
 
   Future<void> _handleSignOut() async {
@@ -233,14 +284,30 @@ class _QuorumAppState extends State<QuorumApp> {
     return MaterialApp(
       title: 'Quorum',
       debugShowCheckedModeBanner: false,
-      theme: buildQuorumLightTheme(),
+      // `DEC-189`: the app is now dark-first, at the product owner's
+      // explicit direction. `theme` and `darkTheme` are deliberately
+      // set to the SAME dark theme, and `themeMode` is forced to dark,
+      // rather than offering a light/dark pair: the rebuild's palette,
+      // glass surfaces and accent glows are designed against a
+      // near-black ground specifically, and handing the light theme to
+      // a device in light mode would render those surfaces against a
+      // ground they were never tuned for -- low-alpha white glass fills
+      // and hairlines genuinely disappear on white. A real light
+      // variant is a separate, deliberate piece of design work, not a
+      // free fallback, so the honest choice is to commit to one ground
+      // rather than ship a broken second one.
+      theme: buildQuorumDarkTheme(),
+      darkTheme: buildQuorumDarkTheme(),
+      themeMode: ThemeMode.dark,
       home: switch (_sessionState) {
         _SessionState.checking => const _SplashScreen(),
         _SessionState.signedOut => LoginScreen(
             authController: _authController,
-            onSignedIn: () => setState(() => _sessionState = _SessionState.signedIn),
+            onSignedIn: () => _proceedPastLogin(),
           ),
+        _SessionState.onboarding => OnboardingScreen(onDone: _completeOnboarding),
         _SessionState.signedIn => MainShell(
+            startWithCapture: _startWithCapture,
             fetchToday: createTodayFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
@@ -253,6 +320,17 @@ class _QuorumAppState extends State<QuorumApp> {
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
+            // `DEC-193` (product rebuild Block E) -- the real validator
+            // roster and real live Gate stats behind the "How the Gate
+            // works" link on the Trust tab.
+            fetchGateValidators: createGateValidatorsFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            fetchGateStats: createGateStatsFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
             fetchTasks: createTasksFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
@@ -261,7 +339,38 @@ class _QuorumAppState extends State<QuorumApp> {
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
+            // REAL, NEW -- closes the real, confirmed-live bug this
+            // redesign's own bug-fix pass found: the Tasks screen's own
+            // trailing status chip has looked like a button since it
+            // was written but never actually did anything.
+            completeTask: createCompleteTaskFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            cancelTask: createCancelTaskFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // REAL, NEW -- the redesign's own new "This week across your
+            // agents" cross-domain strip.
+            fetchWeekSummary: createWeekSummaryFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
             fetchCareerApplications: createCareerPipelineFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-194` (product rebuild Block F) -- the real, first
+            // write path Career has ever had: a "+ New application"
+            // form on the Career pipeline screen.
+            createApplication: createCreateApplicationFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-195` (product rebuild Block F, remainder) -- the
+            // Career pipeline's second real write control.
+            scheduleInterview: createScheduleInterviewFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
@@ -270,6 +379,17 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             fetchFinance: createFinanceFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-200` (product rebuild) -- Finance's first real
+            // write control.
+            onUpdateBudget: createUpdateBudgetFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // REAL, NEW -- the redesign's own real "Finance hub" work.
+            fetchExpenses: createExpensesFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
@@ -285,6 +405,18 @@ class _QuorumAppState extends State<QuorumApp> {
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
+            // REAL, NEW -- closes the real gap `action_approval.py`/
+            // `action_approval_api.dart` exist to fix: the first real
+            // way a signed-in user can act on a pending S3 "Needs you
+            // now" card instead of only ever reading about it.
+            approveAction: createApproveActionFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            rejectAction: createRejectActionFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
             chooseNegotiation: createChooseNegotiationFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
@@ -294,6 +426,17 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             fetchHonestyFeed: createHonestyLogFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-192` (product rebuild Block D) -- the Agents tab.
+            fetchAgents: createAgentsFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-199` (product rebuild) -- the real Email agent
+            // workspace, closing `DEC-197`'s own disclosed gap.
+            fetchEmailOverview: createEmailOverviewFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),
@@ -341,6 +484,55 @@ class _QuorumAppState extends State<QuorumApp> {
                 client: _httpClient,
               ),
             ),
+            // REAL, NEW (`DEC-189` Block B) -- the live Gate pipeline.
+            // Deliberately always cloud (no on-device routing): watching
+            // the real Stage A/B calls resolve live is the entire point
+            // of this screen, so there is no "on-device" variant of it
+            // to route to. Reuses the exact same real approve/reject
+            // fetchers already constructed above for the Needs-you-now
+            // flow -- both calls are cheap, side-effect-free closures
+            // (the same accepted, documented cost `captureTask` above
+            // already establishes for its own sibling fetchers).
+            captureStream: createCaptureStreamFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            onApproveAction: createApproveActionFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            onRejectAction: createRejectActionFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-191` (product rebuild Block C) -- the real on-device
+            // calendar write. Reuses the same `CalendarSync` instance
+            // `syncCalendar` above already owns, rather than
+            // constructing a second one -- both real permission checks
+            // and the real `DeviceCalendarPlugin` connection are cheap
+            // to share, and there is no reason for two.
+            onCreateLocalEvent: _calendarSync.createLocalEvent,
+            // `DEC-198` (product rebuild) -- the real Google connection
+            // health screen. `onReconnectGoogle` reuses the exact same
+            // real sign-in flow `LoginScreen` already uses: it always
+            // carries `access_type=offline`/`prompt=consent`, so a
+            // repeat real consent genuinely re-issues a fresh
+            // refresh_token -- no separate reconnect plumbing exists or
+            // is needed. A real, honest cancellation is swallowed here,
+            // the same precedent `_LoginScreenState._handleSignIn`
+            // already set, so the screen's own post-reconnect refresh
+            // simply shows whatever real state resulted either way.
+            fetchConnectionHealth: createConnectionsFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            onReconnectGoogle: () async {
+              try {
+                await _authController.signIn();
+              } on SignInCancelled {
+                // A real, honest cancellation -- not an error.
+              }
+            },
             confirmDelete: _handleAccountDeletion,
             onSignOut: _handleSignOut,
             // Real, deliberately unauthenticated -- `GET /health` needs
