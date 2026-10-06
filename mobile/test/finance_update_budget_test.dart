@@ -35,7 +35,7 @@ void main() {
       fetchWeekSummary: _fakeWeekSummary,
       onUpdateBudget: ({required double amount, String? category}) async {
         capturedAmount = amount;
-        return const UpdateBudgetResult(executed: true, decision: 'approve', amount: 60000.0);
+        return const UpdateBudgetResult(executed: true, decision: 'approve', stakes: 'S2', amount: 60000.0);
       },
     );
 
@@ -53,6 +53,10 @@ void main() {
     await tester.enterText(find.widgetWithText(TextField, 'New monthly budget'), '60000');
     await tester.tap(find.text('Update budget'));
     await tester.pumpAndSettle();
+    // `DEC-214`: the real Gate verdict sheet now opens before the
+    // SnackBar -- dismiss it to reach the real post-submit state.
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
 
     expect(capturedAmount, 60000.0);
     expect(find.textContaining('of ₹60000 spent'), findsOneWidget);
@@ -65,7 +69,7 @@ void main() {
       fetchFinance: () async => const [],
       fetchWeekSummary: _fakeWeekSummary,
       onUpdateBudget: ({required double amount, String? category}) async {
-        return const UpdateBudgetResult(executed: true, decision: 'revise', amount: 55000.0);
+        return const UpdateBudgetResult(executed: true, decision: 'revise', stakes: 'S2', amount: 55000.0);
       },
     );
 
@@ -78,6 +82,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'New monthly budget'), '90000');
     await tester.tap(find.text('Update budget'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('of ₹55000 spent'), findsOneWidget);
@@ -89,7 +95,7 @@ void main() {
       fetchFinance: () async => const [],
       fetchWeekSummary: _fakeWeekSummary,
       onUpdateBudget: ({required double amount, String? category}) async {
-        return const UpdateBudgetResult(executed: false, decision: 'reject');
+        return const UpdateBudgetResult(executed: false, decision: 'reject', stakes: 'S2');
       },
     );
 
@@ -102,6 +108,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'New monthly budget'), '90000');
     await tester.tap(find.text('Update budget'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('declined'), findsOneWidget);
@@ -116,7 +124,7 @@ void main() {
       fetchWeekSummary: _fakeWeekSummary,
       onUpdateBudget: ({required double amount, String? category}) async {
         callCount++;
-        return const UpdateBudgetResult(executed: true, decision: 'approve', amount: 1);
+        return const UpdateBudgetResult(executed: true, decision: 'approve', stakes: 'S2', amount: 1);
       },
     );
 

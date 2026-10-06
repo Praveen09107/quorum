@@ -12,6 +12,8 @@ import 'package:http/http.dart' as http;
 
 import 'package:quorum_mobile/api/api_exceptions.dart';
 import 'package:quorum_mobile/config/api_config.dart';
+import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
+import 'package:quorum_mobile/features/gate_verdict/gate_verdict_parsing.dart';
 
 /// A real, honest, minimal summary of what happened. `eventStart`/
 /// `eventEnd`/`eventTitle` are what the real caller needs to perform
@@ -19,19 +21,30 @@ import 'package:quorum_mobile/config/api_config.dart';
 /// `executed`, since `CREATE_CALENDAR_EVENT_LOCAL` has no real
 /// server-side execution branch at all (see `main.py`'s own
 /// `_quick_capture_result_to_dict()` docstring for the full account).
+///
+/// `DEC-214`: `stakes`/`findings`/`objections` are the real Gate
+/// verdict every response already carried but this result type
+/// previously dropped -- now parsed so `showGateVerdictSheet()` can
+/// render it instead of a flat `SnackBar`.
 class CreateCalendarEventResult {
   final bool executed;
   final String decision;
+  final String stakes;
   final String? eventTitle;
   final DateTime? eventStart;
   final DateTime? eventEnd;
+  final List<FindingSummary> findings;
+  final List<ObjectionSummary> objections;
 
   const CreateCalendarEventResult({
     required this.executed,
     required this.decision,
+    required this.stakes,
     this.eventTitle,
     this.eventStart,
     this.eventEnd,
+    this.findings = const [],
+    this.objections = const [],
   });
 }
 
@@ -88,9 +101,12 @@ CreateCalendarEventFetcher createCreateCalendarEventFetcher({
       return CreateCalendarEventResult(
         executed: json['executed'] as bool,
         decision: json['decision'] as String,
+        stakes: json['stakes'] as String,
         eventTitle: json['event_title'] as String?,
         eventStart: json['event_start'] == null ? null : DateTime.parse(json['event_start'] as String),
         eventEnd: json['event_end'] == null ? null : DateTime.parse(json['event_end'] as String),
+        findings: parseFindings(json['findings'] as List<dynamic>? ?? const []),
+        objections: parseObjections(json['objections'] as List<dynamic>? ?? const []),
       );
     } catch (e) {
       throw const ApiException('Quorum sent back something this app could not understand.');

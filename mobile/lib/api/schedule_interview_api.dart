@@ -9,13 +9,28 @@ import 'package:http/http.dart' as http;
 
 import 'package:quorum_mobile/api/api_exceptions.dart';
 import 'package:quorum_mobile/config/api_config.dart';
+import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
+import 'package:quorum_mobile/features/gate_verdict/gate_verdict_parsing.dart';
 
 /// A real, honest, minimal summary of what happened.
+///
+/// `DEC-214`: `stakes`/`findings`/`objections` are the real Gate
+/// verdict every response already carried but this result type
+/// previously dropped.
 class ScheduleInterviewResult {
   final bool executed;
   final String decision;
+  final String stakes;
+  final List<FindingSummary> findings;
+  final List<ObjectionSummary> objections;
 
-  const ScheduleInterviewResult({required this.executed, required this.decision});
+  const ScheduleInterviewResult({
+    required this.executed,
+    required this.decision,
+    required this.stakes,
+    this.findings = const [],
+    this.objections = const [],
+  });
 }
 
 typedef ScheduleInterviewFetcher = Future<ScheduleInterviewResult> Function({
@@ -63,7 +78,13 @@ ScheduleInterviewFetcher createScheduleInterviewFetcher({
 
     try {
       final json = jsonDecode(response.body) as Map<String, dynamic>;
-      return ScheduleInterviewResult(executed: json['executed'] as bool, decision: json['decision'] as String);
+      return ScheduleInterviewResult(
+        executed: json['executed'] as bool,
+        decision: json['decision'] as String,
+        stakes: json['stakes'] as String,
+        findings: parseFindings(json['findings'] as List<dynamic>? ?? const []),
+        objections: parseObjections(json['objections'] as List<dynamic>? ?? const []),
+      );
     } catch (e) {
       throw const ApiException('Quorum sent back something this app could not understand.');
     }

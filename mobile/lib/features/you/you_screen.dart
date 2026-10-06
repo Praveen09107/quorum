@@ -42,6 +42,7 @@ import 'package:flutter/material.dart';
 import 'package:quorum_mobile/api/create_application_api.dart';
 import 'package:quorum_mobile/api/create_calendar_event_api.dart';
 import 'package:quorum_mobile/api/schedule_interview_api.dart';
+import 'package:quorum_mobile/api/create_expense_api.dart';
 import 'package:quorum_mobile/api/update_budget_api.dart';
 import 'package:quorum_mobile/db/database.dart';
 import 'package:quorum_mobile/features/calendar/calendar_screen.dart';
@@ -55,6 +56,7 @@ import 'package:quorum_mobile/features/connections/connections_screen.dart';
 import 'package:quorum_mobile/features/finance/finance_logic.dart';
 import 'package:quorum_mobile/features/finance/finance_screen.dart';
 import 'package:quorum_mobile/features/gate_pipeline/gate_pipeline_screen.dart' show CreateLocalEventCall;
+import 'package:quorum_mobile/features/gate_verdict/gate_verdict_card.dart';
 import 'package:quorum_mobile/features/memory_transparency/memory_transparency_logic.dart';
 import 'package:quorum_mobile/features/memory_transparency/memory_transparency_screen.dart';
 import 'package:quorum_mobile/features/search/search_logic.dart';
@@ -99,6 +101,11 @@ class YouScreen extends StatefulWidget {
   /// `createApplication` above.
   final UpdateBudgetFetcher? onUpdateBudget;
 
+  /// `DEC-214` (product rebuild Part C, Priority 2) -- Finance's
+  /// second real write control. Optional and additive, matching every
+  /// sibling fetcher's own honest gating.
+  final CreateExpenseFetcher? onLogExpense;
+
   /// REAL, NEW (the redesign's own real "Finance hub" work) -- see
   /// `FinanceLoader`'s own docstring for the full real reasoning.
   final Future<List<ExpenseData>> Function()? fetchExpenses;
@@ -140,6 +147,7 @@ class YouScreen extends StatefulWidget {
     this.scheduleInterview,
     this.fetchFinance,
     this.onUpdateBudget,
+    this.onLogExpense,
     this.fetchExpenses,
     this.fetchWaitingOn,
     this.fetchSearch,
@@ -283,6 +291,7 @@ class _YouScreenState extends State<YouScreen> {
                         fetchExpenses: widget.fetchExpenses,
                         weekSummaryFuture: _weekSummaryFuture,
                         onUpdateBudget: widget.onUpdateBudget,
+                        onLogExpense: widget.onLogExpense,
                       ),
                     ),
                   ),
@@ -623,6 +632,9 @@ class CareerPipelineLoaderState extends State<CareerPipelineLoader> {
       builder: (_) => _NewApplicationSheet(createApplication: createApplication),
     );
     if (result == null || !mounted) return;
+    // `DEC-214`: the real Gate verdict shown before the SnackBar.
+    await showGateVerdictSheet(context, decision: result.decision, stakes: result.stakes, findings: result.findings, objections: result.objections);
+    if (!mounted) return;
     await _refresh();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -639,6 +651,9 @@ class CareerPipelineLoaderState extends State<CareerPipelineLoader> {
       builder: (_) => _ScheduleInterviewSheet(scheduleInterview: scheduleInterview, application: application),
     );
     if (result == null || !mounted) return;
+    // `DEC-214`: the real Gate verdict shown before the SnackBar.
+    await showGateVerdictSheet(context, decision: result.decision, stakes: result.stakes, findings: result.findings, objections: result.objections);
+    if (!mounted) return;
     await _refresh();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -968,7 +983,22 @@ class FinanceLoader extends StatefulWidget {
   /// as `createApplication` on `CareerPipelineLoader`.
   final UpdateBudgetFetcher? onUpdateBudget;
 
-  const FinanceLoader({super.key, required this.fetch, this.fetchExpenses, this.weekSummaryFuture, this.onUpdateBudget});
+  /// `DEC-214` (product rebuild Part C, Priority 2) -- Finance's
+  /// second real write control, closing the gap a direct on-device
+  /// review found: logging an actual expense was only reachable
+  /// through free-text capture, with no `+` control anywhere on this
+  /// screen. Optional and additive, matching every sibling fetcher's
+  /// own honest gating.
+  final CreateExpenseFetcher? onLogExpense;
+
+  const FinanceLoader({
+    super.key,
+    required this.fetch,
+    this.fetchExpenses,
+    this.weekSummaryFuture,
+    this.onUpdateBudget,
+    this.onLogExpense,
+  });
 
   @override
   State<FinanceLoader> createState() => FinanceLoaderState();
@@ -1015,11 +1045,34 @@ class FinanceLoaderState extends State<FinanceLoader> {
       builder: (_) => _SetBudgetSheet(onUpdateBudget: onUpdateBudget),
     );
     if (result == null || !mounted) return;
+    // `DEC-214`: the real Gate verdict -- findings, the real Judge's
+    // revision if it changed anything -- shown before the SnackBar.
+    await showGateVerdictSheet(context, decision: result.decision, stakes: result.stakes, findings: result.findings, objections: result.objections);
+    if (!mounted) return;
     if (result.executed && result.amount != null) {
       setState(() => _budgetOverride = result.amount);
     }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(result.executed ? 'Budget updated to ${formatCurrency(result.amount ?? 0)}.' : 'The Gate declined to update your budget.')),
+    );
+  }
+
+  Future<void> _openLogExpenseSheet() async {
+    final onLogExpense = widget.onLogExpense;
+    if (onLogExpense == null) return;
+    final result = await showModalBottomSheet<CreateExpenseResult>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _LogExpenseSheet(onLogExpense: onLogExpense),
+    );
+    if (result == null || !mounted) return;
+    await showGateVerdictSheet(context, decision: result.decision, stakes: result.stakes, findings: result.findings, objections: result.objections);
+    if (!mounted) return;
+    if (result.executed) {
+      setState(() => _future = _load());
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result.executed ? 'Logged ${formatCurrency(result.amount ?? 0)}.' : 'The Gate declined to log that expense.')),
     );
   }
 
@@ -1033,9 +1086,22 @@ class FinanceLoaderState extends State<FinanceLoader> {
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0, scrolledUnderElevation: 0),
-      floatingActionButton: widget.onUpdateBudget == null
-          ? null
-          : FloatingActionButton(onPressed: _openSetBudgetSheet, tooltip: 'Set budget', child: const Icon(Icons.edit_outlined)),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (widget.onLogExpense != null)
+            FloatingActionButton(onPressed: _openLogExpenseSheet, tooltip: 'Log expense', heroTag: 'log_expense', child: const Icon(Icons.add)),
+          if (widget.onUpdateBudget != null) ...[
+            const SizedBox(height: QuorumSpacing.sm),
+            FloatingActionButton(
+              onPressed: _openSetBudgetSheet,
+              tooltip: 'Set budget',
+              heroTag: 'set_budget',
+              child: const Icon(Icons.edit_outlined),
+            ),
+          ],
+        ],
+      ),
       body: FutureBuilder(
         future: _future,
         builder: (context, snapshot) {
@@ -1149,6 +1215,99 @@ class _SetBudgetSheetState extends State<_SetBudgetSheet> {
   }
 }
 
+/// `DEC-214` (product rebuild Part C, Priority 2) -- the real form
+/// behind Finance's second write control. Matches `_SetBudgetSheet`'s
+/// own established shape exactly.
+class _LogExpenseSheet extends StatefulWidget {
+  final CreateExpenseFetcher onLogExpense;
+
+  const _LogExpenseSheet({required this.onLogExpense});
+
+  @override
+  State<_LogExpenseSheet> createState() => _LogExpenseSheetState();
+}
+
+class _LogExpenseSheetState extends State<_LogExpenseSheet> {
+  final _amountController = TextEditingController();
+  final _payeeController = TextEditingController();
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    _payeeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final amount = double.tryParse(_amountController.text.trim());
+    if (amount == null || amount <= 0) {
+      setState(() => _error = 'Enter a real, positive amount first.');
+      return;
+    }
+    final payee = _payeeController.text.trim();
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final result = await widget.onLogExpense(amount: amount, payee: payee.isEmpty ? null : payee);
+      if (!mounted) return;
+      Navigator.of(context).pop(result);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16, right: 16, top: 16,
+        bottom: 16 + MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Log an expense', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _amountController,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: 'Amount'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _payeeController,
+            decoration: const InputDecoration(labelText: 'Payee (optional)'),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ],
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: _submitting ? null : _submit,
+              child: _submitting
+                  ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('Log expense'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// A real, deliberately different loader shape from every other one in
 /// this file: it runs TWO real steps, not one -- a real sync attempt
 /// first (requesting real calendar permission if not already granted,
@@ -1208,6 +1367,12 @@ class _CalendarLoaderState extends State<CalendarLoader> {
       builder: (_) => _BookMeetingSheet(onBookMeeting: onBookMeeting),
     );
     if (result == null || !mounted) return;
+
+    // `DEC-214`: show the real Gate verdict -- findings, Stage B if it
+    // ran -- before anything else, instead of going straight to a flat
+    // SnackBar.
+    await showGateVerdictSheet(context, decision: result.decision, stakes: result.stakes, findings: result.findings, objections: result.objections);
+    if (!mounted) return;
 
     final messenger = ScaffoldMessenger.of(context);
     final onCreateLocalEvent = widget.onCreateLocalEvent;

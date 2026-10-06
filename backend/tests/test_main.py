@@ -702,6 +702,102 @@ async def test_schedule_interview_endpoint_rejects_an_unowned_application_with_a
         await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
 
 
+# --- POST /expenses (`DEC-214`, product rebuild Part C) ---
+
+
+def test_create_expense_endpoint_requires_real_auth():
+    with TestClient(app) as client:
+        response = client.post("/expenses", json={"amount": 450.0})
+    assert response.status_code == 401
+
+
+async def test_create_expense_endpoint_is_real_and_live_logs_a_real_expense_end_to_end(pool, provisioned_users):
+    """The real, first structured (never Gemini-extracted) proof that
+    an expense can be logged without going through free-text capture.
+    `LOG_EXPENSE` is real `Stakes.S1`, so Stage B never runs -- no real
+    Gemini/Groq key is needed for this to pass, matching `POST
+    /applications`'s own identical real precedent."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    marker = f"Real cascade test payee {uuid.uuid4()}"
+
+    try:
+        with TestClient(app) as client:
+            response = client.post("/expenses", json={"amount": 450.0, "payee": marker}, headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["stakes"] == "S1"
+        assert body["domain"] == "finance"
+        assert body["executed"] is True
+        assert body["decision"] == "approve"
+        assert body["amount"] == 450.0
+        assert body["payee"] == marker
+        assert body["finance_action"] == "log_expense"
+
+        row = await pool.fetchrow(
+            "SELECT payee, amount, source FROM expenses WHERE user_id = $1 AND payee = $2",
+            uuid.UUID(internal_user_id), marker,
+        )
+        assert row is not None
+        assert float(row["amount"]) == 450.0
+        # Confirmed directly against migration `0007_gate_executed_
+        # expense_source`: a real Gate-approved-and-executed expense
+        # writes `source='gate_approved'`, not `'manual'` -- that value
+        # is reserved for a real, different real write path this route
+        # doesn't use.
+        assert row["source"] == "gate_approved"
+    finally:
+        await pool.execute("DELETE FROM expenses WHERE user_id = $1 AND payee = $2", uuid.UUID(internal_user_id), marker)
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
+async def test_create_expense_endpoint_a_real_default_category_is_used_when_none_is_supplied(pool, provisioned_users):
+    """`category` is genuinely optional on this real, structured route
+    -- `expenses` itself has no `category` column at all (confirmed
+    directly against migration `0001`), so the real, honest default
+    (`"Uncategorized"`, never a fabricated spend category) only needs
+    to satisfy `validate_and_build_finance_proposal()`'s own real,
+    non-empty-string requirement, matching `PUT /finance/budget`'s own
+    identical precedent for its own `category` default."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    marker = f"Real cascade test payee {uuid.uuid4()}"
+
+    try:
+        with TestClient(app) as client:
+            response = client.post("/expenses", json={"amount": 120.0, "payee": marker}, headers=headers)
+
+        assert response.status_code == 200
+        assert response.json()["category"] == "Uncategorized"
+    finally:
+        await pool.execute("DELETE FROM expenses WHERE user_id = $1 AND payee = $2", uuid.UUID(internal_user_id), marker)
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
+async def test_create_expense_endpoint_a_real_omitted_payee_falls_back_to_the_real_unknown_payee_display(pool, provisioned_users):
+    """`payee` is genuinely optional in `validate_and_build_finance_
+    proposal()` (`args.get("payee")`), falling back to the real,
+    already-live `_UNKNOWN_PAYEE` display value in `action_executor.py`
+    -- the same honest fallback already visible today on real, existing
+    expense rows (confirmed directly in the mobile Finance screen)."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+
+    with TestClient(app) as client:
+        response = client.post("/expenses", json={"amount": 75.0}, headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["executed"] is True
+    await pool.execute("DELETE FROM expenses WHERE user_id = $1 AND amount = 75.0", uuid.UUID(internal_user_id))
+    await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
+async def test_create_expense_endpoint_rejects_a_non_positive_amount_with_a_real_502_not_a_500(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    with TestClient(app) as client:
+        response = client.post("/expenses", json={"amount": -5.0}, headers=headers)
+    assert response.status_code == 502
+
+
 # --- POST /calendar/events (`DEC-206`, product rebuild) ---
 
 

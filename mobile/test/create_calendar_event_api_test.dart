@@ -28,7 +28,7 @@ void main() {
         capturedMethod = request.method;
         capturedAuth = request.headers['Authorization'];
         capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
-        return http.Response(jsonEncode({'executed': false, 'decision': 'approve', 'event_title': 'Sync', 'event_start': start.toIso8601String(), 'event_end': end.toIso8601String()}), 200);
+        return http.Response(jsonEncode({'executed': false, 'stakes': 'S2', 'decision': 'approve', 'event_title': 'Sync', 'event_start': start.toIso8601String(), 'event_end': end.toIso8601String()}), 200);
       });
 
       final fetch = createCreateCalendarEventFetcher(
@@ -49,7 +49,7 @@ void main() {
       late Map<String, dynamic> capturedBody;
       final client = MockClient((request) async {
         capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
-        return http.Response(jsonEncode({'executed': false, 'decision': 'escalate_to_human'}), 200);
+        return http.Response(jsonEncode({'executed': false, 'stakes': 'S2', 'decision': 'escalate_to_human'}), 200);
       });
 
       final fetch = createCreateCalendarEventFetcher(getAccessToken: () async => 't', client: client);
@@ -77,7 +77,7 @@ void main() {
     test('parses a real, complete 200 response, including the real event fields the on-device write needs', () async {
       final client = MockClient((request) async {
         return http.Response(
-          jsonEncode({'executed': false, 'decision': 'approve', 'event_title': 'Sync', 'event_start': start.toIso8601String(), 'event_end': end.toIso8601String()}),
+          jsonEncode({'executed': false, 'stakes': 'S2', 'decision': 'approve', 'event_title': 'Sync', 'event_start': start.toIso8601String(), 'event_end': end.toIso8601String()}),
           200,
         );
       });

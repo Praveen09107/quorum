@@ -42,6 +42,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/api/create_task_api.dart';
+import 'package:quorum_mobile/features/gate_verdict/gate_verdict_card.dart';
 import 'package:quorum_mobile/features/computed_state.dart';
 import 'package:quorum_mobile/features/predictive_risk/predictive_risk_logic.dart';
 import 'package:quorum_mobile/features/tasks/tasks_logic.dart';
@@ -302,6 +303,9 @@ class TasksLoaderState extends State<TasksLoader> {
       builder: (_) => _NewTaskSheet(onCreateTask: onCreateTask),
     );
     if (result == null || !mounted) return;
+    // `DEC-214`: the real Gate verdict shown before the SnackBar.
+    await showGateVerdictSheet(context, decision: result.decision, stakes: result.stakes, findings: result.findings, objections: result.objections);
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(result.executed ? 'Added "${result.title}".' : 'The Gate declined to add that task (${result.decision}).')),
     );
