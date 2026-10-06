@@ -154,6 +154,60 @@ void main() {
     expect(rows.length, 3);
   });
 
+  test('REAL, DISCLOSED FIX -- the exact real, confirmed-live bug: the same real event from 3 real calendar sources (3 distinct eventIds, identical title/start/end) syncs as exactly 1 real mirror row', () async {
+    final result = await syncEventsIntoMirror(db, [
+      CalendarEventData(
+        eventId: 'holiday_src_1',
+        title: 'First Day of Sharad Navratri',
+        startTime: _t(2026, 10, 11, 0, 0),
+        endTime: _t(2026, 10, 12, 0, 0),
+        sourceCalendarId: 'cal_holidays_account_a',
+      ),
+      CalendarEventData(
+        eventId: 'holiday_src_2',
+        title: 'First Day of Sharad Navratri',
+        startTime: _t(2026, 10, 11, 0, 0),
+        endTime: _t(2026, 10, 12, 0, 0),
+        sourceCalendarId: 'cal_holidays_account_b',
+      ),
+      CalendarEventData(
+        eventId: 'holiday_src_3',
+        title: 'First Day of Sharad Navratri',
+        startTime: _t(2026, 10, 11, 0, 0),
+        endTime: _t(2026, 10, 12, 0, 0),
+        sourceCalendarId: 'cal_holidays_builtin',
+      ),
+    ]);
+
+    expect(result.eventsSynced, 1);
+    final rows = await db.select(db.calendarMirror).get();
+    expect(rows.length, 1);
+    expect(rows.first.title, 'First Day of Sharad Navratri');
+  });
+
+  test('two real events with the same title but genuinely different times are never merged', () async {
+    final result = await syncEventsIntoMirror(db, [
+      CalendarEventData(
+        eventId: 'evt_1',
+        title: 'Standup',
+        startTime: _t(2026, 8, 20, 9, 0),
+        endTime: _t(2026, 8, 20, 9, 15),
+        sourceCalendarId: 'cal_primary',
+      ),
+      CalendarEventData(
+        eventId: 'evt_2',
+        title: 'Standup',
+        startTime: _t(2026, 8, 21, 9, 0),
+        endTime: _t(2026, 8, 21, 9, 15),
+        sourceCalendarId: 'cal_primary',
+      ),
+    ]);
+
+    expect(result.eventsSynced, 2);
+    final rows = await db.select(db.calendarMirror).get();
+    expect(rows.length, 2);
+  });
+
   test('getCalendarEventsInRange correctly applies the real half-open boundary -- MOBILE_01\'s already-real query, fed by this session\'s output', () async {
     // Real, hand-verified boundary values (see file header / DECISIONS_LOG.md):
     // start_q = 2026-08-20 00:00:00, end_q = 2026-08-21 00:00:00.

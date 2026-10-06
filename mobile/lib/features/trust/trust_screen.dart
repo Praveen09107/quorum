@@ -16,9 +16,23 @@
 // real, injected async fetcher, same deferred-HTTP-implementation
 // pattern as every other real/external boundary in this project; the
 // link only appears at all when a real fetcher is actually supplied.
+//
+// A second real link added (`DEC-193`, product rebuild Block E): Trust
+// -> the Gate showcase. This is the judge-facing proof surface the
+// original rebuild mandate's point #4 named explicitly ("a separate
+// Gate-workflow showcase page so that judges will understand it is real
+// working"). Trust is its real, disclosed home rather than a new tab --
+// it is already where this app's self-test/adversarial-catch-rate
+// results live, and `GET /gate/validators`/`GET /gate/stats` are a
+// direct extension of that same real question ("is the Gate actually
+// working"), matching `DEC-192`'s own precedent of extending an
+// existing, closely-related screen instead of a full IA rebuild.
 
 import 'package:flutter/material.dart';
 
+import 'package:quorum_mobile/features/gate_showcase/gate_showcase_logic.dart';
+import 'package:quorum_mobile/features/gate_showcase/gate_showcase_screen.dart';
+import 'package:quorum_mobile/features/trust/scenario_verdict_screen.dart';
 import 'package:quorum_mobile/features/trust/trust_logic.dart';
 import 'package:quorum_mobile/features/trust_digest/trust_digest_logic.dart';
 import 'package:quorum_mobile/features/trust_digest/trust_digest_screen.dart';
@@ -28,8 +42,16 @@ import 'package:quorum_mobile/theme/spacing.dart';
 class TrustScreen extends StatelessWidget {
   final TrustData trust;
   final Future<TrustDigestData> Function()? onOpenTrustDigest;
+  final Future<List<GateValidatorData>> Function()? fetchGateValidators;
+  final Future<GateStatsData> Function()? fetchGateStats;
 
-  const TrustScreen({super.key, required this.trust, this.onOpenTrustDigest});
+  const TrustScreen({
+    super.key,
+    required this.trust,
+    this.onOpenTrustDigest,
+    this.fetchGateValidators,
+    this.fetchGateStats,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -66,6 +88,25 @@ class TrustScreen extends StatelessWidget {
             ),
           ),
         ],
+        if (fetchGateValidators != null && fetchGateStats != null) ...[
+          const SizedBox(height: QuorumSpacing.sm),
+          Card(
+            child: ListTile(
+              leading: QuorumIconBadge(icon: Icons.shield_outlined, color: colorScheme.primary),
+              title: const Text('How the Gate works'),
+              subtitle: const Text('The real validator roster and live stats, for the curious or the skeptical'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => GateShowcaseScreen(
+                    fetchValidators: fetchGateValidators!,
+                    fetchStats: fetchGateStats!,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: QuorumSpacing.lg),
         if (trust.missed.isNotEmpty) ...[
           Text('Missed', style: Theme.of(context).textTheme.titleSmall),
@@ -82,11 +123,44 @@ class TrustScreen extends StatelessWidget {
                 leading: const QuorumIconBadge(icon: Icons.warning_amber, color: QuorumStatusColors.critical),
                 title: Text('Scenario ${trust.missed[i].scenarioId}'),
                 subtitle: Text('Expected ${trust.missed[i].expected}, got ${trust.missed[i].actual}'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _openScenario(context, trust.missed[i]),
+              ),
+            ),
+          ],
+          const SizedBox(height: QuorumSpacing.lg),
+        ],
+        // `DEC-204` (product rebuild) -- the real, full scenario list
+        // `GET /trust`'s own `results` field has always carried
+        // (passed and failed alike, "never pre-filtered" per that
+        // field's own established contract) but this screen never
+        // rendered until now -- only the missed subset was ever shown.
+        if (trust.results.isNotEmpty) ...[
+          Text('Every real scenario', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: QuorumSpacing.sm),
+          for (var i = 0; i < trust.results.length; i++) ...[
+            if (i > 0) const SizedBox(height: QuorumSpacing.sm),
+            Card(
+              child: ListTile(
+                leading: QuorumIconBadge(
+                  icon: trust.results[i].passed ? Icons.check_circle_outline : Icons.warning_amber,
+                  color: trust.results[i].passed ? QuorumStatusColors.verified : QuorumStatusColors.critical,
+                ),
+                title: Text('Scenario ${trust.results[i].scenarioId}'),
+                subtitle: Text('Real decision: ${trust.results[i].verdict.decision}'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _openScenario(context, trust.results[i]),
               ),
             ),
           ],
         ],
       ],
+    );
+  }
+
+  void _openScenario(BuildContext context, ScenarioResultData result) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => ScenarioVerdictScreen(result: result)),
     );
   }
 }

@@ -74,6 +74,9 @@ void main() {
                 'timestamp': '2026-08-10T09:00:00Z',
                 'outcome': 'approved_unchanged',
                 'description': 'Created task: Write report',
+                'action_type': 'create_task',
+                'stakes': 'S1',
+                'domain': 'tasks',
               },
             ],
             'failures_and_catches': [
@@ -82,6 +85,9 @@ void main() {
                 'timestamp': '2026-08-11T14:00:00Z',
                 'outcome': 'caught_by_gate',
                 'description': 'Draft claimed a meeting that didn\'t exist',
+                'action_type': 'send_email',
+                'stakes': 'S3',
+                'domain': 'email',
               },
             ],
             'genuinely_uncertain': [],
@@ -101,6 +107,10 @@ void main() {
       expect(feed.failuresAndCatches, hasLength(1));
       expect(feed.failuresAndCatches.first.outcome, 'caught_by_gate');
       expect(feed.genuinelyUncertain, isEmpty);
+      // `DEC-205` -- the real Activity screen's own filter fields.
+      expect(feed.successes.first.domain, 'tasks');
+      expect(feed.successes.first.stakes, 'S1');
+      expect(feed.failuresAndCatches.first.domain, 'email');
     });
 
     test('a real null success_rate parses to a real null, not zero -- "No data yet" is honest', () async {
@@ -117,6 +127,9 @@ void main() {
                 'timestamp': '2026-08-12T00:00:00Z',
                 'outcome': 'uncertain_no_data',
                 'description': 'Sent an email to a@x.com',
+                'action_type': 'send_email',
+                'stakes': 'S3',
+                'domain': 'email',
               },
             ],
           }),

@@ -13,6 +13,18 @@ import 'package:quorum_mobile/api/api_exceptions.dart';
 import 'package:quorum_mobile/api/trust_api.dart';
 import 'package:quorum_mobile/features/trust/trust_logic.dart';
 
+/// `DEC-204` -- every real scenario now carries a real `verdict`;
+/// this is the minimal, honest default every fixture below includes.
+Map<String, dynamic> _fakeVerdictJson({String decision = 'approve', int revisionCount = 0}) {
+  return {
+    'decision': decision,
+    'revision_count': revisionCount,
+    'findings': <Map<String, dynamic>>[],
+    'objections': <Map<String, dynamic>>[],
+    'trace_id': 'test-trace',
+  };
+}
+
 Map<String, dynamic> _realGateBody({
   int total = 3,
   int caught = 3,
@@ -26,13 +38,14 @@ Map<String, dynamic> _realGateBody({
     'missed': missed,
     'results': results ??
         [
-          {'scenario_id': 'S0_clean_approval', 'expected': 'approve', 'actual': 'approve', 'passed': true},
-          {'scenario_id': 'S2_stage_a_hard_fail', 'expected': 'revise', 'actual': 'revise', 'passed': true},
+          {'scenario_id': 'S0_clean_approval', 'expected': 'approve', 'actual': 'approve', 'passed': true, 'verdict': _fakeVerdictJson()},
+          {'scenario_id': 'S2_stage_a_hard_fail', 'expected': 'revise', 'actual': 'revise', 'passed': true, 'verdict': _fakeVerdictJson(decision: 'revise')},
           {
             'scenario_id': 'S3_real_critic_objection_escalates',
             'expected': 'escalate_to_human',
             'actual': 'escalate_to_human',
             'passed': true,
+            'verdict': _fakeVerdictJson(decision: 'escalate_to_human'),
           },
         ],
     'target': target,
@@ -120,6 +133,7 @@ void main() {
         'expected': 'reject',
         'actual': 'approve',
         'passed': false,
+        'verdict': _fakeVerdictJson(decision: 'approve'),
       };
       final client = MockClient((request) async {
         return http.Response(
@@ -134,6 +148,40 @@ void main() {
       expect(trust.missed, hasLength(1));
       expect(trust.missed.first.scenarioId, 'deliberately_mis_specified');
       expect(trust.missed.first.passed, isFalse);
+    });
+
+    test('parses a real, complete verdict, including real findings and objections (`DEC-204`)', () async {
+      final scenario = {
+        'scenario_id': 'S3_real_critic_objection_escalates',
+        'expected': 'escalate_to_human',
+        'actual': 'escalate_to_human',
+        'passed': true,
+        'verdict': {
+          'decision': 'escalate_to_human',
+          'revision_count': 1,
+          'findings': [
+            {'validator': 'ProvenanceCheck', 'claim': 'A real claim', 'evidence_state': 'verified_true'},
+          ],
+          'objections': [
+            {'category': 'tone', 'severity': 'high', 'description': 'A real objection', 'signed_off': false},
+          ],
+          'trace_id': 'a-real-trace-id',
+        },
+      };
+      final client = MockClient((request) async {
+        return http.Response(jsonEncode(_realGateBody(total: 1, caught: 1, results: [scenario])), 200);
+      });
+
+      final fetch = createTrustFetcher(getAccessToken: () async => 't', client: client);
+      final trust = await fetch();
+
+      final verdict = trust.results.single.verdict;
+      expect(verdict.decision, 'escalate_to_human');
+      expect(verdict.revisionCount, 1);
+      expect(verdict.traceId, 'a-real-trace-id');
+      expect(verdict.findings.single.validator, 'ProvenanceCheck');
+      expect(verdict.objections.single.description, 'A real objection');
+      expect(verdict.objections.single.signedOff, isFalse);
     });
 
     test('an unrecognized target string parses to the honest, fail-closed stub value', () async {

@@ -35,11 +35,23 @@ class LoggedActionData {
   final String outcome; // 'approved_unchanged' | 'caught_by_gate' | 'corrected_by_user' | ...
   final String description;
 
+  /// `DEC-205` (product rebuild) -- the real Activity screen's own
+  /// filter-by-agent/filter-by-stakes requirement. `domain` is `null`
+  /// only for `CREATE_NOTE`, the one real action type no agent has
+  /// ever proposed (`agent_telemetry.py::AGENT_FOR_ACTION_TYPE`) --
+  /// never a fabricated domain for an action that genuinely has none.
+  final String actionType;
+  final String stakes;
+  final String? domain;
+
   const LoggedActionData({
     required this.actionId,
     required this.timestamp,
     required this.outcome,
     required this.description,
+    required this.actionType,
+    required this.stakes,
+    required this.domain,
   });
 }
 

@@ -21,6 +21,7 @@ import 'package:http/http.dart' as http;
 
 import 'package:quorum_mobile/api/api_exceptions.dart';
 import 'package:quorum_mobile/config/api_config.dart';
+import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
 import 'package:quorum_mobile/features/trust/trust_logic.dart';
 
 Future<TrustData> Function() createTrustFetcher({
@@ -89,5 +90,41 @@ ScenarioResultData _parseScenarioResult(Map<String, dynamic> json) {
     expected: json['expected'] as String,
     actual: json['actual'] as String,
     passed: json['passed'] as bool,
+    verdict: _parseVerdict(json['verdict'] as Map<String, dynamic>),
+  );
+}
+
+/// `DEC-204` -- the real `GateVerdict` every scenario has carried
+/// since `DEC-193`'s own backend fix, parsed here for the first time.
+ScenarioVerdictData _parseVerdict(Map<String, dynamic> json) {
+  final findings = (json['findings'] as List<dynamic>)
+      .map((raw) => _parseFinding(raw as Map<String, dynamic>))
+      .toList();
+  final objections = (json['objections'] as List<dynamic>)
+      .map((raw) => _parseObjection(raw as Map<String, dynamic>))
+      .toList();
+  return ScenarioVerdictData(
+    decision: json['decision'] as String,
+    revisionCount: json['revision_count'] as int,
+    findings: findings,
+    objections: objections,
+    traceId: json['trace_id'] as String,
+  );
+}
+
+FindingSummary _parseFinding(Map<String, dynamic> json) {
+  return FindingSummary(
+    validator: json['validator'] as String,
+    claim: json['claim'] as String,
+    visualState: visualStateForEvidence(json['evidence_state'] as String),
+  );
+}
+
+ObjectionSummary _parseObjection(Map<String, dynamic> json) {
+  return ObjectionSummary(
+    category: json['category'] as String,
+    severity: json['severity'] as String,
+    description: json['description'] as String,
+    signedOff: json['signed_off'] as bool,
   );
 }

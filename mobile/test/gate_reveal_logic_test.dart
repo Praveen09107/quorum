@@ -101,4 +101,46 @@ void main() {
       expect(summary.signedOff, isTrue);
     });
   });
+
+  group('GateRevealBundle.isPending / canApprove -- the real Approve/Reject gating', () {
+    GateRevealBundle bundleWith({required String actionType, required String gateDecision, String? resolvedAt}) {
+      return GateRevealBundle(
+        stakes: 'S3', findings: const [], objections: const [],
+        actionType: actionType, gateDecision: gateDecision, resolvedAt: resolvedAt,
+        payload: const {},
+      );
+    }
+
+    test('a real, unresolved send_email the Gate approved can be approved', () {
+      final bundle = bundleWith(actionType: 'send_email', gateDecision: 'approve');
+      expect(bundle.isPending, isTrue);
+      expect(bundle.canApprove, isTrue);
+    });
+
+    test('a real, unresolved create_calendar_event_external the Gate approved can be approved', () {
+      final bundle = bundleWith(actionType: 'create_calendar_event_external', gateDecision: 'approve');
+      expect(bundle.canApprove, isTrue);
+    });
+
+    test('a real, already-resolved row can never be approved, regardless of action_type/gate_decision', () {
+      final bundle = bundleWith(actionType: 'send_email', gateDecision: 'approve', resolvedAt: '2026-10-01T10:00:00Z');
+      expect(bundle.isPending, isFalse);
+      expect(bundle.canApprove, isFalse);
+    });
+
+    test('an escalate_to_human verdict can never be approved -- that is a genuinely different, out-of-scope case', () {
+      final bundle = bundleWith(actionType: 'send_email', gateDecision: 'escalate_to_human');
+      expect(bundle.canApprove, isFalse);
+    });
+
+    test('create_calendar_event_local can never be approved -- no real execution target exists for it', () {
+      final bundle = bundleWith(actionType: 'create_calendar_event_local', gateDecision: 'approve');
+      expect(bundle.canApprove, isFalse);
+    });
+
+    test('a real create_task can never be approved through this path -- it already auto-executes on its own', () {
+      final bundle = bundleWith(actionType: 'create_task', gateDecision: 'approve');
+      expect(bundle.canApprove, isFalse);
+    });
+  });
 }

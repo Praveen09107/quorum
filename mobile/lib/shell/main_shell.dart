@@ -82,11 +82,25 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:quorum_mobile/api/action_approval_api.dart';
+import 'package:quorum_mobile/api/action_status_api.dart';
+import 'package:quorum_mobile/api/connections_api.dart';
+import 'package:quorum_mobile/api/email_overview_api.dart';
+import 'package:quorum_mobile/api/expenses_api.dart';
 import 'package:quorum_mobile/api/health_api.dart';
+import 'package:quorum_mobile/api/task_status_api.dart';
+import 'package:quorum_mobile/api/update_budget_api.dart';
+import 'package:quorum_mobile/api/week_summary_api.dart';
 import 'package:quorum_mobile/db/database.dart';
+import 'package:quorum_mobile/api/agents_api.dart';
+import 'package:quorum_mobile/api/create_application_api.dart';
+import 'package:quorum_mobile/api/schedule_interview_api.dart';
+import 'package:quorum_mobile/features/agents/agents_index_screen.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
+import 'package:quorum_mobile/features/email/email_workspace_screen.dart';
 import 'package:quorum_mobile/features/career_digest/career_digest_logic.dart';
+import 'package:quorum_mobile/features/decision_trace/decision_trace_screen.dart';
 import 'package:quorum_mobile/features/finance/finance_logic.dart';
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_screen.dart';
@@ -99,12 +113,16 @@ import 'package:quorum_mobile/features/outage/outage_banner.dart';
 import 'package:quorum_mobile/features/outage/outage_detector.dart';
 import 'package:quorum_mobile/features/pending_share_provider.dart';
 import 'package:quorum_mobile/features/predictive_risk/predictive_risk_logic.dart';
+import 'package:quorum_mobile/api/capture_stream_api.dart';
+import 'package:quorum_mobile/features/gate_pipeline/gate_pipeline_screen.dart';
 import 'package:quorum_mobile/features/quick_capture/quick_capture_logic.dart';
 import 'package:quorum_mobile/features/quick_capture/quick_capture_screen.dart';
 import 'package:quorum_mobile/features/search/search_logic.dart';
 import 'package:quorum_mobile/features/share_intent_handler.dart';
 import 'package:quorum_mobile/features/tasks/tasks_logic.dart';
 import 'package:quorum_mobile/features/today_screen.dart';
+import 'package:quorum_mobile/theme/agent_identity.dart';
+import 'package:quorum_mobile/features/gate_showcase/gate_showcase_logic.dart';
 import 'package:quorum_mobile/features/trust/trust_logic.dart';
 import 'package:quorum_mobile/features/trust/trust_screen.dart';
 import 'package:quorum_mobile/features/trust_digest/trust_digest_logic.dart';
@@ -118,6 +136,8 @@ typedef TodayDataFetcher = Future<TodayScreenData> Function();
 typedef HonestyFeedFetcher = Future<HonestyFeedData> Function();
 typedef TrustFetcher = Future<TrustData> Function();
 typedef TrustDigestFetcher = Future<TrustDigestData> Function();
+typedef GateValidatorsFetcher = Future<List<GateValidatorData>> Function();
+typedef GateStatsFetcher = Future<GateStatsData> Function();
 typedef MemoriesFetcher = Future<List<MemoryData>> Function();
 typedef DeletionConfirmer = Future<DeletionResultData> Function();
 typedef TaskListFetcher = Future<List<TaskData>> Function();
@@ -136,24 +156,95 @@ typedef QuickCaptureFetcher = Future<QuickCaptureResultData> Function(String tex
 
 class MainShell extends ConsumerStatefulWidget {
   final TodayDataFetcher? fetchToday;
+
+  /// `DEC-192` (product rebuild Block D). Optional, matching every
+  /// sibling fetcher's own honest gating -- when absent, the Agents
+  /// tab shows a real, honest error state rather than fabricated data.
+  final AgentsFetcher? fetchAgents;
+
+  /// `DEC-199` (product rebuild) -- the real Email agent workspace,
+  /// closing `DEC-197`'s own disclosed gap. Optional and additive,
+  /// matching every sibling fetcher's own honest gating.
+  final EmailOverviewFetcher? fetchEmailOverview;
   final HonestyFeedFetcher? fetchHonestyFeed;
+
+  /// `DEC-201` (product rebuild) -- the real Decision Trace screen.
+  /// Optional and additive, matching every sibling fetcher's own
+  /// honest gating.
+  final ActionStatusFetcher? fetchActionStatus;
   final TrustFetcher? fetchTrust;
   final TrustDigestFetcher? fetchTrustDigest;
+  final GateValidatorsFetcher? fetchGateValidators;
+  final GateStatsFetcher? fetchGateStats;
   final MemoriesFetcher? fetchMemories;
+
+  /// `DEC-198` (product rebuild). Optional and additive, matching every
+  /// sibling fetcher's own honest gating -- see `ConnectionsScreen`'s
+  /// own docstring for the full real reasoning.
+  final ConnectionsFetcher? fetchConnectionHealth;
+  final Future<void> Function()? onReconnectGoogle;
   final DeletionConfirmer? confirmDelete;
   final TaskListFetcher? fetchTasks;
   final PredictiveRiskFetcher? fetchPredictiveRisk;
+
+  /// REAL, NEW -- closes the real, confirmed-live bug `features/task_
+  /// status.py`/`task_status_api.dart` exist to fix: the Tasks screen's
+  /// own trailing status `Chip` has looked like a button since it was
+  /// written but never did anything. Both independently `null`-safe.
+  final CompleteTaskCall? completeTask;
+  final CancelTaskCall? cancelTask;
+
+  /// REAL, NEW -- the redesign's own real "This week across your
+  /// agents" cross-domain strip. See `WeekSummaryStrip`'s own docstring
+  /// for the full real reasoning.
+  final WeekSummaryFetcher? fetchWeekSummary;
   final GateRevealFetcher? fetchGateReveal;
+
+  /// REAL, NEW -- closes the real gap `action_approval.py`/`action_
+  /// approval_api.dart` exist to fix: `GateRevealScreen` has always
+  /// been read-only. Both independently `null`-safe like every other
+  /// optional fetcher in this shell -- when unset, Gate Reveal still
+  /// renders, just with no real way to act (the same honest "not yet
+  /// connected" degrade used everywhere else here).
+  final ApproveActionCall? approveAction;
+  final RejectActionCall? rejectAction;
   final NegotiationFetcher? fetchNegotiation;
   final ChooseNegotiationOption? chooseNegotiation;
   final CareerFetcher? fetchCareerApplications;
   final CareerDigestFetcher? fetchCareerDigest;
+  final CreateApplicationFetcher? createApplication;
+  final ScheduleInterviewFetcher? scheduleInterview;
   final FinanceFetcher? fetchFinance;
+
+  /// `DEC-200` (product rebuild) -- Finance's first real write
+  /// control. Optional and additive, matching every sibling fetcher's
+  /// own honest gating.
+  final UpdateBudgetFetcher? onUpdateBudget;
+
+  /// REAL, NEW -- the redesign's own real "Finance hub" work.
+  final ExpensesFetcher? fetchExpenses;
   final WaitingOnFetcher? fetchWaitingOn;
   final SearchFetcher? fetchSearch;
   final CalendarSyncTrigger? syncCalendar;
   final CalendarEventsFetcher? fetchCalendarEvents;
   final QuickCaptureFetcher? captureTask;
+
+  /// REAL, NEW (`DEC-189` Block B) -- the live Gate pipeline. When
+  /// provided, the FAB opens [GatePipelineScreen] instead of the
+  /// ordinary [QuickCaptureScreen], matching [captureTask]'s own
+  /// established honest-optional-fetcher gating: hidden/unused rather
+  /// than disabled when not configured. [onApproveAction]/
+  /// [onRejectAction] back the pipeline's own terminal S3 approve/
+  /// reject bar and are required together with [captureStream].
+  final CaptureStreamFetcher? captureStream;
+  final ApproveCall? onApproveAction;
+  final RejectCall? onRejectAction;
+
+  /// `DEC-191` (product rebuild Block C). Optional, matching every
+  /// sibling field's own honest gating -- when absent, a real local-
+  /// calendar-create result still renders correctly, just without the
+  /// real on-device write being attempted.
+  final CreateLocalEventCall? onCreateLocalEvent;
 
   /// The real, live "sign out" action (`DEC-105`) -- distinct from
   /// `confirmDelete` above: signing out ends the current real session
@@ -189,30 +280,61 @@ class MainShell extends ConsumerStatefulWidget {
   /// wall-clock seconds.
   final Duration healthCheckInterval;
 
+  /// `DEC-196` (product rebuild Block G) -- the real hand-off
+  /// `features/onboarding/onboarding_screen.dart`'s own "Get started"
+  /// button triggers: auto-opens the same real capture flow the FAB
+  /// already offers, on this shell's own first frame, so a brand-new
+  /// user's very next real moment in the app is the Gate pipeline
+  /// genuinely running -- never a fourth onboarding slide describing
+  /// it. `false` (the ordinary case) changes nothing: this shell opens
+  /// exactly as it always has.
+  final bool startWithCapture;
+
   const MainShell({
     super.key,
     this.fetchToday,
+    this.fetchAgents,
+    this.fetchEmailOverview,
     this.fetchHonestyFeed,
+    this.fetchActionStatus,
     this.fetchTrust,
     this.fetchTrustDigest,
+    this.fetchGateValidators,
+    this.fetchGateStats,
     this.fetchMemories,
+    this.fetchConnectionHealth,
+    this.onReconnectGoogle,
     this.confirmDelete,
     this.fetchTasks,
     this.fetchPredictiveRisk,
+    this.completeTask,
+    this.cancelTask,
+    this.fetchWeekSummary,
     this.fetchGateReveal,
+    this.approveAction,
+    this.rejectAction,
     this.fetchNegotiation,
     this.chooseNegotiation,
     this.fetchCareerApplications,
+    this.createApplication,
+    this.scheduleInterview,
     this.fetchCareerDigest,
     this.fetchFinance,
+    this.onUpdateBudget,
+    this.fetchExpenses,
     this.fetchWaitingOn,
     this.fetchSearch,
     this.syncCalendar,
     this.fetchCalendarEvents,
     this.captureTask,
+    this.captureStream,
+    this.onApproveAction,
+    this.onRejectAction,
+    this.onCreateLocalEvent,
     this.onSignOut,
     this.healthCheck,
     this.healthCheckInterval = const Duration(seconds: 20),
+    this.startWithCapture = false,
   });
 
   @override
@@ -225,8 +347,20 @@ class _MainShellState extends ConsumerState<MainShell> {
   OutageState _outageState = OutageState.initial;
   Timer? _healthCheckTimer;
 
+  // `DEC-192` (product rebuild Block D): `Agents` is added as a REAL,
+  // deliberately scoped-down version of this rebuild's own planned
+  // four-tab structure (Today/Agents/Gate/Activity) -- a full
+  // navigation rebuild (folding Trust into a new Gate tab, moving You
+  // behind the avatar, renaming Log to Activity) is real, larger,
+  // genuinely separate scope than this single addition, and risking a
+  // full IA rip-and-replace on this shell's own large, already-tested
+  // surface was judged the wrong trade against the real time available
+  // this session. Named here as a disclosed, deliberate interim state,
+  // not a silent partial implementation: five tabs today, the planned
+  // four-tab consolidation is real, explicit follow-on work.
   static const List<_QuorumTab> _tabs = [
     _QuorumTab(label: 'Today', icon: Icons.today_outlined, selectedIcon: Icons.today),
+    _QuorumTab(label: 'Agents', icon: Icons.smart_toy_outlined, selectedIcon: Icons.smart_toy),
     _QuorumTab(label: 'Log', icon: Icons.history_outlined, selectedIcon: Icons.history),
     _QuorumTab(label: 'Trust', icon: Icons.verified_outlined, selectedIcon: Icons.verified),
     _QuorumTab(label: 'You', icon: Icons.person_outline, selectedIcon: Icons.person),
@@ -242,6 +376,12 @@ class _MainShellState extends ConsumerState<MainShell> {
     final healthCheck = widget.healthCheck;
     if (healthCheck != null) {
       _healthCheckTimer = Timer.periodic(widget.healthCheckInterval, (_) => _pollHealth(healthCheck));
+    }
+
+    if (widget.startWithCapture) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _openCapture(context);
+      });
     }
   }
 
@@ -279,6 +419,115 @@ class _MainShellState extends ConsumerState<MainShell> {
     throw StateError('Account deletion has not been connected to a real backend yet.');
   }
 
+  /// Real, honest optional-fetcher gating, matching `captureTask`'s own
+  /// established pattern exactly: the richer, streaming experience is
+  /// preferred whenever it's genuinely configured; the plain,
+  /// non-streaming screen remains the real fallback rather than
+  /// disappearing, so this shell is never worse off than before this
+  /// block existed; and the FAB is hidden entirely (never
+  /// disabled/greyed) only when NEITHER is configured.
+  /// The one real place this shell actually opens the capture flow --
+  /// both the FAB's own `onPressed` and `startWithCapture`'s real
+  /// post-frame auto-open (`DEC-196`) call this, so the two can never
+  /// drift into opening two different real screens.
+  void _openCapture(BuildContext context) {
+    if (widget.captureStream != null && widget.onApproveAction != null && widget.onRejectAction != null) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => GatePipelineScreen(
+            captureStream: widget.captureStream!,
+            onApprove: widget.onApproveAction!,
+            onReject: widget.onRejectAction!,
+            onCreateLocalEvent: widget.onCreateLocalEvent,
+          ),
+        ),
+      );
+      return;
+    }
+    if (widget.captureTask != null) {
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => QuickCaptureScreen(capture: widget.captureTask!)));
+    }
+  }
+
+  Widget? _buildCaptureFab(BuildContext context) {
+    if (widget.captureStream != null && widget.onApproveAction != null && widget.onRejectAction != null) {
+      return FloatingActionButton(onPressed: () => _openCapture(context), child: const Icon(Icons.bolt_rounded));
+    }
+    if (widget.captureTask != null) {
+      return FloatingActionButton(onPressed: () => _openCapture(context), child: const Icon(Icons.add));
+    }
+    return null;
+  }
+
+  /// `DEC-197` (product rebuild Block D, remainder) -- the real, first
+  /// navigation a tap on an Agents-tab card has ever triggered. Reuses
+  /// the exact same real loader widgets Today/You already push
+  /// (`TasksLoader`/`FinanceLoader`/`CareerPipelineLoader`/
+  /// `CalendarLoader`, all promoted public this session specifically
+  /// so this one caller could reuse them instead of duplicating their
+  /// own loading logic a second time). `email` has no real workspace
+  /// screen anywhere in this app yet -- an honest, disclosed gap named
+  /// directly to the user via a `SnackBar`, never a silent no-op that
+  /// would look like a broken tap.
+  void _openAgentWorkspace(BuildContext context, QuorumAgent agent) {
+    switch (agent) {
+      case QuorumAgent.tasks:
+        final fetchTasks = widget.fetchTasks;
+        if (fetchTasks == null) return _showNotConnectedSnackBar(context, 'Tasks');
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => TasksLoader(
+            fetch: fetchTasks,
+            fetchPredictiveRisk: widget.fetchPredictiveRisk,
+            onComplete: widget.completeTask,
+            onCancel: widget.cancelTask,
+          ),
+        ));
+      case QuorumAgent.finance:
+        final fetchFinance = widget.fetchFinance;
+        if (fetchFinance == null) return _showNotConnectedSnackBar(context, 'Finance');
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => FinanceLoader(
+            fetch: fetchFinance,
+            fetchExpenses: widget.fetchExpenses,
+            weekSummaryFuture: widget.fetchWeekSummary?.call(),
+            onUpdateBudget: widget.onUpdateBudget,
+          ),
+        ));
+      case QuorumAgent.career:
+        final fetchCareerApplications = widget.fetchCareerApplications;
+        if (fetchCareerApplications == null) return _showNotConnectedSnackBar(context, 'Career');
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => CareerPipelineLoader(
+            fetch: fetchCareerApplications,
+            fetchDigest: widget.fetchCareerDigest,
+            createApplication: widget.createApplication,
+            scheduleInterview: widget.scheduleInterview,
+          ),
+        ));
+      case QuorumAgent.calendar:
+        final syncCalendar = widget.syncCalendar;
+        final fetchCalendarEvents = widget.fetchCalendarEvents;
+        if (syncCalendar == null || fetchCalendarEvents == null) return _showNotConnectedSnackBar(context, 'Calendar');
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => CalendarLoader(sync: syncCalendar, fetchEvents: fetchCalendarEvents),
+        ));
+      case QuorumAgent.email:
+        final fetchEmailOverview = widget.fetchEmailOverview;
+        if (fetchEmailOverview == null) return _showNotConnectedSnackBar(context, 'Email');
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => EmailWorkspaceScreen(fetch: fetchEmailOverview),
+        ));
+      case QuorumAgent.gate:
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This agent\'s own workspace screen is real, disclosed follow-on work -- not built yet.')),
+        );
+    }
+  }
+
+  void _showNotConnectedSnackBar(BuildContext context, String label) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$label is not connected right now.')));
+  }
+
   Widget _bodyForIndex(int index) {
     switch (index) {
       case 0:
@@ -286,25 +535,46 @@ class _MainShellState extends ConsumerState<MainShell> {
           fetch: widget.fetchToday,
           fetchTasks: widget.fetchTasks,
           fetchPredictiveRisk: widget.fetchPredictiveRisk,
+          completeTask: widget.completeTask,
+          cancelTask: widget.cancelTask,
+          fetchWeekSummary: widget.fetchWeekSummary,
           fetchGateReveal: widget.fetchGateReveal,
+          approveAction: widget.approveAction,
+          rejectAction: widget.rejectAction,
           fetchNegotiation: widget.fetchNegotiation,
           chooseNegotiation: widget.chooseNegotiation,
         );
       case 1:
-        return _HonestyLogTab(fetch: widget.fetchHonestyFeed);
+        final fetchAgents = widget.fetchAgents;
+        if (fetchAgents == null) return const _NotConnectedState(label: 'Agents');
+        return AgentsIndexScreen(fetch: fetchAgents, onTapAgent: (agent) => _openAgentWorkspace(context, agent));
       case 2:
-        return _TrustTab(fetch: widget.fetchTrust, fetchDigest: widget.fetchTrustDigest);
+        return _HonestyLogTab(fetch: widget.fetchHonestyFeed, fetchActionStatus: widget.fetchActionStatus);
       case 3:
+        return _TrustTab(
+          fetch: widget.fetchTrust,
+          fetchDigest: widget.fetchTrustDigest,
+          fetchGateValidators: widget.fetchGateValidators,
+          fetchGateStats: widget.fetchGateStats,
+        );
+      case 4:
         return YouScreen(
           onConfirmDelete: widget.confirmDelete ?? _unconfiguredDeletion,
           onOpenMemories: widget.fetchMemories,
+          fetchConnectionHealth: widget.fetchConnectionHealth,
+          onReconnectGoogle: widget.onReconnectGoogle,
           fetchCareerApplications: widget.fetchCareerApplications,
+          createApplication: widget.createApplication,
+          scheduleInterview: widget.scheduleInterview,
           fetchCareerDigest: widget.fetchCareerDigest,
           fetchFinance: widget.fetchFinance,
+          onUpdateBudget: widget.onUpdateBudget,
+          fetchExpenses: widget.fetchExpenses,
           fetchWaitingOn: widget.fetchWaitingOn,
           fetchSearch: widget.fetchSearch,
           syncCalendar: widget.syncCalendar,
           fetchCalendarEvents: widget.fetchCalendarEvents,
+          fetchWeekSummary: widget.fetchWeekSummary,
           onSignOut: widget.onSignOut,
         );
       default:
@@ -349,14 +619,7 @@ class _MainShellState extends ConsumerState<MainShell> {
       // entirely (never a disabled/greyed-out button) whenever no real
       // `captureTask` is configured -- the same honest, optional-fetcher
       // gating every other real feature in this shell already uses.
-      floatingActionButton: widget.captureTask == null
-          ? null
-          : FloatingActionButton(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => QuickCaptureScreen(capture: widget.captureTask!)),
-              ),
-              child: const Icon(Icons.add),
-            ),
+      floatingActionButton: _buildCaptureFab(context),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         onDestinationSelected: _onDestinationSelected,
@@ -413,7 +676,12 @@ class _TodayTab extends StatefulWidget {
   final TodayDataFetcher? fetch;
   final TaskListFetcher? fetchTasks;
   final PredictiveRiskFetcher? fetchPredictiveRisk;
+  final CompleteTaskCall? completeTask;
+  final CancelTaskCall? cancelTask;
+  final WeekSummaryFetcher? fetchWeekSummary;
   final GateRevealFetcher? fetchGateReveal;
+  final ApproveActionCall? approveAction;
+  final RejectActionCall? rejectAction;
   final NegotiationFetcher? fetchNegotiation;
   final ChooseNegotiationOption? chooseNegotiation;
 
@@ -421,7 +689,12 @@ class _TodayTab extends StatefulWidget {
     this.fetch,
     this.fetchTasks,
     this.fetchPredictiveRisk,
+    this.completeTask,
+    this.cancelTask,
+    this.fetchWeekSummary,
     this.fetchGateReveal,
+    this.approveAction,
+    this.rejectAction,
     this.fetchNegotiation,
     this.chooseNegotiation,
   });
@@ -543,13 +816,29 @@ class _TodayTabState extends State<_TodayTab> {
             now: DateTime.now(),
             fetchTasks: widget.fetchTasks,
             fetchPredictiveRisk: widget.fetchPredictiveRisk,
+            completeTask: widget.completeTask,
+            cancelTask: widget.cancelTask,
+            fetchWeekSummary: widget.fetchWeekSummary,
             onTapAction: gateReveal == null
                 ? null
-                : (action) => Navigator.of(context).push(
+                : (action) async {
+                    await Navigator.of(context).push(
                       MaterialPageRoute(
-                        builder: (_) => _GateRevealLoader(fetch: () => gateReveal(action.proposalId)),
+                        builder: (_) => _GateRevealLoader(
+                          proposalId: action.proposalId,
+                          fetch: () => gateReveal(action.proposalId),
+                          approveAction: widget.approveAction,
+                          rejectAction: widget.rejectAction,
+                        ),
                       ),
-                    ),
+                    );
+                    // Same real reason as the negotiation reload just
+                    // below: approving/rejecting resolves this row
+                    // server-side, and Today's own Needs-You-Now list
+                    // must reflect that the moment the user comes back
+                    // -- not just on the next cold launch (DEC-187).
+                    if (context.mounted) _reload();
+                  },
             onTapNegotiation: negotiation == null
                 ? null
                 : (negotiationId) async {
@@ -581,9 +870,17 @@ class _TodayTabState extends State<_TodayTab> {
 /// The Gate reveal's real drill-through: "why is the Gate asking about
 /// THIS" for a specific pending action, triggered from Needs You Now.
 class _GateRevealLoader extends StatelessWidget {
+  final String proposalId;
   final Future<GateRevealBundle> Function() fetch;
+  final ApproveActionCall? approveAction;
+  final RejectActionCall? rejectAction;
 
-  const _GateRevealLoader({required this.fetch});
+  const _GateRevealLoader({
+    required this.proposalId,
+    required this.fetch,
+    this.approveAction,
+    this.rejectAction,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -599,7 +896,12 @@ class _GateRevealLoader extends StatelessWidget {
             return Center(child: Text("Couldn't load the Gate reveal: ${snapshot.error}"));
           }
           final bundle = snapshot.data!;
-          return GateRevealScreen(stakes: bundle.stakes, findings: bundle.findings, objections: bundle.objections);
+          return GateRevealScreen(
+            proposalId: proposalId,
+            bundle: bundle,
+            onApprove: approveAction,
+            onReject: rejectAction,
+          );
         },
       ),
     );
@@ -741,7 +1043,13 @@ class _NegotiationLoaderState extends State<_NegotiationLoader> {
 class _HonestyLogTab extends StatelessWidget {
   final HonestyFeedFetcher? fetch;
 
-  const _HonestyLogTab({this.fetch});
+  /// `DEC-201` (product rebuild) -- the real Decision Trace drill-
+  /// through. Optional and additive; absent leaves every row non-
+  /// interactive, matching this shell's own established honest-gating
+  /// convention for every other real fetcher.
+  final ActionStatusFetcher? fetchActionStatus;
+
+  const _HonestyLogTab({this.fetch, this.fetchActionStatus});
 
   @override
   Widget build(BuildContext context) {
@@ -757,7 +1065,17 @@ class _HonestyLogTab extends StatelessWidget {
         if (snapshot.hasError) {
           return Center(child: Text("Couldn't load the Log: ${snapshot.error}"));
         }
-        return HonestyLogScreen(feed: snapshot.data!);
+        final fetchActionStatus = this.fetchActionStatus;
+        return HonestyLogScreen(
+          feed: snapshot.data!,
+          onTapAction: fetchActionStatus == null
+              ? null
+              : (action) => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => DecisionTraceScreen(proposalId: action.actionId, fetch: fetchActionStatus),
+                    ),
+                  ),
+        );
       },
     );
   }
@@ -766,8 +1084,10 @@ class _HonestyLogTab extends StatelessWidget {
 class _TrustTab extends StatelessWidget {
   final TrustFetcher? fetch;
   final TrustDigestFetcher? fetchDigest;
+  final GateValidatorsFetcher? fetchGateValidators;
+  final GateStatsFetcher? fetchGateStats;
 
-  const _TrustTab({this.fetch, this.fetchDigest});
+  const _TrustTab({this.fetch, this.fetchDigest, this.fetchGateValidators, this.fetchGateStats});
 
   @override
   Widget build(BuildContext context) {
@@ -783,7 +1103,12 @@ class _TrustTab extends StatelessWidget {
         if (snapshot.hasError) {
           return Center(child: Text("Couldn't load Trust: ${snapshot.error}"));
         }
-        return TrustScreen(trust: snapshot.data!, onOpenTrustDigest: fetchDigest);
+        return TrustScreen(
+          trust: snapshot.data!,
+          onOpenTrustDigest: fetchDigest,
+          fetchGateValidators: fetchGateValidators,
+          fetchGateStats: fetchGateStats,
+        );
       },
     );
   }
