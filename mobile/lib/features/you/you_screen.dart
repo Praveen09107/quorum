@@ -48,6 +48,8 @@ import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_screen.dart';
 import 'package:quorum_mobile/features/career_digest/career_digest_logic.dart';
 import 'package:quorum_mobile/features/career_digest/career_digest_screen.dart';
+import 'package:quorum_mobile/features/connections/connections_logic.dart';
+import 'package:quorum_mobile/features/connections/connections_screen.dart';
 import 'package:quorum_mobile/features/finance/finance_logic.dart';
 import 'package:quorum_mobile/features/finance/finance_screen.dart';
 import 'package:quorum_mobile/features/memory_transparency/memory_transparency_logic.dart';
@@ -65,6 +67,13 @@ import 'package:quorum_mobile/theme/spacing.dart';
 class YouScreen extends StatefulWidget {
   final Future<DeletionResultData> Function() onConfirmDelete;
   final Future<List<MemoryData>> Function()? onOpenMemories;
+
+  /// `DEC-198` (product rebuild) -- the real, direct answer to this
+  /// rebuild's own sharpest named root cause (a silently stale Google
+  /// grant). Optional and additive, same honest-gating pattern as
+  /// every other real fetcher on this screen.
+  final Future<ConnectionHealthData> Function()? fetchConnectionHealth;
+  final Future<void> Function()? onReconnectGoogle;
   final Future<List<CareerApplication>> Function()? fetchCareerApplications;
   final Future<CompanyDigestData> Function(String applicationId)? fetchCareerDigest;
 
@@ -109,6 +118,8 @@ class YouScreen extends StatefulWidget {
     super.key,
     required this.onConfirmDelete,
     this.onOpenMemories,
+    this.fetchConnectionHealth,
+    this.onReconnectGoogle,
     this.fetchCareerApplications,
     this.fetchCareerDigest,
     this.createApplication,
@@ -196,6 +207,22 @@ class _YouScreenState extends State<YouScreen> {
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => _MemoriesLoader(fetch: widget.onOpenMemories!)),
+              ),
+            ),
+            const Divider(height: QuorumSpacing.xl),
+          ],
+          if (widget.fetchConnectionHealth != null && widget.onReconnectGoogle != null) ...[
+            ListTile(
+              leading: QuorumIconBadge(icon: Icons.link_rounded, color: badgeColor),
+              title: const Text('Google connection'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ConnectionsScreen(
+                    fetch: widget.fetchConnectionHealth!,
+                    onReconnect: widget.onReconnectGoogle!,
+                  ),
+                ),
               ),
             ),
             const Divider(height: QuorumSpacing.xl),

@@ -75,6 +75,7 @@ from quorum_backend.features.career_digest import (
 )
 from quorum_backend.features.briefing import run_briefing
 from quorum_backend.features.career_pipeline import fetch_career_pipeline
+from quorum_backend.features.connection_health import get_connection_health
 from quorum_backend.features.deadline_watch import run_deadline_watch
 from quorum_backend.features.email_ingestion import run_email_ingestion
 from quorum_backend.features.follow_up import run_follow_up
@@ -1592,6 +1593,41 @@ async def gate_stats_endpoint(
         "revised_count": stats.revised_count,
         "quota_used": quota_used,
         "quota_limit": GEMINI_GENERATE_CONTENT_DAILY_LIMIT if quota_used is not None else None,
+    }
+
+
+@app.get("/connections")
+async def connections_endpoint(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """REAL, NEW (`DEC-198`, product rebuild). The real, disclosed root
+    cause this rebuild's own research named first: a real, revoked or
+    stale Google grant silently dams the entire Gmail/Calendar/Career
+    surface, and nothing anywhere in this app has ever told a signed-in
+    user that's what happened. This is that real, honest signal --
+    whether a grant exists, its real granted scopes, when it was last
+    written, and whether it can genuinely be refreshed right now,
+    checked live. See `features/connection_health.py` for why this
+    deliberately does not invent a "last successful ingestion"
+    timestamp this backend has never persisted per-user."""
+    settings = get_settings()
+    if not settings.google_oauth_client_id or not settings.google_oauth_client_secret or settings.google_token_encryption_key is None:
+        raise HTTPException(status_code=503, detail="Google OAuth is not configured on this deployment.")
+
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    health = await get_connection_health(
+        pool,
+        internal_user_id=internal_user_id,
+        client_id=settings.google_oauth_client_id,
+        client_secret=settings.google_oauth_client_secret,
+        encryption_key=settings.google_token_encryption_key,
+    )
+    return {
+        "connected": health.connected,
+        "granted_scopes": health.granted_scopes,
+        "last_updated_at": health.last_updated_at.isoformat() if health.last_updated_at else None,
+        "token_refreshable": health.token_refreshable,
     }
 
 

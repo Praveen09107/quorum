@@ -83,6 +83,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:quorum_mobile/api/action_approval_api.dart';
+import 'package:quorum_mobile/api/connections_api.dart';
 import 'package:quorum_mobile/api/expenses_api.dart';
 import 'package:quorum_mobile/api/health_api.dart';
 import 'package:quorum_mobile/api/task_status_api.dart';
@@ -161,6 +162,12 @@ class MainShell extends ConsumerStatefulWidget {
   final GateValidatorsFetcher? fetchGateValidators;
   final GateStatsFetcher? fetchGateStats;
   final MemoriesFetcher? fetchMemories;
+
+  /// `DEC-198` (product rebuild). Optional and additive, matching every
+  /// sibling fetcher's own honest gating -- see `ConnectionsScreen`'s
+  /// own docstring for the full real reasoning.
+  final ConnectionsFetcher? fetchConnectionHealth;
+  final Future<void> Function()? onReconnectGoogle;
   final DeletionConfirmer? confirmDelete;
   final TaskListFetcher? fetchTasks;
   final PredictiveRiskFetcher? fetchPredictiveRisk;
@@ -273,6 +280,8 @@ class MainShell extends ConsumerStatefulWidget {
     this.fetchGateValidators,
     this.fetchGateStats,
     this.fetchMemories,
+    this.fetchConnectionHealth,
+    this.onReconnectGoogle,
     this.confirmDelete,
     this.fetchTasks,
     this.fetchPredictiveRisk,
@@ -523,6 +532,8 @@ class _MainShellState extends ConsumerState<MainShell> {
         return YouScreen(
           onConfirmDelete: widget.confirmDelete ?? _unconfiguredDeletion,
           onOpenMemories: widget.fetchMemories,
+          fetchConnectionHealth: widget.fetchConnectionHealth,
+          onReconnectGoogle: widget.onReconnectGoogle,
           fetchCareerApplications: widget.fetchCareerApplications,
           createApplication: widget.createApplication,
           scheduleInterview: widget.scheduleInterview,

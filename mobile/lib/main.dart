@@ -103,6 +103,7 @@ import 'package:quorum_mobile/api/action_approval_api.dart';
 import 'package:quorum_mobile/api/agents_api.dart';
 import 'package:quorum_mobile/api/capture_stream_api.dart';
 import 'package:quorum_mobile/api/career_digest_api.dart';
+import 'package:quorum_mobile/api/connections_api.dart';
 import 'package:quorum_mobile/api/career_pipeline_api.dart';
 import 'package:quorum_mobile/api/expenses_api.dart';
 import 'package:quorum_mobile/api/finance_api.dart';
@@ -497,6 +498,27 @@ class _QuorumAppState extends State<QuorumApp> {
             // and the real `DeviceCalendarPlugin` connection are cheap
             // to share, and there is no reason for two.
             onCreateLocalEvent: _calendarSync.createLocalEvent,
+            // `DEC-198` (product rebuild) -- the real Google connection
+            // health screen. `onReconnectGoogle` reuses the exact same
+            // real sign-in flow `LoginScreen` already uses: it always
+            // carries `access_type=offline`/`prompt=consent`, so a
+            // repeat real consent genuinely re-issues a fresh
+            // refresh_token -- no separate reconnect plumbing exists or
+            // is needed. A real, honest cancellation is swallowed here,
+            // the same precedent `_LoginScreenState._handleSignIn`
+            // already set, so the screen's own post-reconnect refresh
+            // simply shows whatever real state resulted either way.
+            fetchConnectionHealth: createConnectionsFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            onReconnectGoogle: () async {
+              try {
+                await _authController.signIn();
+              } on SignInCancelled {
+                // A real, honest cancellation -- not an error.
+              }
+            },
             confirmDelete: _handleAccountDeletion,
             onSignOut: _handleSignOut,
             // Real, deliberately unauthenticated -- `GET /health` needs

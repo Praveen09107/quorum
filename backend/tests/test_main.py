@@ -3712,3 +3712,64 @@ async def test_gate_stats_endpoint_reflects_a_real_resolved_action(pool, provisi
     assert body["stakes_counts"] == {"S1": 1}
     assert body["success_count"] == 1
     assert body["catch_rate"] == 0.0
+
+
+# --- GET /connections (`DEC-198`, product rebuild) ---
+
+
+def test_connections_endpoint_requires_real_auth():
+    with TestClient(app) as client:
+        response = client.get("/connections")
+    assert response.status_code == 401
+
+
+async def test_connections_endpoint_is_honestly_not_connected_for_a_real_user_who_never_granted_google_access(
+    pool, provisioned_users
+):
+    headers, _ = await _provisioned_auth_header(pool, provisioned_users)
+    with TestClient(app) as client:
+        response = client.get("/connections", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["connected"] is False
+    assert body["granted_scopes"] == []
+    assert body["last_updated_at"] is None
+    assert body["token_refreshable"] is None
+
+
+async def test_connections_endpoint_reflects_a_real_stored_grant_and_its_real_scopes(pool, provisioned_users):
+    from cryptography.fernet import Fernet
+
+    from quorum_backend.auth.google_token_store import store_google_tokens
+    from quorum_backend.core.config import get_settings
+
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    settings = get_settings()
+    key = settings.google_token_encryption_key or Fernet.generate_key().decode()
+    # Deliberately EXPIRED -- this endpoint checks refreshability live,
+    # never from the stored expiry alone (see `connection_health.py`'s
+    # own top-of-file docstring); a far-from-expiry token here would
+    # return the stored access_token with no real refresh attempt at
+    # all, proving nothing about this endpoint's own honest `False`
+    # path below.
+    await store_google_tokens(
+        pool, internal_user_id=internal_user_id, access_token="a-real-access-token",
+        refresh_token="a-real-refresh-token", access_token_expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+        granted_scopes="openid email https://www.googleapis.com/auth/gmail.readonly", encryption_key=key,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/connections", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["connected"] is True
+    assert body["granted_scopes"] == ["openid", "email", "https://www.googleapis.com/auth/gmail.readonly"]
+    assert body["last_updated_at"] is not None
+    # client_id/client_secret in this deployment's real `.env` are real,
+    # live Google credentials, but this grant's own real refresh_token
+    # is fabricated by this test -- a genuine live refresh attempt
+    # against Google's real endpoint correctly fails, confirming the
+    # endpoint's own honest `False` path, not a 500.
+    assert body["token_refreshable"] is False
