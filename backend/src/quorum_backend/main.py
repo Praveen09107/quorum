@@ -78,6 +78,7 @@ from quorum_backend.features.career_pipeline import fetch_career_pipeline
 from quorum_backend.features.connection_health import get_connection_health
 from quorum_backend.features.deadline_watch import run_deadline_watch
 from quorum_backend.features.email_ingestion import run_email_ingestion
+from quorum_backend.features.email_overview import fetch_known_recipients, fetch_recent_drafts, fetch_sent_history
 from quorum_backend.features.follow_up import run_follow_up
 from quorum_backend.features.gate_reveal import fetch_gate_reveal
 from quorum_backend.features.honesty_log import fetch_honesty_feed
@@ -1518,6 +1519,54 @@ async def agents_endpoint(
                 "last_activity": agent_stats.last_activity.isoformat() if agent_stats.last_activity else None,
             }
             for agent_stats in (stats[domain] for domain in REAL_DOMAIN_AGENTS)
+        ],
+    }
+
+
+@app.get("/email/overview")
+async def email_overview_endpoint(
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """REAL, NEW (`DEC-199`, product rebuild). The real Email agent
+    workspace -- closes `DEC-197`'s own disclosed gap (Email had no
+    real workspace screen at all, only an honest "not built yet"
+    SnackBar). Every real list here already existed in this backend
+    before this session (`action_events`, `sent_messages`); this is
+    the first endpoint to read them together as a real agent's own
+    real tool. See `features/email_overview.py` for the full real
+    reasoning behind each of its three real queries."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    drafts = await fetch_recent_drafts(pool, user_id=internal_user_id)
+    sent_history = await fetch_sent_history(pool, user_id=internal_user_id)
+    known_recipients = await fetch_known_recipients(pool, user_id=internal_user_id)
+    return {
+        "drafts": [
+            {
+                "proposal_id": d.proposal_id,
+                "created_at": d.created_at.isoformat(),
+                "recipient": d.recipient,
+                "subject": d.subject,
+                "draft_id": d.draft_id,
+            }
+            for d in drafts
+        ],
+        "sent_history": [
+            {
+                "recipient": m.recipient,
+                "subject": m.subject,
+                "sent_at": m.sent_at.isoformat(),
+                "replied_at": m.replied_at.isoformat() if m.replied_at else None,
+            }
+            for m in sent_history
+        ],
+        "known_recipients": [
+            {
+                "recipient": r.recipient,
+                "last_contacted_at": r.last_contacted_at.isoformat(),
+                "message_count": r.message_count,
+            }
+            for r in known_recipients
         ],
     }
 

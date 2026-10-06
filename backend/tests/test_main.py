@@ -3637,6 +3637,59 @@ async def test_agents_endpoint_reflects_a_real_resolved_action(pool, provisioned
     assert tasks["last_activity"] is not None
 
 
+# --- GET /email/overview (`DEC-199`, product rebuild) ---
+
+
+def test_email_overview_endpoint_requires_real_auth():
+    with TestClient(app) as client:
+        response = client.get("/email/overview")
+    assert response.status_code == 401
+
+
+async def test_email_overview_endpoint_is_honestly_empty_for_a_real_user_with_no_email_activity(pool, provisioned_users):
+    headers, _ = await _provisioned_auth_header(pool, provisioned_users)
+    with TestClient(app) as client:
+        response = client.get("/email/overview", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["drafts"] == []
+    assert body["sent_history"] == []
+    assert body["known_recipients"] == []
+
+
+async def test_email_overview_endpoint_reflects_a_real_approved_draft_and_a_real_sent_message(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    proposal_id = uuid.uuid4()
+    payload = {"to": "sarah@example.com", "subject": "Re: proposal", "body": "a real body"}
+    artifact = {"draft_id": "draft-xyz"}
+    await pool.execute(
+        "INSERT INTO action_events (proposal_id, action_type, stakes, payload, gate_decision, outcome, trace_id, user_id, resolved_at, artifact) "
+        "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10::jsonb)",
+        proposal_id, "create_email_draft", "S1", json.dumps(payload), "approve", "approved_unchanged",
+        str(proposal_id), uuid.UUID(internal_user_id), datetime.now(timezone.utc), json.dumps(artifact),
+    )
+    from quorum_backend.features.waiting_on import record_sent_message
+    await record_sent_message(
+        pool, user_id=internal_user_id, message_id="m1", thread_id="t1", recipient="bob@example.com",
+        subject="a real sent subject", sent_at=datetime.now(timezone.utc),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/email/overview", headers=headers)
+
+    body = response.json()
+    assert len(body["drafts"]) == 1
+    assert body["drafts"][0]["recipient"] == "sarah@example.com"
+    assert body["drafts"][0]["draft_id"] == "draft-xyz"
+    assert len(body["sent_history"]) == 1
+    assert body["sent_history"][0]["recipient"] == "bob@example.com"
+    assert body["sent_history"][0]["replied_at"] is None
+    assert len(body["known_recipients"]) == 1
+    assert body["known_recipients"][0]["recipient"] == "bob@example.com"
+    assert body["known_recipients"][0]["message_count"] == 1
+
+
 # --- GET /gate/validators (`DEC-193`, product rebuild Block E) ---
 
 

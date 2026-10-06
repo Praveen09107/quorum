@@ -16,6 +16,7 @@ import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
 import 'package:quorum_mobile/features/career_digest/career_digest_logic.dart';
 import 'package:quorum_mobile/features/computed_state.dart';
+import 'package:quorum_mobile/features/email/email_overview_logic.dart';
 import 'package:quorum_mobile/features/finance/finance_logic.dart';
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
 import 'package:quorum_mobile/features/negotiation/negotiation_logic.dart';
@@ -168,6 +169,22 @@ Future<CompanyDigestData> _fakeFetchCareerDigest(String applicationId) async {
   );
 }
 
+Future<EmailOverviewData> _fakeFetchEmailOverview() async {
+  return EmailOverviewData(
+    drafts: [
+      EmailDraftData(
+        proposalId: 'd1',
+        createdAt: DateTime(2026, 9, 1),
+        recipient: 'sarah@example.com',
+        subject: 'A real, distinctive draft subject',
+        draftId: 'draft1',
+      ),
+    ],
+    sentHistory: const [],
+    knownRecipients: const [],
+  );
+}
+
 AgentStatsData _fakeAgentStats(String domain) {
   return AgentStatsData(
     domain: domain,
@@ -288,6 +305,7 @@ Widget _harness({
       home: MainShell(
         fetchToday: fetchToday ?? _fakeFetchToday,
         fetchAgents: _fakeFetchAgents,
+        fetchEmailOverview: _fakeFetchEmailOverview,
         fetchTasks: _fakeFetchTasks,
         fetchPredictiveRisk: _fakeFetchPredictiveRisk,
         completeTask: _fakeCompleteTask,
@@ -892,10 +910,11 @@ void main() {
     expect(find.widgetWithText(AppBar, 'Calendar'), findsOneWidget);
   });
 
-  testWidgets('tapping the real Email agent card shows an honest "not built yet" message, never a silent no-op', (tester) async {
+  testWidgets('tapping the real Email agent card opens the real Email agent workspace (`DEC-199`)', (tester) async {
     await openAgentsTab(tester);
     await scrollToAndTapAgentCard(tester, 'Email');
 
-    expect(find.textContaining('not built yet'), findsOneWidget);
+    expect(find.widgetWithText(AppBar, 'Email agent'), findsOneWidget);
+    expect(find.text('A real, distinctive draft subject'), findsOneWidget);
   });
 }

@@ -105,6 +105,7 @@ import 'package:quorum_mobile/api/capture_stream_api.dart';
 import 'package:quorum_mobile/api/career_digest_api.dart';
 import 'package:quorum_mobile/api/connections_api.dart';
 import 'package:quorum_mobile/api/career_pipeline_api.dart';
+import 'package:quorum_mobile/api/email_overview_api.dart';
 import 'package:quorum_mobile/api/expenses_api.dart';
 import 'package:quorum_mobile/api/finance_api.dart';
 import 'package:quorum_mobile/api/gate_reveal_api.dart';
@@ -423,6 +424,12 @@ class _QuorumAppState extends State<QuorumApp> {
             ),
             // `DEC-192` (product rebuild Block D) -- the Agents tab.
             fetchAgents: createAgentsFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-199` (product rebuild) -- the real Email agent
+            // workspace, closing `DEC-197`'s own disclosed gap.
+            fetchEmailOverview: createEmailOverviewFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),

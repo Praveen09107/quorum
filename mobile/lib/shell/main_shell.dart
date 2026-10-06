@@ -84,6 +84,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:quorum_mobile/api/action_approval_api.dart';
 import 'package:quorum_mobile/api/connections_api.dart';
+import 'package:quorum_mobile/api/email_overview_api.dart';
 import 'package:quorum_mobile/api/expenses_api.dart';
 import 'package:quorum_mobile/api/health_api.dart';
 import 'package:quorum_mobile/api/task_status_api.dart';
@@ -95,6 +96,7 @@ import 'package:quorum_mobile/api/schedule_interview_api.dart';
 import 'package:quorum_mobile/features/agents/agents_index_screen.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
+import 'package:quorum_mobile/features/email/email_workspace_screen.dart';
 import 'package:quorum_mobile/features/career_digest/career_digest_logic.dart';
 import 'package:quorum_mobile/features/finance/finance_logic.dart';
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
@@ -156,6 +158,11 @@ class MainShell extends ConsumerStatefulWidget {
   /// sibling fetcher's own honest gating -- when absent, the Agents
   /// tab shows a real, honest error state rather than fabricated data.
   final AgentsFetcher? fetchAgents;
+
+  /// `DEC-199` (product rebuild) -- the real Email agent workspace,
+  /// closing `DEC-197`'s own disclosed gap. Optional and additive,
+  /// matching every sibling fetcher's own honest gating.
+  final EmailOverviewFetcher? fetchEmailOverview;
   final HonestyFeedFetcher? fetchHonestyFeed;
   final TrustFetcher? fetchTrust;
   final TrustDigestFetcher? fetchTrustDigest;
@@ -274,6 +281,7 @@ class MainShell extends ConsumerStatefulWidget {
     super.key,
     this.fetchToday,
     this.fetchAgents,
+    this.fetchEmailOverview,
     this.fetchHonestyFeed,
     this.fetchTrust,
     this.fetchTrustDigest,
@@ -488,6 +496,11 @@ class _MainShellState extends ConsumerState<MainShell> {
           builder: (_) => CalendarLoader(sync: syncCalendar, fetchEvents: fetchCalendarEvents),
         ));
       case QuorumAgent.email:
+        final fetchEmailOverview = widget.fetchEmailOverview;
+        if (fetchEmailOverview == null) return _showNotConnectedSnackBar(context, 'Email');
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => EmailWorkspaceScreen(fetch: fetchEmailOverview),
+        ));
       case QuorumAgent.gate:
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('This agent\'s own workspace screen is real, disclosed follow-on work -- not built yet.')),
