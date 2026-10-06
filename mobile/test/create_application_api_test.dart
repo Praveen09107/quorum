@@ -23,7 +23,7 @@ void main() {
         capturedUri = request.url;
         capturedAuth = request.headers['Authorization'];
         capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
-        return http.Response(jsonEncode({'executed': true, 'decision': 'approve', 'company': 'Stripe'}), 200);
+        return http.Response(jsonEncode({'executed': true, 'stakes': 'S1', 'decision': 'approve', 'company': 'Stripe'}), 200);
       });
 
       final fetch = createCreateApplicationFetcher(
@@ -58,7 +58,7 @@ void main() {
 
     test('parses a real, complete 200 response', () async {
       final client = MockClient((request) async {
-        return http.Response(jsonEncode({'executed': true, 'decision': 'approve', 'company': 'Stripe'}), 200);
+        return http.Response(jsonEncode({'executed': true, 'stakes': 'S1', 'decision': 'approve', 'company': 'Stripe'}), 200);
       });
 
       final fetch = createCreateApplicationFetcher(getAccessToken: () async => 't', client: client);

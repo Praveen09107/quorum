@@ -584,6 +584,35 @@ class UpdateBudgetRequest(BaseModel):
     category: str = "Monthly budget"
 
 
+class CreateExpenseRequest(BaseModel):
+    """`DEC-214` (product rebuild Part C, Priority 2) -- the real
+    request shape for `POST /expenses`, Finance's second real write
+    control. A direct on-device review found the gap: `PUT /finance/
+    budget` can set the ceiling, but logging an actual expense is
+    *only* reachable through free-text capture today -- there is no
+    `+ Log expense` control anywhere on `FinanceScreen`. `LOG_EXPENSE`
+    is already a real, classified `ActionType` (`Stakes.S1`) with a
+    working proposal validator (`validate_and_build_finance_proposal()`)
+    -- this is the same Part B3 structured, extraction-skipping entry
+    point every sibling domain already has, not new Gate architecture.
+    `category` defaults to the honest literal `"Uncategorized"`,
+    matching `UpdateBudgetRequest.category`'s own established "a
+    direct control has no real category of its own to offer" default
+    pattern exactly -- `validate_and_build_finance_proposal()` requires
+    a real, non-empty `category` string unconditionally (confirmed
+    directly against its own code), so `None` is not a valid default
+    here the way it is for `payee`. `payee` genuinely IS optional in
+    that same validator (`args.get("payee")`, falling back to a real,
+    already-live `_UNKNOWN_PAYEE` display value in `action_executor.py`
+    -- confirmed already visible today as "Unknown" on real existing
+    expense rows), so this request leaves it so rather than forcing a
+    value the backend doesn't need."""
+
+    amount: float
+    payee: str | None = None
+    category: str = "Uncategorized"
+
+
 class TokenPairResponse(BaseModel):
     access_token: str
     refresh_token: str
@@ -1578,6 +1607,46 @@ async def schedule_interview_endpoint(
         raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
     except asyncpg.PostgresError as exc:
         raise HTTPException(status_code=502, detail="Couldn't schedule that interview -- please try again.") from exc
+
+    return _quick_capture_result_to_dict(result)
+
+
+@app.post("/expenses")
+async def create_expense_endpoint(
+    body: CreateExpenseRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """`DEC-214` (product rebuild Part C, Priority 2) -- real, new.
+    Finance's second real write control, closing the gap `CreateExpenseRequest`'s
+    own docstring names: a real, structured entry point into the SAME
+    real `capture_action_from_extracted_args()` pipeline every other
+    domain's structured route already uses, never calling Gemini
+    extraction. `LOG_EXPENSE` is real `Stakes.S1`, so this executes the
+    moment Stage A clears it -- no separate human-approval step,
+    matching `POST /applications`/`POST /tasks`'s own identical real
+    precedent."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    settings = get_settings()
+    critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
+    judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                result = await capture_action_from_extracted_args(
+                    conn,
+                    user_id=internal_user_id,
+                    args={"domain": "finance", "action": "log_expense", **body.model_dump()},
+                    critic_call=critic_call,
+                    judge_call=judge_call,
+                )
+    except QuickCaptureError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except InfrastructureFailure as exc:
+        raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
+    except asyncpg.PostgresError as exc:
+        raise HTTPException(status_code=502, detail="Couldn't log that expense -- please try again.") from exc
 
     return _quick_capture_result_to_dict(result)
 

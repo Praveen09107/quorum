@@ -124,6 +124,7 @@ import 'package:quorum_mobile/api/create_application_api.dart';
 import 'package:quorum_mobile/api/create_calendar_event_api.dart';
 import 'package:quorum_mobile/api/create_task_api.dart';
 import 'package:quorum_mobile/api/schedule_interview_api.dart';
+import 'package:quorum_mobile/api/create_expense_api.dart';
 import 'package:quorum_mobile/api/update_budget_api.dart';
 import 'package:quorum_mobile/api/gate_showcase_api.dart';
 import 'package:quorum_mobile/features/onboarding/onboarding_screen.dart';
@@ -396,6 +397,14 @@ class _QuorumAppState extends State<QuorumApp> {
             // `DEC-200` (product rebuild) -- Finance's first real
             // write control.
             onUpdateBudget: createUpdateBudgetFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-214` (product rebuild Part C, Priority 2) --
+            // Finance's second real write control, closing the gap a
+            // direct on-device review found: logging an expense was
+            // only reachable through free-text capture.
+            onLogExpense: createCreateExpenseFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),

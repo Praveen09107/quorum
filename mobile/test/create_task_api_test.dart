@@ -26,7 +26,7 @@ void main() {
         capturedMethod = request.method;
         capturedAuth = request.headers['Authorization'];
         capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
-        return http.Response(jsonEncode({'executed': true, 'decision': 'approve', 'title': 'Write the report'}), 200);
+        return http.Response(jsonEncode({'executed': true, 'stakes': 'S1', 'decision': 'approve', 'title': 'Write the report'}), 200);
       });
 
       final fetch = createCreateTaskFetcher(
@@ -48,7 +48,7 @@ void main() {
       late Map<String, dynamic> capturedBody;
       final client = MockClient((request) async {
         capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
-        return http.Response(jsonEncode({'executed': true, 'decision': 'approve'}), 200);
+        return http.Response(jsonEncode({'executed': true, 'stakes': 'S1', 'decision': 'approve'}), 200);
       });
 
       final fetch = createCreateTaskFetcher(getAccessToken: () async => 't', client: client);
@@ -75,7 +75,7 @@ void main() {
 
     test('parses a real, complete 200 response', () async {
       final client = MockClient((request) async {
-        return http.Response(jsonEncode({'executed': true, 'decision': 'approve', 'title': 'Write the report'}), 200);
+        return http.Response(jsonEncode({'executed': true, 'stakes': 'S1', 'decision': 'approve', 'title': 'Write the report'}), 200);
       });
 
       final fetch = createCreateTaskFetcher(getAccessToken: () async => 't', client: client);

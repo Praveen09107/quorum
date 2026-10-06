@@ -25,7 +25,7 @@ void main() {
         capturedMethod = request.method;
         capturedAuth = request.headers['Authorization'];
         capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
-        return http.Response(jsonEncode({'executed': true, 'decision': 'approve', 'amount': 60000.0}), 200);
+        return http.Response(jsonEncode({'executed': true, 'stakes': 'S2', 'decision': 'approve', 'amount': 60000.0}), 200);
       });
 
       final fetch = createUpdateBudgetFetcher(
@@ -46,7 +46,7 @@ void main() {
       late Map<String, dynamic> capturedBody;
       final client = MockClient((request) async {
         capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
-        return http.Response(jsonEncode({'executed': true, 'decision': 'approve', 'amount': 60000.0}), 200);
+        return http.Response(jsonEncode({'executed': true, 'stakes': 'S2', 'decision': 'approve', 'amount': 60000.0}), 200);
       });
 
       final fetch = createUpdateBudgetFetcher(getAccessToken: () async => 't', client: client);
@@ -73,7 +73,7 @@ void main() {
 
     test('parses a real, complete 200 response, including the real, possibly-revised amount', () async {
       final client = MockClient((request) async {
-        return http.Response(jsonEncode({'executed': true, 'decision': 'revise', 'amount': 55000.0}), 200);
+        return http.Response(jsonEncode({'executed': true, 'stakes': 'S2', 'decision': 'revise', 'amount': 55000.0}), 200);
       });
 
       final fetch = createUpdateBudgetFetcher(getAccessToken: () async => 't', client: client);

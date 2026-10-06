@@ -89,6 +89,7 @@ import 'package:quorum_mobile/api/email_overview_api.dart';
 import 'package:quorum_mobile/api/expenses_api.dart';
 import 'package:quorum_mobile/api/health_api.dart';
 import 'package:quorum_mobile/api/task_status_api.dart';
+import 'package:quorum_mobile/api/create_expense_api.dart';
 import 'package:quorum_mobile/api/update_budget_api.dart';
 import 'package:quorum_mobile/api/week_summary_api.dart';
 import 'package:quorum_mobile/db/database.dart';
@@ -228,6 +229,11 @@ class MainShell extends ConsumerStatefulWidget {
   /// own honest gating.
   final UpdateBudgetFetcher? onUpdateBudget;
 
+  /// `DEC-214` (product rebuild Part C, Priority 2) -- Finance's
+  /// second real write control. Optional and additive, matching every
+  /// sibling fetcher's own honest gating.
+  final CreateExpenseFetcher? onLogExpense;
+
   /// REAL, NEW -- the redesign's own real "Finance hub" work.
   final ExpensesFetcher? fetchExpenses;
   final WaitingOnFetcher? fetchWaitingOn;
@@ -336,6 +342,7 @@ class MainShell extends ConsumerStatefulWidget {
     this.fetchCareerDigest,
     this.fetchFinance,
     this.onUpdateBudget,
+    this.onLogExpense,
     this.fetchExpenses,
     this.fetchWaitingOn,
     this.fetchSearch,
@@ -508,6 +515,7 @@ class _MainShellState extends ConsumerState<MainShell> {
             fetchExpenses: widget.fetchExpenses,
             weekSummaryFuture: widget.fetchWeekSummary?.call(),
             onUpdateBudget: widget.onUpdateBudget,
+            onLogExpense: widget.onLogExpense,
           ),
         ));
       case QuorumAgent.career:
@@ -592,6 +600,7 @@ class _MainShellState extends ConsumerState<MainShell> {
           fetchCareerDigest: widget.fetchCareerDigest,
           fetchFinance: widget.fetchFinance,
           onUpdateBudget: widget.onUpdateBudget,
+          onLogExpense: widget.onLogExpense,
           fetchExpenses: widget.fetchExpenses,
           fetchWaitingOn: widget.fetchWaitingOn,
           fetchSearch: widget.fetchSearch,

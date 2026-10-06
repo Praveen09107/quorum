@@ -37,7 +37,7 @@ void main() {
         createCallCount++;
         capturedCompany = company;
         capturedRole = role;
-        return const CreateApplicationResult(executed: true, decision: 'approve', company: 'Stripe');
+        return const CreateApplicationResult(executed: true, decision: 'approve', stakes: 'S1', company: 'Stripe');
       },
     );
 
@@ -56,6 +56,10 @@ void main() {
     await tester.enterText(find.widgetWithText(TextField, 'Role (optional)'), 'Backend Engineer');
     await tester.tap(find.text('Add application'));
     await tester.pumpAndSettle();
+    // `DEC-214`: the real Gate verdict sheet now opens before the
+    // SnackBar -- dismiss it to reach the real post-submit state.
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
 
     expect(createCallCount, 1);
     expect(capturedCompany, 'Stripe');
@@ -70,7 +74,7 @@ void main() {
       onConfirmDelete: _unconfiguredDeletion,
       fetchCareerApplications: () async => const [],
       createApplication: ({required String company, String? role, DateTime? deadline}) async {
-        return const CreateApplicationResult(executed: false, decision: 'reject', company: null);
+        return const CreateApplicationResult(executed: false, decision: 'reject', stakes: 'S1', company: null);
       },
     );
 
@@ -83,6 +87,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Company'), 'Stripe');
     await tester.tap(find.text('Add application'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Gate declined'), findsOneWidget);

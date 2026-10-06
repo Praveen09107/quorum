@@ -25,7 +25,7 @@ void main() {
         scheduleCallCount++;
         capturedApplicationId = applicationId;
         capturedFormat = format;
-        return const ScheduleInterviewResult(executed: true, decision: 'approve');
+        return const ScheduleInterviewResult(executed: true, decision: 'approve', stakes: 'S1');
       },
     );
 
@@ -41,6 +41,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Schedule'));
     await tester.pumpAndSettle();
+    // `DEC-214`: the real Gate verdict sheet now opens before the
+    // SnackBar -- dismiss it to reach the real post-submit state.
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
 
     expect(scheduleCallCount, 1);
     expect(capturedApplicationId, 'a1');
@@ -53,7 +57,7 @@ void main() {
       onConfirmDelete: _unconfiguredDeletion,
       fetchCareerApplications: () async => const [CareerApplication(applicationId: 'a1', company: 'Notion', status: 'applied')],
       scheduleInterview: ({required String applicationId, DateTime? scheduledAt, String? format}) async {
-        return const ScheduleInterviewResult(executed: false, decision: 'reject');
+        return const ScheduleInterviewResult(executed: false, decision: 'reject', stakes: 'S1');
       },
     );
 
@@ -65,6 +69,8 @@ void main() {
     await tester.tap(find.byIcon(Icons.event_available_outlined));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Schedule'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Gate declined to schedule'), findsOneWidget);
