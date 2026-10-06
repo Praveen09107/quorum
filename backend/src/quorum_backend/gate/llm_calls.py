@@ -75,7 +75,7 @@ from typing import Awaitable, Callable
 import httpx
 from pydantic import ValidationError
 
-from quorum_backend.core.gemini_quota import GeminiQuotaExhaustedError, reserve_gemini_quota_slot
+from quorum_backend.core.gemini_quota import GEMINI_MODEL_CASCADE, GeminiQuotaExhaustedError, reserve_gemini_quota_slot
 from quorum_backend.gate.anonymization import randomize_objection_order
 from quorum_backend.gate.prompts import build_critic_prompt, build_judge_prompt
 from quorum_backend.gate.schemas import ActionProposal, Finding, GateVerdict, Objection
@@ -85,7 +85,10 @@ _GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 _GROQ_MAX_COMPLETION_TOKENS = 2048
 
 GEMINI_JUDGE_MODEL = "gemini-3.6-flash"
-_GEMINI_GENERATE_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_JUDGE_MODEL}:generateContent"
+
+
+def _gemini_generate_url(model: str) -> str:
+    return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 # A real, code-assigned default -- never trusted to the model -- for the
 # one case CLAUDE.md/self_test_harness.py's own precedent requires: a
@@ -218,7 +221,7 @@ async def _call_groq_json(*, messages: list[dict], api_key: str, max_retries: in
     raise GateLlmCallError(f"Groq Critic call failed after {max_retries} attempts: {last_error}") from last_error
 
 
-async def _call_gemini_json(*, prompt: str, api_key: str, max_retries: int = 2) -> dict:
+async def _call_gemini_json(*, prompt: str, api_key: str, models: tuple[str, ...] = GEMINI_MODEL_CASCADE, max_retries: int = 2) -> dict:
     """Real, live call to Gemini's `generateContent`, structured JSON
     output, with real retry on transient failure. Mirrors
     `negotiation/gemini_calls.py`'s own local helper of the same name and
@@ -227,12 +230,22 @@ async def _call_gemini_json(*, prompt: str, api_key: str, max_retries: int = 2) 
     collapsing genuinely separate call sites into one abstraction.
 
     **Real, shared quota reservation, `DEC-165`:** a real slot against
-    this backend's own shared daily `generateContent` budget for
-    `GEMINI_JUDGE_MODEL` is reserved BEFORE EACH real network attempt
-    below, inside the retry loop itself, not once above it -- Google
-    counts every real attempt, not just the final one; see `core/
-    gemini_quota.py`'s own top-of-file docstring for the full real
-    reasoning."""
+    this backend's own shared daily `generateContent` budget for each
+    model is reserved BEFORE EACH real network attempt below, inside the
+    retry loop itself, not once above it -- Google counts every real
+    attempt, not just the final one; see `core/gemini_quota.py`'s own
+    top-of-file docstring for the full real reasoning.
+
+    REAL, LIVE-CONFIRMED MODEL CASCADE, added for the identical real
+    reason `features/quick_capture.py::_call_gemini_json()` has one --
+    `models` defaults to `core.gemini_quota.GEMINI_MODEL_CASCADE`, each
+    entry confirmed live to work with its own separate quota bucket.
+    THE JUDGE MUST STAY GEMINI, NEVER GROQ -- this cascade only ever
+    tries other Gemini model IDs, preserving the real, load-bearing
+    "Critic (Groq) is a genuinely different provider than the Judge"
+    guarantee CLAUDE.md's own architecture rule requires, exactly as
+    `GEMINI_JUDGE_MODEL`'s own docstring above already establishes for
+    the single-model case."""
     last_error: Exception | None = None
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -241,23 +254,28 @@ async def _call_gemini_json(*, prompt: str, api_key: str, max_retries: int = 2) 
             "responseSchema": _JUDGE_RESPONSE_SCHEMA,
         },
     }
-    for _attempt in range(max_retries):
-        try:
-            await reserve_gemini_quota_slot(model=GEMINI_JUDGE_MODEL)
-        except GeminiQuotaExhaustedError as exc:
-            raise GateLlmCallError(str(exc)) from exc
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(_GEMINI_GENERATE_URL, headers={"x-goog-api-key": api_key}, json=body)
-            if response.status_code != 200:
-                last_error = GateLlmCallError(f"Gemini generateContent returned {response.status_code}: {response.text[:500]}")
-                continue
-            data = response.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-            return json.loads(text)
-        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-            last_error = exc
-    raise GateLlmCallError(f"Gemini Judge call failed after {max_retries} attempts: {last_error}") from last_error
+    for model in models:
+        url = _gemini_generate_url(model)
+        for _attempt in range(max_retries):
+            try:
+                await reserve_gemini_quota_slot(model=model)
+            except GeminiQuotaExhaustedError as exc:
+                last_error = exc
+                break
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(url, headers={"x-goog-api-key": api_key}, json=body)
+                if response.status_code != 200:
+                    last_error = GateLlmCallError(f"Gemini generateContent returned {response.status_code}: {response.text[:500]}")
+                    continue
+                data = response.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                return json.loads(text)
+            except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+                last_error = exc
+    if isinstance(last_error, GeminiQuotaExhaustedError):
+        raise GateLlmCallError(str(last_error)) from last_error
+    raise GateLlmCallError(f"Gemini Judge call failed after trying every cascade model: {last_error}") from last_error
 
 
 def make_groq_critic_call(*, api_key: str) -> Callable[[ActionProposal, list[Finding]], Awaitable[list[Objection]]]:

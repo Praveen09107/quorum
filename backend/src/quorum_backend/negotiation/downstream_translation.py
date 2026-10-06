@@ -66,12 +66,15 @@ from typing import Awaitable, Callable
 
 import httpx
 
-from quorum_backend.core.gemini_quota import GeminiQuotaExhaustedError, reserve_gemini_quota_slot
+from quorum_backend.core.gemini_quota import GEMINI_MODEL_CASCADE, GeminiQuotaExhaustedError, reserve_gemini_quota_slot
 
 DownstreamTranslationCall = Callable[[str, str], Awaitable[dict]]
 
 GEMINI_TRANSLATION_MODEL = "gemini-3.6-flash"
-_TRANSLATION_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_TRANSLATION_MODEL}:generateContent"
+
+
+def _translation_url(model: str) -> str:
+    return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
 class DownstreamTranslationError(Exception):
@@ -163,7 +166,9 @@ def build_translation_prompt(domain: str, description: str) -> str:
     raise DownstreamTranslationError(f"No real translation prompt for domain {domain!r}")
 
 
-async def _call_gemini_json(prompt: str, *, response_schema: dict, api_key: str, max_retries: int = 2) -> dict:
+async def _call_gemini_json(
+    prompt: str, *, response_schema: dict, api_key: str, models: tuple[str, ...] = GEMINI_MODEL_CASCADE, max_retries: int = 2
+) -> dict:
     """Real, live call to Gemini's `generateContent`, structured JSON
     output, real retry on transient failure -- the same, now three-times-
     repeated local-helper pattern `negotiation/gemini_calls.py` and
@@ -172,12 +177,20 @@ async def _call_gemini_json(prompt: str, *, response_schema: dict, api_key: str,
     with different real callers and different real schemas.
 
     **Real, shared quota reservation, `DEC-165`:** a real slot against
-    this backend's own shared daily `generateContent` budget for
-    `GEMINI_TRANSLATION_MODEL` is reserved BEFORE EACH real network
-    attempt below, inside the retry loop itself, not once above it --
-    Google counts every real attempt, not just the final one; see
-    `core/gemini_quota.py`'s own top-of-file docstring for the full
-    real reasoning."""
+    this backend's own shared daily `generateContent` budget for each
+    model is reserved BEFORE EACH real network attempt below, inside the
+    retry loop itself, not once above it -- Google counts every real
+    attempt, not just the final one; see `core/gemini_quota.py`'s own
+    top-of-file docstring for the full real reasoning.
+
+    REAL, LIVE-CONFIRMED MODEL CASCADE: `models` defaults to `core.
+    gemini_quota.GEMINI_MODEL_CASCADE`, each entry confirmed live to
+    work with its own separate quota bucket. Cascades across Gemini
+    models only, never to Groq -- a chosen negotiation option can
+    translate into any real downstream domain, including a real S3
+    calendar-with-invitee action the Groq Critic genuinely reviews, so
+    the same Generator/Critic provider-diversity reasoning `gate/
+    llm_calls.py`'s own cascade docstring gives applies here too."""
     last_error: Exception | None = None
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -186,26 +199,31 @@ async def _call_gemini_json(prompt: str, *, response_schema: dict, api_key: str,
             "responseSchema": response_schema,
         },
     }
-    for _attempt in range(max_retries):
-        try:
-            await reserve_gemini_quota_slot(model=GEMINI_TRANSLATION_MODEL)
-        except GeminiQuotaExhaustedError as exc:
-            raise DownstreamTranslationError(str(exc)) from exc
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(_TRANSLATION_URL, headers={"x-goog-api-key": api_key}, json=body)
-            if response.status_code != 200:
-                last_error = DownstreamTranslationError(
-                    f"Gemini generateContent returned {response.status_code}: {response.text[:500]}"
-                )
-                continue
-            data = response.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-            return json.loads(text)
-        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-            last_error = exc
+    for model in models:
+        url = _translation_url(model)
+        for _attempt in range(max_retries):
+            try:
+                await reserve_gemini_quota_slot(model=model)
+            except GeminiQuotaExhaustedError as exc:
+                last_error = exc
+                break
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(url, headers={"x-goog-api-key": api_key}, json=body)
+                if response.status_code != 200:
+                    last_error = DownstreamTranslationError(
+                        f"Gemini generateContent returned {response.status_code}: {response.text[:500]}"
+                    )
+                    continue
+                data = response.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                return json.loads(text)
+            except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+                last_error = exc
+    if isinstance(last_error, GeminiQuotaExhaustedError):
+        raise DownstreamTranslationError(str(last_error)) from last_error
     raise DownstreamTranslationError(
-        f"Gemini downstream-translation call failed after {max_retries} attempts: {last_error}"
+        f"Gemini downstream-translation call failed after trying every cascade model: {last_error}"
     ) from last_error
 
 

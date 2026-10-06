@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from quorum_backend.core.config import get_settings
+from quorum_backend.core.gemini_quota import GEMINI_MODEL_CASCADE
 from quorum_backend.negotiation.downstream_translation import (
     DownstreamTranslationError,
     build_translation_prompt,
@@ -69,7 +70,14 @@ async def test_translation_call_raises_for_a_domain_with_no_real_schema(monkeypa
         await translation_call("career", "Any description -- career is never a real negotiation domain")
 
 
-async def test_translation_call_raises_after_real_retries_exhausted(monkeypatch):
+async def test_translation_call_raises_after_every_real_cascade_model_and_retry_exhausted(monkeypatch):
+    """Real, updated expectation for the model cascade added after this
+    project's own real Gemini quota was exhausted mid-rebuild: a genuine
+    transient failure (here, a real 503 on every attempt) is no longer
+    given up on after one model's own 2 retries -- it tries every real
+    model in `GEMINI_MODEL_CASCADE` (2 attempts each) before raising,
+    since a transient failure on one model ID says nothing about the
+    next, separately-quota-bucketed one."""
     call_count = 0
 
     async def fake_post(self, url, headers=None, json=None):
@@ -82,7 +90,7 @@ async def test_translation_call_raises_after_real_retries_exhausted(monkeypatch)
     translation_call = make_gemini_downstream_translation_call(api_key="fake-key")
     with pytest.raises(DownstreamTranslationError):
         await translation_call("finance", "Cut discretionary spending by 2000 this month")
-    assert call_count == 2
+    assert call_count == 2 * len(GEMINI_MODEL_CASCADE)
 
 
 async def test_translation_call_returns_the_real_parsed_json_for_finance(monkeypatch):
