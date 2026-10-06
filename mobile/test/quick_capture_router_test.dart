@@ -9,6 +9,7 @@ QuickCaptureResultData _fakeResult({String domain = 'tasks'}) => QuickCaptureRes
       domain: domain,
       title: 'fake',
       findings: const [],
+      objections: const [],
     );
 
 void main() {

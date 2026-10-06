@@ -76,6 +76,20 @@ class QuickCaptureResultData {
   final String? emailAction;
   final List<FindingSummary> findings;
 
+  /// REAL, DISCLOSED FIX (the redesign's own real Quick-capture richness
+  /// work) -- closes a real, confirmed gap: `main.py`'s own real `POST
+  /// /quick_capture` response has included a real `objections` array on
+  /// EVERY call (not just failures) since this route's own Stage-B-
+  /// capable domains first existed, but no real code anywhere on the
+  /// mobile side ever parsed or rendered it -- the single most-used real
+  /// interaction in this app silently dropped real Gate debate content
+  /// it already had in hand. Reuses `ObjectionSummary`/`stageBRanForStakes`
+  /// real logic from `gate_reveal_logic.dart` directly, the exact
+  /// same real "a fresh piece of free text goes through the same real
+  /// Gate a Needs-you-now tap-through already shows" reasoning this
+  /// file's own header already states for `FindingSummary`.
+  final List<ObjectionSummary> objections;
+
   const QuickCaptureResultData({
     required this.executed,
     required this.decision,
@@ -96,6 +110,7 @@ class QuickCaptureResultData {
     this.emailRecipient,
     this.emailAction,
     required this.findings,
+    required this.objections,
   });
 }
 

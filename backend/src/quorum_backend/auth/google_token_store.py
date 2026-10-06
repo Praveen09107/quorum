@@ -30,6 +30,13 @@ class GoogleTokenRecord:
     access_token_expires_at: datetime
     granted_scopes: str
 
+    # `DEC-198` (product rebuild, connection health). The real timestamp
+    # this row's own `ON CONFLICT DO UPDATE`/`UPDATE` clauses already
+    # wrote on every real consent or refresh since this table was first
+    # written -- additive, never a new column, just the first real
+    # reader of one that was already there.
+    updated_at: datetime
+
 
 async def store_google_tokens(
     pool: asyncpg.Pool,
@@ -145,7 +152,7 @@ async def fetch_google_tokens(
     a fabricated record. Real, live decryption happens here, not at the
     caller -- ciphertext never leaves this module."""
     row = await pool.fetchrow(
-        "SELECT encrypted_access_token, encrypted_refresh_token, access_token_expires_at, granted_scopes "
+        "SELECT encrypted_access_token, encrypted_refresh_token, access_token_expires_at, granted_scopes, updated_at "
         "FROM google_oauth_tokens WHERE user_id = $1",
         uuid.UUID(internal_user_id),
     )
@@ -156,6 +163,7 @@ async def fetch_google_tokens(
         refresh_token=decrypt_token(row["encrypted_refresh_token"], encryption_key=encryption_key),
         access_token_expires_at=row["access_token_expires_at"],
         granted_scopes=row["granted_scopes"],
+        updated_at=row["updated_at"],
     )
 
 
