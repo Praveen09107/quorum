@@ -21,8 +21,10 @@ from quorum_backend.auth.user_provisioning import get_or_create_user
 from quorum_backend.core import db
 from quorum_backend.features.retry_queue_drainer import (
     _email_recipient_check,
+    _expense_budget_check,
     _is_known_email_contact,
     _mark_job_failed,
+    _whole_account_remaining_budget,
     persist_gate_verdict,
     available_hours_before_deadline,
     build_stage_a_checks_for_domain,
@@ -1100,6 +1102,79 @@ async def test_build_stage_a_checks_for_domain_other_domains_are_genuinely_unaff
     `[provenance_check]`, matching this function's own pre-`DEC-202`
     behavior byte for byte."""
     proposal = ActionProposal(action_type=ActionType.UPDATE_BUDGET, payload={"amount": 1000, "category": "x"})
+
+    checks = await build_stage_a_checks_for_domain(pool, domain="finance", proposal=proposal, user_id=user_id)
+
+    assert len(checks) == 1
+    assert checks[0](proposal).validator == "ProvenanceCheck"
+
+
+# --- BudgetCheck wired into real LOG_EXPENSE proposals (`DEC-203`) ---
+
+
+async def test_whole_account_remaining_budget_is_the_real_limit_minus_real_month_to_date_spend(pool, user_id):
+    await pool.execute(
+        "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, now(), 'manual')",
+        uuid.uuid4(), uuid.UUID(user_id), "Store", 300.0,
+    )
+    remaining = await _whole_account_remaining_budget(pool, user_id=user_id)
+    # The real, default `users.monthly_budget_limit` (migration `0015`).
+    assert remaining == 50000.0 - 300.0
+
+
+async def test_whole_account_remaining_budget_can_be_genuinely_negative_when_already_overspent(pool, user_id):
+    await pool.execute(
+        "UPDATE users SET monthly_budget_limit = $1 WHERE user_id = $2", 100.0, uuid.UUID(user_id)
+    )
+    await pool.execute(
+        "INSERT INTO expenses (expense_id, user_id, payee, amount, occurred_at, source) VALUES ($1, $2, $3, $4, now(), 'manual')",
+        uuid.uuid4(), uuid.UUID(user_id), "Store", 500.0,
+    )
+    remaining = await _whole_account_remaining_budget(pool, user_id=user_id)
+    assert remaining == 100.0 - 500.0
+    await pool.execute("UPDATE users SET monthly_budget_limit = 50000.0 WHERE user_id = $1", uuid.UUID(user_id))
+
+
+def test_expense_budget_check_a_claimed_amount_within_the_real_remaining_budget_is_verified_true():
+    finding = _expense_budget_check(100.0, 500.0)
+    assert finding.validator == "BudgetCheck"
+    assert finding.evidence_state == "verified_true"
+    assert "whole-account budget" in finding.claim
+    # The honest rewrite never claims a per-category figure that
+    # doesn't exist in this real schema.
+    assert "for " not in finding.claim
+
+
+def test_expense_budget_check_a_claimed_amount_exceeding_the_real_remaining_budget_is_verified_false():
+    finding = _expense_budget_check(600.0, 500.0)
+    assert finding.evidence_state == "verified_false"
+    assert "exceeds" in finding.claim
+
+
+def test_expense_budget_check_no_claimed_amount_is_honestly_verified_true():
+    finding = _expense_budget_check(None, 500.0)
+    assert finding.evidence_state == "verified_true"
+    assert finding.claim == "No claimed amount in proposal"
+
+
+async def test_build_stage_a_checks_for_domain_log_expense_includes_a_real_budget_check(pool, user_id):
+    proposal = ActionProposal(action_type=ActionType.LOG_EXPENSE, payload={"amount": 100.0, "category": "food", "payee": "Store"})
+
+    checks = await build_stage_a_checks_for_domain(pool, domain="finance", proposal=proposal, user_id=user_id)
+
+    assert len(checks) == 2
+    findings = [check(proposal) for check in checks]
+    validators = {f.validator for f in findings}
+    assert validators == {"ProvenanceCheck", "BudgetCheck"}
+
+
+async def test_build_stage_a_checks_for_domain_update_budget_never_gets_a_real_budget_check(pool, user_id):
+    """A real, deliberate scope boundary: comparing a NEW ceiling
+    against the OLD one's remaining room makes no real sense -- only a
+    real `LOG_EXPENSE` proposal gets `BudgetCheck`, never
+    `UPDATE_BUDGET`, even though both share the real `finance`
+    domain."""
+    proposal = ActionProposal(action_type=ActionType.UPDATE_BUDGET, payload={"amount": 60000.0, "category": "monthly budget"})
 
     checks = await build_stage_a_checks_for_domain(pool, domain="finance", proposal=proposal, user_id=user_id)
 

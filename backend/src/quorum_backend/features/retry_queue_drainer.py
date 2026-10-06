@@ -104,11 +104,11 @@ from quorum_backend.agents.career_agent import build_create_application_proposal
 from quorum_backend.agents.finance_agent import build_finance_proposal
 from quorum_backend.agents.tasks_agent import build_task_proposal
 from quorum_backend.features.action_executor import ExecutionResult, execute_approved_action
-from quorum_backend.features.today import TODAY_WORKING_HOURS_PER_DAY
+from quorum_backend.features.today import TODAY_WORKING_HOURS_PER_DAY, fetch_monthly_budget_limit
 from quorum_backend.gate.orchestration import CriticCall, JudgeCall, StageACheck, review
-from quorum_backend.gate.schemas import ActionProposal, Finding, GateVerdict, Stakes
+from quorum_backend.gate.schemas import ActionProposal, ActionType, Finding, GateVerdict, Stakes
 from quorum_backend.gate.timeline import GateTimeline
-from quorum_backend.gate.validators import deadline_conflict_check, provenance_check, recipient_check
+from quorum_backend.gate.validators import budget_check, deadline_conflict_check, provenance_check, recipient_check
 from quorum_backend.negotiation.downstream_translation import (
     DownstreamTranslationCall,
     DownstreamTranslationError,
@@ -290,6 +290,76 @@ def _email_recipient_check(recipient_email: str | None, is_known_contact: bool) 
     )
 
 
+async def _whole_account_remaining_budget(conn: asyncpg.Connection, *, user_id: str) -> float:
+    """Real, live: `monthly_budget_limit` minus the real month-to-date
+    spend, computed BEFORE the real expense this check is about to
+    evaluate is ever inserted -- the same real "remaining room before
+    this one new thing" meaning `budget_check()`'s own comparison
+    (`claimed_amount <= remaining`) expects. The real month-to-date
+    query mirrors `features/week_summary.py::fetch_week_summary()`'s
+    own identical real query exactly -- kept as an independent,
+    dedicated copy rather than calling that function (which also runs
+    three other, genuinely unrelated real queries this real caller has
+    no use for) or extracting a shared helper neither function's own
+    session asked for."""
+    row = await conn.fetchrow(
+        "SELECT COALESCE(SUM(amount), 0) AS spent FROM expenses "
+        "WHERE user_id = $1 AND date_trunc('month', occurred_at) = date_trunc('month', CURRENT_DATE)",
+        uuid.UUID(user_id),
+    )
+    month_to_date_spend = float(row["spent"])
+    monthly_limit = await fetch_monthly_budget_limit(conn, user_id=user_id)
+    return monthly_limit - month_to_date_spend
+
+
+@dataclass(frozen=True)
+class _StaticBudgetAdapter:
+    """A real, prefetched `BudgetAdapter` -- the real DB read already
+    happened in `build_stage_a_checks_for_domain()`, matching
+    `_StaticContactsAdapter`'s own identical real "prefetch async,
+    adapt sync" split.
+
+    HONEST, DISCLOSED LIMITATION: `get_remaining_budget()` ignores its
+    own `category` argument and always returns the SAME real, whole-
+    account remaining figure, regardless of which category is asked
+    about -- `action_executor.py`'s own `UPDATE_BUDGET` branch already
+    discloses the real reason: this schema has exactly one real,
+    whole-account `monthly_budget_limit`, never a per-category ceiling
+    (`expenses` has no real `category` column at all). `budget_check()`
+    itself was written against a real spec interface that names a
+    per-category concept this backend's own real data model does not
+    have; this adapter answers the only real, honest question this
+    backend can actually answer -- does a new expense fit in what's
+    left of the WHOLE month -- rather than fabricating a per-category
+    figure that doesn't exist."""
+
+    remaining: float
+
+    def get_remaining_budget(self, category: str) -> float:
+        return self.remaining
+
+
+def _expense_budget_check(claimed_amount: object, remaining: float) -> Finding:
+    """Wraps the real `budget_check()`, rewriting only its own claim
+    text -- never its real `evidence_state`/`confidence` verdict --
+    because that function's own default claim literally says
+    "remaining budget for {category}", which would dishonestly imply
+    this backend tracks a per-category ceiling it genuinely does not
+    (see `_StaticBudgetAdapter`'s own docstring). The real decision
+    (does this claimed amount fit in what's actually left this month)
+    is completely unchanged; only the sentence describing it is."""
+    finding = budget_check(claimed_amount=claimed_amount, category="", budget=_StaticBudgetAdapter(remaining=remaining))
+    if finding.claim == "No claimed amount in proposal":
+        return finding
+    verb = "within" if finding.evidence_state == "verified_true" else "exceeds"
+    return Finding(
+        validator=finding.validator,
+        claim=f"{claimed_amount} {verb} {remaining} remaining in this month's whole-account budget",
+        evidence_state=finding.evidence_state,
+        confidence=finding.confidence,
+    )
+
+
 async def build_stage_a_checks_for_domain(
     conn: asyncpg.Connection, *, domain: str, proposal: ActionProposal, user_id: str
 ) -> list[StageACheck]:
@@ -304,7 +374,11 @@ async def build_stage_a_checks_for_domain(
     get an equivalent real ground-truth check). `recipient_check`
     (`DEC-202`) additionally for `email` -- see `_email_recipient_
     check()` above for the one real, disclosed deviation from its
-    default severity this caller applies."""
+    default severity this caller applies. `budget_check` (`DEC-203`)
+    additionally for a real `LOG_EXPENSE` proposal specifically (never
+    `UPDATE_BUDGET` -- see `_whole_account_remaining_budget()`'s own
+    docstring for why comparing a NEW ceiling against the OLD one's
+    remaining room makes no real sense)."""
     checks: list[StageACheck] = [lambda p: provenance_check(justification_sources=["user_request"])]
 
     if domain == "email":
@@ -313,6 +387,10 @@ async def build_stage_a_checks_for_domain(
         if isinstance(recipient_email, str) and recipient_email.strip():
             is_known = await _is_known_email_contact(conn, user_id=user_id, email_address=recipient_email)
         checks.append(lambda p, r=recipient_email, known=is_known: _email_recipient_check(r, known))
+
+    if domain == "finance" and proposal.action_type == ActionType.LOG_EXPENSE:
+        remaining = await _whole_account_remaining_budget(conn, user_id=user_id)
+        checks.append(lambda p, rem=remaining: _expense_budget_check(p.payload.get("amount"), rem))
 
     if domain == "tasks":
         deadline = proposal.payload.get("deadline")

@@ -121,8 +121,9 @@ def test_registry_name_matches_the_real_coverage_check_output():
 
 def test_registry_wired_flags_match_the_real_current_production_wiring():
     """Confirmed directly against `retry_queue_drainer.py::build_stage_a_
-    checks_for_domain()` before writing this -- only these three real
+    checks_for_domain()` before writing this -- only these four real
     validators have any real production caller today (`recipient_check`
-    added `DEC-202`, wired into the real `email` domain)."""
+    added `DEC-202`, wired into the real `email` domain; `budget_check`
+    added `DEC-203`, wired into the real `LOG_EXPENSE` action only)."""
     wired = {entry.function_name for entry in VALIDATOR_REGISTRY if entry.wired}
-    assert wired == {"provenance_check", "deadline_conflict_check", "recipient_check"}
+    assert wired == {"provenance_check", "deadline_conflict_check", "recipient_check", "budget_check"}

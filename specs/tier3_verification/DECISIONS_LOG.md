@@ -4879,4 +4879,22 @@ Gemini quota consumed by this verification was checked before spending it (11 of
 
 ---
 
-*Next entry: DEC-203*
+## DEC-203: BudgetCheck wired into the real LOG_EXPENSE action's Stage A
+
+**Closes the second of the seven real, dormant Stage A validators this rebuild's own STATUS_INDEX has tracked since `DEC-193`.** `budget_check()`'s own top-of-file docstring already named this as the correct, structural home for bounding a real expense against the real, current ceiling before Stage B ever runs, tracked as a disclosed open item since `DEC-148` first made it honestly buildable (`users.monthly_budget_limit` didn't exist before that). It is now real and live, for `LOG_EXPENSE` specifically.
+
+**A real, deliberate scope boundary, decided directly rather than guessed:** `budget_check` is wired for `ActionType.LOG_EXPENSE` only, never `UPDATE_BUDGET`, even though both share the real `finance` domain -- comparing a NEW budget ceiling against the OLD one's remaining room is not a real, meaningful check at all; `BudgetCheck`'s own real job is "does this expense fit in what's left," and a budget change isn't an expense.
+
+**A real, honest mismatch found and fixed before shipping, the same class of correction `DEC-202` already made once this checkpoint for `RecipientCheck`'s claim text.** `budget_check()`'s own default claim literally says `"{amount} within {remaining} remaining budget for {category}"` -- but this backend's real schema has exactly one real, whole-account `monthly_budget_limit`, never a per-category ceiling (`expenses` has no `category` column at all, `action_executor.py`'s own `UPDATE_BUDGET` branch already discloses this). Leaving that phrasing untouched would have shipped a Stage A finding that dishonestly implies per-category budget tracking this product does not have. `_expense_budget_check()` (new) wraps the real, completely unmodified `budget_check()` and rewrites ONLY its claim text ("...remaining in this month's whole-account budget"), never its real `evidence_state`/`confidence` verdict -- the same "wrap and rewrite the sentence, never the decision" discipline `_email_recipient_check()` already established.
+
+**`_whole_account_remaining_budget()`** (new) -- a real, live query: `monthly_budget_limit` minus real month-to-date spend, computed BEFORE the expense being evaluated is ever inserted (the "room before this one new thing" meaning the check's own comparison expects). Deliberately a self-contained copy of `features/week_summary.py::fetch_week_summary()`'s own identical real month-to-date query, rather than calling that four-query function for one field, or extracting a shared helper neither real session asked for.
+
+**`VALIDATOR_REGISTRY`'s `BudgetCheck` entry flips `wired=False` to `wired=True`**, with its own description corrected to say it never runs for a budget change itself. Two tests with a hardcoded expected `wired` set needed updating again, the same real, necessary consequence `DEC-202` already established.
+
+**Verification.** `ruff check backend` clean. 7 new tests in `test_retry_queue_drainer.py` (the real month-to-date query including a genuinely-overspent negative-remaining case, the honest claim-text rewrite, and `build_stage_a_checks_for_domain()` proving both the real `LOG_EXPENSE` wiring and the real, deliberate `UPDATE_BUDGET` exclusion). Full suite re-run: 1136 passed, 16 failed -- 15 the familiar, already-disclosed shared-Gemini-quota-exhaustion class (13 pre-existing plus the 2 real, live `PUT /finance/budget` Judge-reaching tests `DEC-200` already named), and 1 genuinely unrelated to this entry (`test_interview_detection.py`'s own real match test), confirmed passing cleanly in isolation immediately after -- the same transient real-network/DB-contention class this project's history has repeatedly found under a long, full-suite batch run. No mobile change this checkpoint.
+
+**Not done, named rather than assumed:** `PIILeakCheck`/`CommitmentCheck`/`AvailabilityCheck`/`TemporalFactCheck`/`CoverageCheck` remain unwired -- five real validators, not six, now that `BudgetCheck` is real and live. The remaining four full agent workspaces, the four-tab IA consolidation, the Gate "Live"/"Self-test" screens, a full filterable Activity screen, and the rest of Block G all remain exactly as deferred as `DEC-202` left them. Nothing from this rebuild is deployed to the live Cloud Run backend or witnessed on a real device -- thirteen real PRs (`#99` through this entry's own) remain open and unmerged.
+
+---
+
+*Next entry: DEC-204*
