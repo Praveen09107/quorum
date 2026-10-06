@@ -122,6 +122,7 @@ import 'package:quorum_mobile/api/today_api.dart';
 import 'package:quorum_mobile/api/trust_api.dart';
 import 'package:quorum_mobile/api/create_application_api.dart';
 import 'package:quorum_mobile/api/create_calendar_event_api.dart';
+import 'package:quorum_mobile/api/create_task_api.dart';
 import 'package:quorum_mobile/api/schedule_interview_api.dart';
 import 'package:quorum_mobile/api/update_budget_api.dart';
 import 'package:quorum_mobile/api/gate_showcase_api.dart';
@@ -360,6 +361,14 @@ class _QuorumAppState extends State<QuorumApp> {
               client: _httpClient,
             ),
             fetchCareerApplications: createCareerPipelineFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-208` (product rebuild) -- Tasks' first real write
+            // control, closing the gap a direct walkthrough found:
+            // real tap-to-complete/cancel existed, but no way to
+            // CREATE a task without free-text capture.
+            createTask: createCreateTaskFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),

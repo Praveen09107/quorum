@@ -41,6 +41,7 @@
 
 import 'package:flutter/material.dart';
 
+import 'package:quorum_mobile/api/create_task_api.dart';
 import 'package:quorum_mobile/features/computed_state.dart';
 import 'package:quorum_mobile/features/predictive_risk/predictive_risk_logic.dart';
 import 'package:quorum_mobile/features/tasks/tasks_logic.dart';
@@ -103,6 +104,11 @@ class TodayScreen extends StatelessWidget {
   final Future<void> Function(String taskId)? completeTask;
   final Future<void> Function(String taskId)? cancelTask;
 
+  /// `DEC-208` (product rebuild) -- Tasks' first real write control.
+  /// Optional and additive, matching every sibling fetcher's own
+  /// honest gating.
+  final CreateTaskFetcher? createTask;
+
   /// REAL, NEW (the redesign's own real "This week across your agents"
   /// work) -- see `WeekSummaryStrip`'s own docstring for the full real
   /// reasoning. Deferred, same pattern as every other real/external
@@ -119,6 +125,7 @@ class TodayScreen extends StatelessWidget {
     this.fetchPredictiveRisk,
     this.completeTask,
     this.cancelTask,
+    this.createTask,
     this.fetchWeekSummary,
   });
 
@@ -150,6 +157,7 @@ class TodayScreen extends StatelessWidget {
                         fetchPredictiveRisk: fetchPredictiveRisk,
                         onComplete: completeTask,
                         onCancel: cancelTask,
+                        onCreateTask: createTask,
                       ),
                     ),
                   ),
@@ -240,7 +248,21 @@ class TasksLoader extends StatefulWidget {
   final Future<void> Function(String taskId)? onComplete;
   final Future<void> Function(String taskId)? onCancel;
 
-  const TasksLoader({super.key, required this.fetch, this.fetchPredictiveRisk, this.onComplete, this.onCancel});
+  /// `DEC-208` (product rebuild) -- Tasks' first real write control,
+  /// closing the gap a direct walkthrough found: real tap-to-complete/
+  /// cancel existed, but no way to CREATE a task without free-text
+  /// capture. Optional, matching every sibling field's own honest
+  /// gating.
+  final CreateTaskFetcher? onCreateTask;
+
+  const TasksLoader({
+    super.key,
+    required this.fetch,
+    this.fetchPredictiveRisk,
+    this.onComplete,
+    this.onCancel,
+    this.onCreateTask,
+  });
 
   @override
   State<TasksLoader> createState() => TasksLoaderState();
@@ -271,10 +293,28 @@ class TasksLoaderState extends State<TasksLoader> {
     if (mounted) _reload();
   }
 
+  Future<void> _openNewTaskSheet() async {
+    final onCreateTask = widget.onCreateTask;
+    if (onCreateTask == null) return;
+    final result = await showModalBottomSheet<CreateTaskResult>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _NewTaskSheet(onCreateTask: onCreateTask),
+    );
+    if (result == null || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result.executed ? 'Added "${result.title}".' : 'The Gate declined to add that task (${result.decision}).')),
+    );
+    if (result.executed) _reload();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Tasks')),
+      floatingActionButton: widget.onCreateTask == null
+          ? null
+          : FloatingActionButton(onPressed: _openNewTaskSheet, tooltip: 'New task', child: const Icon(Icons.add)),
       body: FutureBuilder<List<TaskData>>(
         future: _tasksFuture,
         builder: (context, snapshot) {
@@ -291,6 +331,116 @@ class TasksLoaderState extends State<TasksLoader> {
             onCancel: widget.onCancel == null ? null : (taskId) => _wrapAndReload(widget.onCancel, taskId),
           );
         },
+      ),
+    );
+  }
+}
+
+/// `DEC-208` (product rebuild) -- the real form behind Tasks' first
+/// write control. Matches `_SetBudgetSheet`'s/`_NewApplicationSheet`'s
+/// own established shape exactly.
+class _NewTaskSheet extends StatefulWidget {
+  final CreateTaskFetcher onCreateTask;
+
+  const _NewTaskSheet({required this.onCreateTask});
+
+  @override
+  State<_NewTaskSheet> createState() => _NewTaskSheetState();
+}
+
+class _NewTaskSheetState extends State<_NewTaskSheet> {
+  final _titleController = TextEditingController();
+  final _hoursController = TextEditingController(text: '1');
+  DateTime? _deadline;
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _hoursController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDeadline() async {
+    final date = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now().add(const Duration(days: 1)),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (date == null || !mounted) return;
+    setState(() => _deadline = date);
+  }
+
+  Future<void> _submit() async {
+    final title = _titleController.text.trim();
+    final hours = double.tryParse(_hoursController.text.trim());
+    if (title.isEmpty) {
+      setState(() => _error = 'Enter a real, non-empty title first.');
+      return;
+    }
+    if (hours == null || hours <= 0) {
+      setState(() => _error = 'Enter a real, positive number of hours.');
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final result = await widget.onCreateTask(title: title, estimatedHours: hours, deadline: _deadline);
+      if (!mounted) return;
+      Navigator.of(context).pop(result);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final deadline = _deadline;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: QuorumSpacing.lg,
+        right: QuorumSpacing.lg,
+        top: QuorumSpacing.lg,
+        bottom: MediaQuery.of(context).viewInsets.bottom + QuorumSpacing.lg,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('New task', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: QuorumSpacing.md),
+          TextField(controller: _titleController, decoration: const InputDecoration(labelText: 'Title')),
+          const SizedBox(height: QuorumSpacing.sm),
+          TextField(
+            controller: _hoursController,
+            decoration: const InputDecoration(labelText: 'Estimated hours'),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          ),
+          const SizedBox(height: QuorumSpacing.sm),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(deadline == null ? 'No deadline' : 'Due ${deadline.toIso8601String().split('T').first}'),
+            trailing: const Icon(Icons.event_outlined),
+            onTap: _pickDeadline,
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: QuorumSpacing.sm),
+            Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ],
+          const SizedBox(height: QuorumSpacing.md),
+          FilledButton(
+            onPressed: _submitting ? null : _submit,
+            child: _submitting ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Add task'),
+          ),
+        ],
       ),
     );
   }

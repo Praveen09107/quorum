@@ -510,6 +510,60 @@ async def test_quick_capture_endpoint_is_real_and_live_creates_a_real_task_end_t
         await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
 
 
+# --- POST /tasks (`DEC-208`, product rebuild) ---
+
+
+def test_create_task_endpoint_requires_real_auth():
+    with TestClient(app) as client:
+        response = client.post("/tasks", json={"title": "Write the report", "estimated_hours": 2.0})
+    assert response.status_code == 401
+
+
+async def test_create_task_endpoint_is_real_and_live_creates_a_real_task_end_to_end(pool, provisioned_users):
+    """The real, first structured (never Gemini-extracted) proof that a
+    task can be created without going through free-text capture.
+    `CREATE_TASK` is real `Stakes.S1`, so Stage B never runs -- no real
+    Gemini/Groq key is needed for this to pass, matching `POST
+    /applications`'s own identical real precedent."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    marker = f"Real cascade test task {uuid.uuid4()}"
+
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/tasks",
+                json={"title": marker, "estimated_hours": 1.5, "deadline_iso": "2027-03-01T10:00:00+00:00"},
+                headers=headers,
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["stakes"] == "S1"
+        assert body["domain"] == "tasks"
+        assert body["operation"] == "create"
+        assert body["executed"] is True
+        assert body["decision"] == "approve"
+        assert body["title"] == marker
+
+        row = await pool.fetchrow(
+            "SELECT title, estimated_hours, status FROM tasks WHERE user_id = $1 AND title = $2",
+            uuid.UUID(internal_user_id), marker,
+        )
+        assert row is not None
+        assert float(row["estimated_hours"]) == 1.5
+        assert row["status"] == "open"
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE user_id = $1 AND title = $2", uuid.UUID(internal_user_id), marker)
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
+async def test_create_task_endpoint_rejects_an_empty_title_with_a_real_502_not_a_500(pool, provisioned_users):
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    with TestClient(app) as client:
+        response = client.post("/tasks", json={"title": "   ", "estimated_hours": 1.0}, headers=headers)
+    assert response.status_code == 502
+
+
 # --- POST /applications (`DEC-194`, product rebuild Block F) ---
 
 

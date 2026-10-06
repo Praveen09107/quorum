@@ -500,6 +500,22 @@ class QuickCaptureExtractedRequest(BaseModel):
     email_action: str | None = None
 
 
+class CreateTaskRequest(BaseModel):
+    """`DEC-208` (product rebuild) -- the real request shape for `POST
+    /tasks`, Tasks' first structured, extraction-skipping entry point
+    (every other domain already has one -- `POST /applications`/
+    `/interviews`/`/calendar/events`, `PUT /finance/budget`). A direct
+    walkthrough found `TasksScreen` had real tap-to-complete/cancel but
+    no way to CREATE a task without going through free-text capture.
+    `CREATE_TASK` is real `Stakes.S1` -- no real Gemini/Groq key is
+    needed for the Gate to reach a real decision, matching `POST
+    /applications`'s own identical precedent."""
+
+    title: str
+    estimated_hours: float
+    deadline_iso: str | None = None
+
+
 class CreateApplicationRequest(BaseModel):
     """`DEC-194` (product rebuild Block F) -- the real request shape for
     `POST /applications`, a dedicated, structured write path, not a
@@ -1433,6 +1449,45 @@ async def quick_capture_extracted_endpoint(
         raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
     except asyncpg.PostgresError as exc:
         raise HTTPException(status_code=502, detail="Couldn't turn that into a real action -- please try rephrasing it.") from exc
+
+    return _quick_capture_result_to_dict(result)
+
+
+@app.post("/tasks")
+async def create_task_endpoint(
+    body: CreateTaskRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """`DEC-208` (product rebuild) -- real, new. Closes the real,
+    confirmed gap `CreateTaskRequest`'s own docstring names: `POST
+    /tasks` is a real, structured entry point into the SAME real
+    `capture_action_from_extracted_args()` pipeline every other
+    domain's structured route already uses, never calling Gemini
+    extraction. `CREATE_TASK` is real `Stakes.S1`, so this executes
+    the moment Stage A clears it -- no separate human-approval step,
+    matching `POST /applications`'s own identical real precedent."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    settings = get_settings()
+    critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
+    judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                result = await capture_action_from_extracted_args(
+                    conn,
+                    user_id=internal_user_id,
+                    args={"domain": "tasks", "operation": "create", **body.model_dump()},
+                    critic_call=critic_call,
+                    judge_call=judge_call,
+                )
+    except QuickCaptureError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except InfrastructureFailure as exc:
+        raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
+    except asyncpg.PostgresError as exc:
+        raise HTTPException(status_code=502, detail="Couldn't create that task -- please try again.") from exc
 
     return _quick_capture_result_to_dict(result)
 
