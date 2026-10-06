@@ -95,6 +95,7 @@ import 'package:quorum_mobile/db/database.dart';
 import 'package:quorum_mobile/api/agents_api.dart';
 import 'package:quorum_mobile/api/create_application_api.dart';
 import 'package:quorum_mobile/api/create_calendar_event_api.dart';
+import 'package:quorum_mobile/api/create_task_api.dart';
 import 'package:quorum_mobile/api/schedule_interview_api.dart';
 import 'package:quorum_mobile/features/agents/agents_index_screen.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
@@ -194,6 +195,11 @@ class MainShell extends ConsumerStatefulWidget {
   /// written but never did anything. Both independently `null`-safe.
   final CompleteTaskCall? completeTask;
   final CancelTaskCall? cancelTask;
+
+  /// `DEC-208` (product rebuild) -- Tasks' first real write control.
+  /// Optional and additive, matching every sibling fetcher's own
+  /// honest gating.
+  final CreateTaskFetcher? createTask;
 
   /// REAL, NEW -- the redesign's own real "This week across your
   /// agents" cross-domain strip. See `WeekSummaryStrip`'s own docstring
@@ -317,6 +323,7 @@ class MainShell extends ConsumerStatefulWidget {
     this.fetchPredictiveRisk,
     this.completeTask,
     this.cancelTask,
+    this.createTask,
     this.fetchWeekSummary,
     this.fetchGateReveal,
     this.approveAction,
@@ -489,6 +496,7 @@ class _MainShellState extends ConsumerState<MainShell> {
             fetchPredictiveRisk: widget.fetchPredictiveRisk,
             onComplete: widget.completeTask,
             onCancel: widget.cancelTask,
+            onCreateTask: widget.createTask,
           ),
         ));
       case QuorumAgent.finance:
@@ -551,6 +559,7 @@ class _MainShellState extends ConsumerState<MainShell> {
           fetchPredictiveRisk: widget.fetchPredictiveRisk,
           completeTask: widget.completeTask,
           cancelTask: widget.cancelTask,
+          createTask: widget.createTask,
           fetchWeekSummary: widget.fetchWeekSummary,
           fetchGateReveal: widget.fetchGateReveal,
           approveAction: widget.approveAction,
@@ -694,6 +703,7 @@ class _TodayTab extends StatefulWidget {
   final PredictiveRiskFetcher? fetchPredictiveRisk;
   final CompleteTaskCall? completeTask;
   final CancelTaskCall? cancelTask;
+  final CreateTaskFetcher? createTask;
   final WeekSummaryFetcher? fetchWeekSummary;
   final GateRevealFetcher? fetchGateReveal;
   final ApproveActionCall? approveAction;
@@ -707,6 +717,7 @@ class _TodayTab extends StatefulWidget {
     this.fetchPredictiveRisk,
     this.completeTask,
     this.cancelTask,
+    this.createTask,
     this.fetchWeekSummary,
     this.fetchGateReveal,
     this.approveAction,
@@ -834,6 +845,7 @@ class _TodayTabState extends State<_TodayTab> {
             fetchPredictiveRisk: widget.fetchPredictiveRisk,
             completeTask: widget.completeTask,
             cancelTask: widget.cancelTask,
+            createTask: widget.createTask,
             fetchWeekSummary: widget.fetchWeekSummary,
             onTapAction: gateReveal == null
                 ? null
