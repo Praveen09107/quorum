@@ -125,6 +125,7 @@ import 'package:quorum_mobile/api/create_calendar_event_api.dart';
 import 'package:quorum_mobile/api/create_task_api.dart';
 import 'package:quorum_mobile/api/update_task_api.dart';
 import 'package:quorum_mobile/api/schedule_interview_api.dart';
+import 'package:quorum_mobile/api/update_application_status_api.dart';
 import 'package:quorum_mobile/api/create_expense_api.dart';
 import 'package:quorum_mobile/api/update_budget_api.dart';
 import 'package:quorum_mobile/api/gate_showcase_api.dart';
@@ -392,6 +393,13 @@ class _QuorumAppState extends State<QuorumApp> {
             // `DEC-195` (product rebuild Block F, remainder) -- the
             // Career pipeline's second real write control.
             scheduleInterview: createScheduleInterviewFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-218` (product rebuild Part C, Priority 2
+            // completion) -- Career's third real write control:
+            // updating an application's status directly, by id.
+            updateApplicationStatus: createUpdateApplicationStatusFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),

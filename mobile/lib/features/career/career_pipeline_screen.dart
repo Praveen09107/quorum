@@ -56,11 +56,19 @@ class CareerPipelineScreen extends StatelessWidget {
   /// only appears when this is genuinely supplied.
   final void Function(CareerApplication application)? onScheduleInterview;
 
+  /// `DEC-218` (product rebuild Part C, Priority 2 completion) -- the
+  /// Career pipeline's third real write control: updating an
+  /// application's status directly, by id, without narrating a
+  /// free-text reference. Optional and additive, same honest-gating
+  /// pattern as `onScheduleInterview` above.
+  final void Function(CareerApplication application)? onUpdateStatus;
+
   const CareerPipelineScreen(
       {super.key,
       required this.applications,
       this.onTapApplication,
-      this.onScheduleInterview});
+      this.onScheduleInterview,
+      this.onUpdateStatus});
 
   @override
   Widget build(BuildContext context) {
@@ -105,6 +113,7 @@ class CareerPipelineScreen extends StatelessWidget {
                         accent: identity.accent,
                         onTap: onTapApplication,
                         onScheduleInterview: onScheduleInterview,
+                        onUpdateStatus: onUpdateStatus,
                       ),
                   ],
                 ),
@@ -157,6 +166,7 @@ class _StatusSection extends StatelessWidget {
   final Color accent;
   final void Function(CareerApplication application)? onTap;
   final void Function(CareerApplication application)? onScheduleInterview;
+  final void Function(CareerApplication application)? onUpdateStatus;
 
   const _StatusSection({
     required this.status,
@@ -164,6 +174,7 @@ class _StatusSection extends StatelessWidget {
     required this.accent,
     this.onTap,
     this.onScheduleInterview,
+    this.onUpdateStatus,
   });
 
   @override
@@ -195,6 +206,9 @@ class _StatusSection extends StatelessWidget {
               onScheduleInterview: onScheduleInterview == null
                   ? null
                   : () => onScheduleInterview!(applications[i]),
+              onUpdateStatus: onUpdateStatus == null
+                  ? null
+                  : () => onUpdateStatus!(applications[i]),
             ),
           ],
         ],
@@ -208,12 +222,14 @@ class _ApplicationRow extends StatelessWidget {
   final Color color;
   final VoidCallback? onTap;
   final VoidCallback? onScheduleInterview;
+  final VoidCallback? onUpdateStatus;
 
   const _ApplicationRow(
       {required this.application,
       required this.color,
       this.onTap,
-      this.onScheduleInterview});
+      this.onScheduleInterview,
+      this.onUpdateStatus});
 
   @override
   Widget build(BuildContext context) {
@@ -255,6 +271,12 @@ class _ApplicationRow extends StatelessWidget {
                   ],
                 ),
               ),
+              if (onUpdateStatus != null)
+                IconButton(
+                  icon: Icon(Icons.flag_outlined, color: color),
+                  tooltip: 'Update status',
+                  onPressed: onUpdateStatus,
+                ),
               if (onScheduleInterview != null)
                 IconButton(
                   icon: Icon(Icons.event_available_outlined, color: color),

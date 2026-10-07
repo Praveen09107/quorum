@@ -99,6 +99,7 @@ import 'package:quorum_mobile/api/create_calendar_event_api.dart';
 import 'package:quorum_mobile/api/create_task_api.dart';
 import 'package:quorum_mobile/api/update_task_api.dart';
 import 'package:quorum_mobile/api/schedule_interview_api.dart';
+import 'package:quorum_mobile/api/update_application_status_api.dart';
 import 'package:quorum_mobile/features/agents/agents_index_screen.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
 import 'package:quorum_mobile/features/career/career_pipeline_logic.dart';
@@ -228,6 +229,11 @@ class MainShell extends ConsumerStatefulWidget {
   final CareerDigestFetcher? fetchCareerDigest;
   final CreateApplicationFetcher? createApplication;
   final ScheduleInterviewFetcher? scheduleInterview;
+
+  /// `DEC-218` (product rebuild Part C, Priority 2 completion) --
+  /// Career's third real write control. Optional and additive, same
+  /// honest-gating pattern as `scheduleInterview` above.
+  final UpdateApplicationStatusFetcher? updateApplicationStatus;
   final FinanceFetcher? fetchFinance;
 
   /// `DEC-200` (product rebuild) -- Finance's first real write
@@ -346,6 +352,7 @@ class MainShell extends ConsumerStatefulWidget {
     this.fetchCareerApplications,
     this.createApplication,
     this.scheduleInterview,
+    this.updateApplicationStatus,
     this.fetchCareerDigest,
     this.fetchFinance,
     this.onUpdateBudget,
@@ -535,6 +542,7 @@ class _MainShellState extends ConsumerState<MainShell> {
             fetchDigest: widget.fetchCareerDigest,
             createApplication: widget.createApplication,
             scheduleInterview: widget.scheduleInterview,
+            updateApplicationStatus: widget.updateApplicationStatus,
           ),
         ));
       case QuorumAgent.calendar:
@@ -606,6 +614,7 @@ class _MainShellState extends ConsumerState<MainShell> {
           fetchCareerApplications: widget.fetchCareerApplications,
           createApplication: widget.createApplication,
           scheduleInterview: widget.scheduleInterview,
+          updateApplicationStatus: widget.updateApplicationStatus,
           fetchCareerDigest: widget.fetchCareerDigest,
           fetchFinance: widget.fetchFinance,
           onUpdateBudget: widget.onUpdateBudget,
