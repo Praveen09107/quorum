@@ -1826,6 +1826,30 @@ async def resolve_and_build_application_status_proposal(conn: asyncpg.Connection
     return build_status_update_proposal(existing_application_id, new_status.strip(), company=row["company"])
 
 
+async def resolve_and_build_application_status_proposal_by_id(
+    conn: asyncpg.Connection, *, user_id: str, application_id: str, args: dict
+) -> ActionProposal:
+    """`DEC-216` (product rebuild Part C, Priority 2) -- the real,
+    structured sibling immediately above. A real mobile client
+    changing a real application's status from its own Career pipeline
+    row already KNOWS the real `application_id` -- the same real
+    "skip narrated-reference resolution, a direct id is already in
+    hand" reasoning `resolve_and_build_task_update_proposal_by_id()`
+    already established for Tasks."""
+    new_status = args.get("new_status")
+    if not isinstance(new_status, str) or not new_status.strip():
+        raise DownstreamTranslationError(f"A real new_status must be a real, non-empty string, got {new_status!r}")
+    if len(new_status) > _MAX_APPLICATION_STATUS_LENGTH:
+        raise DownstreamTranslationError(f"new_status exceeds the real, max plausible length {_MAX_APPLICATION_STATUS_LENGTH}")
+    row = await conn.fetchrow(
+        "SELECT company FROM applications WHERE application_id = $1 AND user_id = $2",
+        uuid.UUID(application_id), uuid.UUID(user_id),
+    )
+    if row is None:
+        raise DownstreamTranslationError(f"Real application {application_id!r} does not exist, or isn't yours.")
+    return build_status_update_proposal(application_id, new_status.strip(), company=row["company"])
+
+
 # A real, deliberate bound, matching `_MAX_EXPENSE_REFERENCE_CANDIDATES`'s
 # own established "reimplement a small, stable bound per real caller"
 # precedent -- most recently interacted-with recipients first.
@@ -2087,6 +2111,19 @@ async def capture_action_from_extracted_args(
     domain = args.get("domain")
     operation = args.get("operation")
     finance_action = args.get("action")
+    # REAL, DISCLOSED DEFENSIVE FIX, found live: a real capture against
+    # the on-device extraction path returned `operation: None` for a
+    # genuine `domain="email"` request -- `build_extraction_prompt()`'s
+    # own documented contract already says "for calendar/email always
+    # use create" (the model is never asked to decide otherwise for
+    # these two domains), but nothing enforced it when a real extractor
+    # (on-device or cloud) omits/nulls the field instead of honoring
+    # it, reaching this function's own final "unsupported combination"
+    # error instead of a real, correct dispatch. `email`/`calendar`
+    # have exactly one real operation each -- defaulting here enforces
+    # an already-documented invariant, it doesn't invent a new one.
+    if domain in ("email", "calendar") and not operation:
+        operation = "create"
 
     if domain == "tasks" and operation == "create":
         try:
@@ -2131,6 +2168,16 @@ async def capture_action_from_extracted_args(
             proposal = validate_and_build_calendar_proposal(args)
         except (DownstreamTranslationError, KeyError, ValueError, TypeError) as exc:
             raise QuickCaptureError(f"Real extraction produced an unusable calendar event: {exc}") from exc
+    elif domain == "career" and operation == "update_by_id":
+        # `DEC-216` (product rebuild Part C, Priority 2) -- the real,
+        # structured `PUT /applications/{application_id}/status` entry
+        # point. Real, direct id, never a narrated `reference_description`.
+        try:
+            proposal = await resolve_and_build_application_status_proposal_by_id(
+                conn, user_id=user_id, application_id=args["application_id"], args=args
+            )
+        except (DownstreamTranslationError, KeyError, ValueError, TypeError) as exc:
+            raise QuickCaptureError(f"Couldn't apply that status change: {exc}") from exc
     elif domain == "career" and operation == "update":
         try:
             proposal = await resolve_and_build_application_status_proposal(conn, user_id=user_id, args=args)
