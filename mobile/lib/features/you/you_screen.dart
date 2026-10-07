@@ -42,6 +42,7 @@ import 'package:flutter/material.dart';
 import 'package:quorum_mobile/api/create_application_api.dart';
 import 'package:quorum_mobile/api/create_calendar_event_api.dart';
 import 'package:quorum_mobile/api/schedule_interview_api.dart';
+import 'package:quorum_mobile/api/update_application_status_api.dart';
 import 'package:quorum_mobile/api/create_expense_api.dart';
 import 'package:quorum_mobile/api/update_budget_api.dart';
 import 'package:quorum_mobile/db/database.dart';
@@ -94,6 +95,11 @@ class YouScreen extends StatefulWidget {
   /// against an existing application. Optional and additive, same
   /// honest-gating pattern as `createApplication` above.
   final ScheduleInterviewFetcher? scheduleInterview;
+
+  /// `DEC-218` (product rebuild Part C, Priority 2 completion) --
+  /// Career's third real write control. Optional and additive, same
+  /// honest-gating pattern as `scheduleInterview` above.
+  final UpdateApplicationStatusFetcher? updateApplicationStatus;
   final Future<List<DetectedSubscriptionData>> Function()? fetchFinance;
 
   /// `DEC-200` (product rebuild) -- Finance's first real write
@@ -145,6 +151,7 @@ class YouScreen extends StatefulWidget {
     this.fetchCareerDigest,
     this.createApplication,
     this.scheduleInterview,
+    this.updateApplicationStatus,
     this.fetchFinance,
     this.onUpdateBudget,
     this.onLogExpense,
@@ -275,6 +282,7 @@ class _YouScreenState extends State<YouScreen> {
                         fetchDigest: widget.fetchCareerDigest,
                         createApplication: widget.createApplication,
                         scheduleInterview: widget.scheduleInterview,
+                        updateApplicationStatus: widget.updateApplicationStatus,
                       ),
                     ),
                   ),
@@ -584,6 +592,7 @@ class CareerPipelineLoader extends StatefulWidget {
   final Future<CompanyDigestData> Function(String applicationId)? fetchDigest;
   final CreateApplicationFetcher? createApplication;
   final ScheduleInterviewFetcher? scheduleInterview;
+  final UpdateApplicationStatusFetcher? updateApplicationStatus;
 
   const CareerPipelineLoader({
     super.key,
@@ -591,6 +600,7 @@ class CareerPipelineLoader extends StatefulWidget {
     this.fetchDigest,
     this.createApplication,
     this.scheduleInterview,
+    this.updateApplicationStatus,
   });
 
   @override
@@ -661,6 +671,25 @@ class CareerPipelineLoaderState extends State<CareerPipelineLoader> {
     );
   }
 
+  Future<void> _openUpdateStatusSheet(CareerApplication application) async {
+    final updateApplicationStatus = widget.updateApplicationStatus;
+    if (updateApplicationStatus == null) return;
+    final result = await showModalBottomSheet<UpdateApplicationStatusResult>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _UpdateStatusSheet(updateApplicationStatus: updateApplicationStatus, application: application),
+    );
+    if (result == null || !mounted) return;
+    // `DEC-214`: the real Gate verdict shown before the SnackBar.
+    await showGateVerdictSheet(context, decision: result.decision, stakes: result.stakes, findings: result.findings, objections: result.objections);
+    if (!mounted) return;
+    await _refresh();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result.executed ? '${application.company} moved to ${statusLabel(result.newStatus ?? "")}.' : 'The Gate declined that status change.')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // `DEC-212` (product rebuild Part C, visual pass): `CareerPipelineScreen`
@@ -697,6 +726,7 @@ class CareerPipelineLoaderState extends State<CareerPipelineLoader> {
                       ),
                     ),
             onScheduleInterview: widget.scheduleInterview == null ? null : _openScheduleInterviewSheet,
+            onUpdateStatus: widget.updateApplicationStatus == null ? null : _openUpdateStatusSheet,
           );
         },
         ),
@@ -928,6 +958,95 @@ class _ScheduleInterviewSheetState extends State<_ScheduleInterviewSheet> {
               child: _submitting
                   ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Text('Schedule'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// `DEC-218` (product rebuild Part C, Priority 2 completion) -- the
+/// Career pipeline's third real write control: changing an
+/// application's status directly, by id. `knownStatusOrder`
+/// (`career_pipeline_logic.dart`) is the same real, known-status list
+/// every other part of this screen already uses -- never a free-text
+/// field, since `applications.status` genuinely has four known values
+/// in active use even though the column itself stays open vocabulary.
+class _UpdateStatusSheet extends StatefulWidget {
+  final UpdateApplicationStatusFetcher updateApplicationStatus;
+  final CareerApplication application;
+
+  const _UpdateStatusSheet({required this.updateApplicationStatus, required this.application});
+
+  @override
+  State<_UpdateStatusSheet> createState() => _UpdateStatusSheetState();
+}
+
+class _UpdateStatusSheetState extends State<_UpdateStatusSheet> {
+  late String _selected = widget.application.status;
+  bool _submitting = false;
+  String? _error;
+
+  Future<void> _submit() async {
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final result = await widget.updateApplicationStatus(
+        applicationId: widget.application.applicationId,
+        newStatus: _selected,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(result);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final unchanged = _selected == widget.application.status;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16, right: 16, top: 16,
+        bottom: 16 + MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Update status -- ${widget.application.company}', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final status in knownStatusOrder)
+                ChoiceChip(
+                  label: Text(statusLabel(status)),
+                  selected: _selected == status,
+                  onSelected: (_) => setState(() => _selected = status),
+                ),
+            ],
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ],
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: (_submitting || unchanged) ? null : _submit,
+              child: _submitting
+                  ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('Update status'),
             ),
           ),
         ],
