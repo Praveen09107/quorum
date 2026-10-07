@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     upstash_redis_url: str | None = Field(default=None, alias="UPSTASH_REDIS_URL")
     upstash_redis_rest_token: str | None = Field(default=None, alias="UPSTASH_REDIS_REST_TOKEN")
 
+    # Real, deliberate manual escape hatch for the Gemini quota guard
+    # (`core/gemini_quota.py`) -- folded into every quota Redis key so
+    # that bumping this value starts a brand-new counter namespace
+    # without touching (deleting/resetting) any existing Redis data.
+    # Defaults to "" (today's real, original key shape, unchanged) so
+    # this is purely additive until an operator deliberately sets it.
+    gemini_quota_epoch: str = Field(default="", alias="GEMINI_QUOTA_EPOCH")
+
     # LLM providers (Capacity Manager routing, per
     # QUORUM_CONFIGURATION_CONSTANTS.md §8).
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")

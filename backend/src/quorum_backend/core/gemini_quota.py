@@ -329,12 +329,25 @@ async def _redis_command(*parts: str, base_url: str, token: str) -> object:
     return response.json()["result"]
 
 
+def _quota_key(model: str, *, epoch: str) -> str:
+    # `epoch` is the real, deliberate manual escape hatch
+    # (`Settings.gemini_quota_epoch`, default `""`) -- folded into the
+    # key so an operator can start a brand-new counter namespace
+    # (e.g. after rotating to a fresh API key with its own, separate
+    # real Google-side quota) by deploying a new epoch value, never by
+    # deleting or mutating any existing Redis data. Empty epoch
+    # reproduces today's original, real key shape exactly.
+    suffix = f":{epoch}" if epoch else ""
+    return f"gemini:generate_content:{model}:{_today_google_reset_date_string()}{suffix}"
+
+
 async def reserve_gemini_quota_slot(
     *,
     model: str,
     daily_limit: int = GEMINI_GENERATE_CONTENT_DAILY_LIMIT,
     redis_url: str | None = None,
     redis_token: str | None = None,
+    quota_epoch: str | None = None,
 ) -> None:
     """The one real function every `generateContent` call site in this
     backend calls immediately before EACH real attempt at its own real
@@ -364,11 +377,12 @@ async def reserve_gemini_quota_slot(
     settings = get_settings()
     resolved_url = redis_url if redis_url is not None else settings.upstash_redis_url
     resolved_token = redis_token if redis_token is not None else settings.upstash_redis_rest_token
+    resolved_epoch = quota_epoch if quota_epoch is not None else settings.gemini_quota_epoch
     if resolved_url is None or resolved_token is None:
         logger.debug("Gemini quota guard: Upstash Redis not configured -- skipping real quota check for model=%s", model)
         return
 
-    key = f"gemini:generate_content:{model}:{_today_google_reset_date_string()}"
+    key = _quota_key(model, epoch=resolved_epoch)
     try:
         count = int(await _redis_command("INCR", key, base_url=resolved_url, token=resolved_token))
         if count == 1:
@@ -409,6 +423,7 @@ async def get_gemini_quota_usage(
     model: str,
     redis_url: str | None = None,
     redis_token: str | None = None,
+    quota_epoch: str | None = None,
 ) -> int | None:
     """`DEC-193` (product rebuild Block E) -- a real, read-only
     counterpart to `reserve_gemini_quota_slot()` above, for surfacing
@@ -428,10 +443,11 @@ async def get_gemini_quota_usage(
     settings = get_settings()
     resolved_url = redis_url if redis_url is not None else settings.upstash_redis_url
     resolved_token = redis_token if redis_token is not None else settings.upstash_redis_rest_token
+    resolved_epoch = quota_epoch if quota_epoch is not None else settings.gemini_quota_epoch
     if resolved_url is None or resolved_token is None:
         return None
 
-    key = f"gemini:generate_content:{model}:{_today_google_reset_date_string()}"
+    key = _quota_key(model, epoch=resolved_epoch)
     try:
         raw = await _redis_command("GET", key, base_url=resolved_url, token=resolved_token)
     except (httpx.HTTPError, KeyError, ValueError) as exc:
