@@ -77,6 +77,7 @@ Widget _harness({
   Future<void> Function(String)? onApprove,
   Future<void> Function(String)? onReject,
   CreateLocalEventCall? onCreateLocalEvent,
+  OnDeviceExtractAttempt? onDeviceExtract,
 }) {
   return MaterialApp(
     theme: buildQuorumDarkTheme(),
@@ -85,6 +86,7 @@ Widget _harness({
       onApprove: onApprove ?? (_) async {},
       onReject: onReject ?? (_) async {},
       onCreateLocalEvent: onCreateLocalEvent,
+      onDeviceExtract: onDeviceExtract,
     ),
   );
 }
@@ -319,6 +321,85 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(called, isFalse);
+    });
+  });
+
+  group('on-device side-channel check (DEC-220)', () {
+    testWidgets('a passing on-device extraction shows the real honest outcome line', (tester) async {
+      await tester.pumpWidget(_harness(
+        stream: (_) => _s1Stream(),
+        onDeviceExtract: (_) async => {
+          'domain': 'tasks',
+          'operation': 'create',
+          'title': 'write the test task',
+          'estimated_hours': 1,
+          'deadline_iso': null,
+        },
+      ));
+      await tester.enterText(find.byType(TextField), 'write the test task');
+      await tester.tap(find.text('Run it through the Gate'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Ran on-device (Llama 3.2 3B)'), findsOneWidget);
+    });
+
+    testWidgets('a structurally-invalid on-device extraction shows an honest fallback line, never the internal reason', (tester) async {
+      await tester.pumpWidget(_harness(
+        stream: (_) => _s1Stream(),
+        // Missing `estimated_hours` -- fails the real correctness bar.
+        onDeviceExtract: (_) async => {'domain': 'tasks', 'operation': 'create', 'title': 'write the test task'},
+      ));
+      await tester.enterText(find.byType(TextField), 'write the test task');
+      await tester.tap(find.text('Run it through the Gate'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Tried on-device (Llama 3.2 3B)'), findsOneWidget);
+      expect(find.textContaining('estimated_hours'), findsNothing);
+    });
+
+    testWidgets('a real on-device inference failure shows an honest fallback line, never a raw error', (tester) async {
+      await tester.pumpWidget(_harness(
+        stream: (_) => _s1Stream(),
+        onDeviceExtract: (_) async => throw Exception('model load failed: out of memory'),
+      ));
+      await tester.enterText(find.byType(TextField), 'write the test task');
+      await tester.tap(find.text('Run it through the Gate'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Tried on-device (Llama 3.2 3B)'), findsOneWidget);
+      expect(find.textContaining('out of memory'), findsNothing);
+    });
+
+    testWidgets('no on-device row appears when not configured, matching the honest-gating precedent', (tester) async {
+      await tester.pumpWidget(_harness(stream: (_) => _s1Stream()));
+      await tester.enterText(find.byType(TextField), 'write the test task');
+      await tester.tap(find.text('Run it through the Gate'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('on-device'), findsNothing);
+    });
+
+    testWidgets('a real S3 capture still always streams through the cloud pipeline even when on-device passes', (tester) async {
+      // The real, deliberate safety property this screen holds: a
+      // passing on-device check never substitutes for the cloud Gate
+      // here -- the Approve/Reject bar for a genuine pending S3 must
+      // still appear exactly as it always has.
+      await tester.pumpWidget(_harness(
+        stream: (_) => _s3PendingApprovalStream(),
+        onDeviceExtract: (_) async => {
+          'domain': 'email',
+          'operation': 'create',
+          'recipient_description': 'Sarah',
+          'user_intent': 'send the update',
+        },
+      ));
+      await tester.enterText(find.byType(TextField), 'email sarah the update');
+      await tester.tap(find.text('Run it through the Gate'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Ran on-device (Llama 3.2 3B)'), findsOneWidget);
+      expect(find.text('Approve'), findsOneWidget);
+      expect(find.text('Reject'), findsOneWidget);
     });
   });
 }
