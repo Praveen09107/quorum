@@ -271,6 +271,14 @@ class MainShell extends ConsumerStatefulWidget {
   /// real on-device write being attempted.
   final CreateLocalEventCall? onCreateLocalEvent;
 
+  /// `DEC-220` (product rebuild Part C, Priority 3) -- the real,
+  /// honest on-device side-channel check surfaced in the live Gate
+  /// pipeline screen, the one screen Preethish actually opens day to
+  /// day. Optional and additive, matching every sibling field's own
+  /// honest gating: when absent, this screen renders exactly as it did
+  /// before this existed.
+  final OnDeviceExtractAttempt? onDeviceExtractForGate;
+
   /// `DEC-206` (product rebuild) -- Calendar's first real write
   /// control, closing the single most visible gap a direct walkthrough
   /// found: `CalendarScreen` was a pure, read-only `StatelessWidget`
@@ -367,6 +375,7 @@ class MainShell extends ConsumerStatefulWidget {
     this.onApproveAction,
     this.onRejectAction,
     this.onCreateLocalEvent,
+    this.onDeviceExtractForGate,
     this.onBookMeeting,
     this.onSignOut,
     this.healthCheck,
@@ -476,6 +485,7 @@ class _MainShellState extends ConsumerState<MainShell> {
             onApprove: widget.onApproveAction!,
             onReject: widget.onRejectAction!,
             onCreateLocalEvent: widget.onCreateLocalEvent,
+            onDeviceExtract: widget.onDeviceExtractForGate,
           ),
         ),
       );

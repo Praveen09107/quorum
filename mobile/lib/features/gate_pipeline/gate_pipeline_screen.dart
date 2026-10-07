@@ -25,6 +25,7 @@ import 'package:quorum_mobile/features/calendar_sync.dart' show CreateLocalEvent
 import 'package:quorum_mobile/features/gate_pipeline/artifact_links.dart';
 import 'package:quorum_mobile/features/gate_pipeline/gate_pipeline_logic.dart';
 import 'package:quorum_mobile/features/gate_reveal/gate_reveal_logic.dart';
+import 'package:quorum_mobile/features/quick_capture/on_device_correctness.dart';
 import 'package:quorum_mobile/theme/agent_identity.dart';
 import 'package:quorum_mobile/theme/glass.dart';
 import 'package:quorum_mobile/theme/quorum_dark_theme.dart';
@@ -51,6 +52,18 @@ typedef CreateLocalEventCall = Future<CreateLocalEventResult> Function({
   String? description,
 });
 
+/// `DEC-220` (product rebuild Part C, Priority 3) -- matches
+/// `on_device_extraction.dart`'s own real `OnDeviceExtractionCall`
+/// typedef shape exactly, re-declared here rather than imported for
+/// the identical reason `ApproveCall`/`RejectCall`/`CreateLocalEventCall`
+/// above already are: this screen stays free of a direct dependency on
+/// `package:llamadart`. See `checkOnDeviceExtraction` below for how its
+/// result is judged -- genuinely never used to change what this screen
+/// submits (it always streams through the real cloud Gate, by design,
+/// see this file's own header comment); this is a real, honest,
+/// side-channel visibility check only.
+typedef OnDeviceExtractAttempt = Future<Map<String, dynamic>> Function(String freeText);
+
 class GatePipelineScreen extends StatefulWidget {
   final CaptureStreamFetcher captureStream;
   final ApproveCall onApprove;
@@ -63,12 +76,22 @@ class GatePipelineScreen extends StatefulWidget {
   /// never a crash or a silently-skipped write.
   final CreateLocalEventCall? onCreateLocalEvent;
 
+  /// `DEC-220` (product rebuild Part C, Priority 3) -- the plan's own
+  /// named gap: on-device extraction (`quick_capture_router.dart`) was
+  /// real and wired for the ordinary, non-streaming capture screen, but
+  /// invisible in this one -- the screen Preethish actually opens.
+  /// Optional and additive, same honest-gating pattern as every other
+  /// injected dependency here: when absent, no on-device row ever
+  /// appears, matching this screen's exact prior behavior.
+  final OnDeviceExtractAttempt? onDeviceExtract;
+
   const GatePipelineScreen({
     super.key,
     required this.captureStream,
     required this.onApprove,
     required this.onReject,
     this.onCreateLocalEvent,
+    this.onDeviceExtract,
   });
 
   @override
@@ -100,6 +123,18 @@ class _GatePipelineScreenState extends State<GatePipelineScreen> {
   CreateLocalEventResult? _localEventResult;
   bool _localEventInFlight = false;
 
+  /// `DEC-220` (product rebuild Part C, Priority 3) -- the real, honest
+  /// outcome of this screen's own on-device side-channel check. `null`
+  /// before a capture starts, or whenever `onDeviceExtract` isn't
+  /// configured at all (the honest "not checked" state, never a
+  /// fabricated one). Genuinely independent of `_events`/`_view`:
+  /// deliberately NOT reduced through `reducePipelineEvents` (which only
+  /// ever sees real server-reported stages), kept as its own, separate
+  /// client-only fact so the pure reducer's own existing test coverage
+  /// stays untouched by this purely additive feature.
+  bool _onDeviceChecking = false;
+  String? _onDeviceOutcome;
+
   @override
   void dispose() {
     _controller.dispose();
@@ -109,6 +144,7 @@ class _GatePipelineScreenState extends State<GatePipelineScreen> {
   void _submit() {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
+    final onDeviceExtract = widget.onDeviceExtract;
     setState(() {
       _phase = _Phase.running;
       _events.clear();
@@ -118,7 +154,17 @@ class _GatePipelineScreenState extends State<GatePipelineScreen> {
       _approvalDone = false;
       _localEventResult = null;
       _localEventInFlight = false;
+      _onDeviceChecking = onDeviceExtract != null;
+      _onDeviceOutcome = null;
     });
+
+    // Run deliberately CONCURRENTLY with the real cloud stream below,
+    // never sequentially before it -- this is a real, local, no-network
+    // side check, and this screen's whole point is watching the real
+    // cloud Gate resolve as fast as it genuinely does; serializing a
+    // multi-second on-device inference in front of that would add real,
+    // user-visible delay for a result this screen never acts on anyway.
+    if (onDeviceExtract != null) _runOnDeviceCheck(text, onDeviceExtract);
 
     widget.captureStream(text).listen(
       (event) {
@@ -193,12 +239,40 @@ class _GatePipelineScreenState extends State<GatePipelineScreen> {
     }
   }
 
+  /// `DEC-220` (product rebuild Part C, Priority 3) -- runs the real,
+  /// on-device extraction attempt and judges it against the same real
+  /// correctness bar `quick_capture_router.dart` uses for the ordinary
+  /// capture screen, purely for honest visibility here. `check.reason`
+  /// is deliberately never shown -- `on_device_correctness.dart`'s own
+  /// docstring establishes it as an internal, developer-facing string,
+  /// not user-facing copy, and this screen holds that line exactly as
+  /// strictly as the router does.
+  Future<void> _runOnDeviceCheck(String freeText, OnDeviceExtractAttempt onDeviceExtract) async {
+    String outcome;
+    try {
+      final args = await onDeviceExtract(freeText);
+      final check = checkOnDeviceExtraction(args);
+      outcome = check.passed
+          ? 'Ran on-device (Llama 3.2 3B) -- understood this correctly on its own.'
+          : "Tried on-device (Llama 3.2 3B) -- didn't produce a confident reading, so the cloud pipeline below is doing the real work.";
+    } catch (e) {
+      outcome = "Tried on-device (Llama 3.2 3B) -- couldn't complete, so the cloud pipeline below is doing the real work.";
+    }
+    if (!mounted) return;
+    setState(() {
+      _onDeviceChecking = false;
+      _onDeviceOutcome = outcome;
+    });
+  }
+
   void _reset() {
     setState(() {
       _phase = _Phase.input;
       _controller.clear();
       _events.clear();
       _view = LivePipelineView.empty;
+      _onDeviceChecking = false;
+      _onDeviceOutcome = null;
     });
   }
 
@@ -339,6 +413,11 @@ class _GatePipelineScreenState extends State<GatePipelineScreen> {
           child: ListView(
             padding: const EdgeInsets.all(QuorumSpacing.md),
             children: [
+              if (_onDeviceChecking || _onDeviceOutcome != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: QuorumSpacing.sm),
+                  child: _OnDeviceCheckTile(checking: _onDeviceChecking, outcome: _onDeviceOutcome),
+                ),
               for (final row in _view.rows) PipelineRowTile(key: ValueKey(row.id), row: row),
               if (_view.error != null) _ErrorCard(error: _view.error!),
             ],
@@ -595,6 +674,41 @@ class _ErrorCard extends StatelessWidget {
           const Icon(Icons.error_outline_rounded, color: QuorumDarkStatus.critical, size: 20),
           const SizedBox(width: QuorumSpacing.sm),
           Expanded(child: Text(error.detail, style: const TextStyle(color: QuorumDarkGround.textPrimary))),
+        ],
+      ),
+    );
+  }
+}
+
+/// `DEC-220` (product rebuild Part C, Priority 3): the real, honest
+/// outcome of this screen's own on-device side-channel check -- never
+/// styled as pass/fail (`solidPanelDecoration()` with no accent either
+/// way), since neither outcome is a Gate finding and neither changes
+/// what actually runs below it.
+class _OnDeviceCheckTile extends StatelessWidget {
+  final bool checking;
+  final String? outcome;
+
+  const _OnDeviceCheckTile({required this.checking, required this.outcome});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(QuorumSpacing.sm),
+      decoration: solidPanelDecoration(),
+      child: Row(
+        children: [
+          if (checking)
+            const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+          else
+            const Icon(Icons.memory_rounded, size: 16, color: QuorumDarkGround.textSecondary),
+          const SizedBox(width: QuorumSpacing.sm),
+          Expanded(
+            child: Text(
+              checking ? 'Checking on-device (Llama 3.2 3B)...' : outcome!,
+              style: QuorumMono.detail(context, color: QuorumDarkGround.textSecondary),
+            ),
+          ),
         ],
       ),
     );

@@ -555,6 +555,12 @@ class _QuorumAppState extends State<QuorumApp> {
             // and the real `DeviceCalendarPlugin` connection are cheap
             // to share, and there is no reason for two.
             onCreateLocalEvent: _calendarSync.createLocalEvent,
+            // `DEC-220` (product rebuild Part C, Priority 3) -- the
+            // same real, live-proven on-device model `captureTask`
+            // above already routes through for the ordinary capture
+            // screen, now also surfaced as an honest side-channel
+            // check in the live Gate pipeline screen.
+            onDeviceExtractForGate: extractWithOnDeviceModel,
             // `DEC-206` (product rebuild) -- Calendar's first real
             // write control, closing the single most visible gap a
             // direct on-device walkthrough found: the Calendar
