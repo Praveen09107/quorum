@@ -516,6 +516,24 @@ class CreateTaskRequest(BaseModel):
     deadline_iso: str | None = None
 
 
+class UpdateTaskRequest(BaseModel):
+    """`DEC-214` (product rebuild Part C, Priority 2) -- the real
+    request shape for `PUT /tasks/{task_id}`, Tasks' second real write
+    control. `TasksScreen` already had real tap-to-complete/cancel
+    (`DEC-188`) and real create (`DEC-208`), but no way to EDIT a task
+    -- the only existing update path, `UPDATE_TASK` via free-text
+    capture, resolves which task to edit from a narrated phrase, which
+    a real mobile client editing a task it's already looking at
+    neither needs nor wants. Every field is genuinely optional --
+    `resolve_and_build_task_update_proposal_by_id()` keeps the real,
+    current value for anything left `None`, the same partial-update
+    contract the free-text path already established."""
+
+    title: str | None = None
+    estimated_hours: float | None = None
+    deadline_iso: str | None = None
+
+
 class CreateApplicationRequest(BaseModel):
     """`DEC-194` (product rebuild Block F) -- the real request shape for
     `POST /applications`, a dedicated, structured write path, not a
@@ -1517,6 +1535,46 @@ async def create_task_endpoint(
         raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
     except asyncpg.PostgresError as exc:
         raise HTTPException(status_code=502, detail="Couldn't create that task -- please try again.") from exc
+
+    return _quick_capture_result_to_dict(result)
+
+
+@app.put("/tasks/{task_id}")
+async def update_task_endpoint(
+    task_id: str,
+    body: UpdateTaskRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """`DEC-214` (product rebuild Part C, Priority 2) -- real, new.
+    Closes the gap `UpdateTaskRequest`'s own docstring names: a real,
+    structured, DIRECT-by-id entry point into the SAME real `capture_
+    action_from_extracted_args()` pipeline, via its new `update_by_id`
+    branch (`resolve_and_build_task_update_proposal_by_id()`) -- never
+    calling Gemini extraction, never resolving a narrated reference.
+    `UPDATE_TASK` is real `Stakes.S1`, so this executes the moment
+    Stage A clears it."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    settings = get_settings()
+    critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
+    judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                result = await capture_action_from_extracted_args(
+                    conn,
+                    user_id=internal_user_id,
+                    args={"domain": "tasks", "operation": "update_by_id", "task_id": task_id, **body.model_dump()},
+                    critic_call=critic_call,
+                    judge_call=judge_call,
+                )
+    except QuickCaptureError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except InfrastructureFailure as exc:
+        raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
+    except asyncpg.PostgresError as exc:
+        raise HTTPException(status_code=502, detail="Couldn't update that task -- please try again.") from exc
 
     return _quick_capture_result_to_dict(result)
 

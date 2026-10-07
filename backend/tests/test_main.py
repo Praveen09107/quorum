@@ -564,6 +564,77 @@ async def test_create_task_endpoint_rejects_an_empty_title_with_a_real_502_not_a
     assert response.status_code == 502
 
 
+# --- PUT /tasks/{task_id} (`DEC-214`, product rebuild Part C) ---
+
+
+def test_update_task_endpoint_requires_real_auth():
+    with TestClient(app) as client:
+        response = client.put("/tasks/00000000-0000-0000-0000-000000000000", json={"title": "New title"})
+    assert response.status_code == 401
+
+
+async def test_update_task_endpoint_is_real_and_live_edits_a_real_task_end_to_end(pool, provisioned_users):
+    """The real, first structured, DIRECT-by-id proof that a task can
+    be edited without free text or narrated-reference resolution.
+    `UPDATE_TASK` is real `Stakes.S1` -- no real Gemini/Groq key is
+    needed for this to pass."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    task_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO tasks (task_id, user_id, title, estimated_hours) VALUES ($1, $2, $3, $4)",
+        task_id, uuid.UUID(internal_user_id), "Original title", 1.0,
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.put(f"/tasks/{task_id}", json={"title": "Updated title"}, headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["stakes"] == "S1"
+        assert body["domain"] == "tasks"
+        assert body["operation"] == "update"
+        assert body["executed"] is True
+        assert body["decision"] == "approve"
+        assert body["title"] == "Updated title"
+
+        row = await pool.fetchrow("SELECT title, estimated_hours FROM tasks WHERE task_id = $1", task_id)
+        assert row["title"] == "Updated title"
+        # A real, deliberate partial update -- the real, unchanged
+        # estimated_hours was kept, never silently zeroed or dropped.
+        assert float(row["estimated_hours"]) == 1.0
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE task_id = $1", task_id)
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
+async def test_update_task_endpoint_rejects_an_unowned_task_with_a_real_502_not_a_500(pool, provisioned_users):
+    """A real, structural ownership check -- genuinely different timing
+    from `POST /interviews`'s own unowned-application case: that one
+    lets the Gate approve first and only refuses at real execution
+    time (the application id lives inside an opaque payload the Gate
+    never inspects). Here, `resolve_and_build_task_update_proposal_by_id()`'s
+    own real `WHERE task_id = $1 AND user_id = $2` fetch runs BEFORE
+    any proposal exists to review at all -- an unowned/nonexistent
+    task_id fails loud as a real `502`, never a false `200`."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    other_sub = f"test-task-update-other-{uuid.uuid4()}"
+    other_user_id = await get_or_create_user(pool, google_sub=other_sub, email=None)
+    task_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO tasks (task_id, user_id, title, estimated_hours) VALUES ($1, $2, $3, $4)",
+        task_id, uuid.UUID(other_user_id), "Someone else's task", 1.0,
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.put(f"/tasks/{task_id}", json={"title": "Hijacked title"}, headers=headers)
+        assert response.status_code == 502
+    finally:
+        await pool.execute("DELETE FROM tasks WHERE task_id = $1", task_id)
+        await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(other_user_id))
+
+
 # --- POST /applications (`DEC-194`, product rebuild Block F) ---
 
 

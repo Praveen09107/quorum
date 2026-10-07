@@ -54,12 +54,23 @@ class TasksScreen extends StatelessWidget {
   final Future<void> Function(String taskId)? onComplete;
   final Future<void> Function(String taskId)? onCancel;
 
+  /// `DEC-214` (product rebuild Part C, Priority 2) -- Tasks' second
+  /// real write control, closing a real, confirmed gap: a task could
+  /// be created or completed/cancelled, but never EDITED, once
+  /// created. Unlike [onComplete]/[onCancel] (deliberate, real,
+  /// Gate-bypassing direct UI actions per `DEC-188`), editing a task
+  /// genuinely goes through the real Gate (`UPDATE_TASK`) -- so this
+  /// callback owns showing the real edit form AND the real Gate
+  /// verdict, not just the write itself.
+  final Future<void> Function(TaskData task)? onEdit;
+
   const TasksScreen(
       {super.key,
       required this.tasks,
       this.fetchPredictiveRisk,
       this.onComplete,
-      this.onCancel});
+      this.onCancel,
+      this.onEdit});
 
   Future<void> _showActionsFor(BuildContext context, TaskData task) async {
     final messenger = ScaffoldMessenger.of(context);
@@ -74,6 +85,15 @@ class TasksScreen extends StatelessWidget {
               child: Text(task.title,
                   style: Theme.of(sheetContext).textTheme.titleMedium),
             ),
+            if (onEdit != null)
+              ListTile(
+                leading: const Icon(Icons.edit_outlined, color: QuorumDarkStatus.neutral),
+                title: const Text('Edit'),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await onEdit!(task);
+                },
+              ),
             if (onComplete != null)
               ListTile(
                 leading: const Icon(Icons.check_circle,
@@ -181,7 +201,7 @@ class TasksScreen extends StatelessWidget {
                         ),
                     };
                     final canAct = task.status == TaskStatus.open &&
-                        (onComplete != null || onCancel != null);
+                        (onComplete != null || onCancel != null || onEdit != null);
                     return _TaskRow(
                       task: task,
                       icon: icon,

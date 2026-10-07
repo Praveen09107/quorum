@@ -97,6 +97,7 @@ import 'package:quorum_mobile/api/agents_api.dart';
 import 'package:quorum_mobile/api/create_application_api.dart';
 import 'package:quorum_mobile/api/create_calendar_event_api.dart';
 import 'package:quorum_mobile/api/create_task_api.dart';
+import 'package:quorum_mobile/api/update_task_api.dart';
 import 'package:quorum_mobile/api/schedule_interview_api.dart';
 import 'package:quorum_mobile/features/agents/agents_index_screen.dart';
 import 'package:quorum_mobile/features/calendar_sync.dart';
@@ -201,6 +202,11 @@ class MainShell extends ConsumerStatefulWidget {
   /// Optional and additive, matching every sibling fetcher's own
   /// honest gating.
   final CreateTaskFetcher? createTask;
+
+  /// `DEC-214` (product rebuild Part C, Priority 2) -- Tasks' second
+  /// real write control. Optional and additive, matching every
+  /// sibling fetcher's own honest gating.
+  final UpdateTaskFetcher? editTask;
 
   /// REAL, NEW -- the redesign's own real "This week across your
   /// agents" cross-domain strip. See `WeekSummaryStrip`'s own docstring
@@ -330,6 +336,7 @@ class MainShell extends ConsumerStatefulWidget {
     this.completeTask,
     this.cancelTask,
     this.createTask,
+    this.editTask,
     this.fetchWeekSummary,
     this.fetchGateReveal,
     this.approveAction,
@@ -504,6 +511,7 @@ class _MainShellState extends ConsumerState<MainShell> {
             onComplete: widget.completeTask,
             onCancel: widget.cancelTask,
             onCreateTask: widget.createTask,
+            onEditTask: widget.editTask,
           ),
         ));
       case QuorumAgent.finance:
@@ -568,6 +576,7 @@ class _MainShellState extends ConsumerState<MainShell> {
           completeTask: widget.completeTask,
           cancelTask: widget.cancelTask,
           createTask: widget.createTask,
+          editTask: widget.editTask,
           fetchWeekSummary: widget.fetchWeekSummary,
           fetchGateReveal: widget.fetchGateReveal,
           approveAction: widget.approveAction,
@@ -713,6 +722,7 @@ class _TodayTab extends StatefulWidget {
   final CompleteTaskCall? completeTask;
   final CancelTaskCall? cancelTask;
   final CreateTaskFetcher? createTask;
+  final UpdateTaskFetcher? editTask;
   final WeekSummaryFetcher? fetchWeekSummary;
   final GateRevealFetcher? fetchGateReveal;
   final ApproveActionCall? approveAction;
@@ -727,6 +737,7 @@ class _TodayTab extends StatefulWidget {
     this.completeTask,
     this.cancelTask,
     this.createTask,
+    this.editTask,
     this.fetchWeekSummary,
     this.fetchGateReveal,
     this.approveAction,
@@ -855,6 +866,7 @@ class _TodayTabState extends State<_TodayTab> {
             completeTask: widget.completeTask,
             cancelTask: widget.cancelTask,
             createTask: widget.createTask,
+            editTask: widget.editTask,
             fetchWeekSummary: widget.fetchWeekSummary,
             onTapAction: gateReveal == null
                 ? null
