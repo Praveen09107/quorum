@@ -1422,6 +1422,42 @@ async def test_capture_action_from_text_a_real_email_is_reviewed_correctly_but_n
     assert len(critic_calls) == 1  # the real, full Stage B debate genuinely ran
     assert len(judge_calls) == 1
     assert draft_calls == ["Tell Sarah the proposal looks good."]  # the real, resolved recipient never reaches the draft call itself
+
+
+async def test_capture_action_from_text_a_real_email_with_a_null_operation_still_dispatches_correctly(pool, user_id):
+    """`DEC-217` -- a real, live bug, found live: a real on-device
+    extraction returned `operation: None` for a genuine `domain="email"`
+    request (on-device extraction has its own, genuinely weaker prompt/
+    schema than the cloud path's `build_extraction_prompt()`, which
+    documents "for calendar/email always use create" but nothing
+    enforced that when a real extractor omits/nulls the field instead
+    of honoring it) -- reaching this function's own final "unsupported
+    domain/operation/action combination" error instead of a real,
+    correct dispatch, surfaced to a real user as a broken Capture
+    screen. `email`/`calendar` have exactly one real operation each;
+    `capture_action_from_extracted_args()` now defaults a missing/null
+    `operation` to `"create"` for those two domains specifically --
+    enforcing an already-documented invariant, not inventing one."""
+    await _seed_sent_message(pool, user_id=user_id, recipient="Sarah Jones <sarah@company.com>")
+    extraction = _fake_extraction(
+        {"domain": "email", "operation": None, "recipient_description": "Sarah", "recipient_email": None, "user_intent": "Tell Sarah the proposal looks good."}
+    )
+    judge_call, _ = _fake_approving_judge_call()
+    critic_call, _ = _fake_objecting_critic_call()
+    draft_call, _ = _fake_draft_call()
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            result = await capture_action_from_text(
+                conn, user_id=user_id, free_text="tell Sarah the proposal looks good",
+                extraction_call=extraction, critic_call=critic_call, judge_call=judge_call, draft_call=draft_call,
+            )
+
+    # The real point of this test: no QuickCaptureError was raised --
+    # a null operation for email now dispatches exactly as if the real
+    # extractor had honored the documented "always create" rule.
+    assert result.domain == "email"
+    assert result.stakes == "S3"
     assert result.decision == "approve"
     assert result.email_action == "send_email"
     assert result.executed is False  # NEVER auto-sent for a real S3 action, regardless of the Gate's own verdict

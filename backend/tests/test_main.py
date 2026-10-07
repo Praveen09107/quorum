@@ -773,6 +773,70 @@ async def test_schedule_interview_endpoint_rejects_an_unowned_application_with_a
         await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
 
 
+# --- PUT /applications/{application_id}/status (`DEC-216`, product rebuild Part C) ---
+
+
+def test_update_application_status_endpoint_requires_real_auth():
+    with TestClient(app) as client:
+        response = client.put("/applications/00000000-0000-0000-0000-000000000000/status", json={"new_status": "rejected"})
+    assert response.status_code == 401
+
+
+@pytest.mark.skipif(get_settings().gemini_api_key is None, reason="no real GEMINI_API_KEY configured in this environment")
+async def test_update_application_status_endpoint_is_real_and_live_changes_a_real_status_end_to_end(pool, provisioned_users):
+    """`UPDATE_APPLICATION_STATUS` is real `Stakes.S2` -- the real Judge
+    genuinely runs here (unlike `POST /applications`/`POST /interviews`'s
+    own `S1` precedent), the same real, live, shared-cascade-quota cost
+    `test_update_task_endpoint_is_real_and_live_edits_a_real_task_end_to_end`'s
+    own `S1` sibling doesn't need."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    application_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company) VALUES ($1, $2, $3)",
+        application_id, uuid.UUID(internal_user_id), "Real cascade test co",
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.put(f"/applications/{application_id}/status", json={"new_status": "rejected"}, headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["stakes"] == "S2"
+        assert body["domain"] == "career"
+        assert body["operation"] == "update"
+
+        if body["executed"]:
+            row = await pool.fetchrow("SELECT status FROM applications WHERE application_id = $1", application_id)
+            assert row["status"] == "rejected"
+    finally:
+        await pool.execute("DELETE FROM applications WHERE application_id = $1", application_id)
+        await pool.execute("DELETE FROM action_events WHERE user_id = $1", uuid.UUID(internal_user_id))
+
+
+async def test_update_application_status_endpoint_rejects_an_unowned_application_with_a_real_502(pool, provisioned_users):
+    """A real, structural ownership check -- `resolve_and_build_
+    application_status_proposal_by_id()`'s own real `WHERE application_id
+    = $1 AND user_id = $2` fetch runs before any proposal exists to
+    review, so an unowned/nonexistent id fails loud as a real `502`."""
+    headers, internal_user_id = await _provisioned_auth_header(pool, provisioned_users)
+    other_sub = f"test-app-status-other-{uuid.uuid4()}"
+    other_user_id = await get_or_create_user(pool, google_sub=other_sub, email=None)
+    application_id = uuid.uuid4()
+    await pool.execute(
+        "INSERT INTO applications (application_id, user_id, company) VALUES ($1, $2, $3)",
+        application_id, uuid.UUID(other_user_id), "Someone else's company",
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.put(f"/applications/{application_id}/status", json={"new_status": "rejected"}, headers=headers)
+        assert response.status_code == 502
+    finally:
+        await pool.execute("DELETE FROM applications WHERE application_id = $1", application_id)
+        await pool.execute("DELETE FROM users WHERE user_id = $1", uuid.UUID(other_user_id))
+
+
 # --- POST /expenses (`DEC-214`, product rebuild Part C) ---
 
 

@@ -562,6 +562,19 @@ class ScheduleInterviewRequest(BaseModel):
     format: str | None = None
 
 
+class UpdateApplicationStatusRequest(BaseModel):
+    """`DEC-216` (product rebuild Part C, Priority 2) -- the real
+    request shape for `PUT /applications/{application_id}/status`,
+    Career's third real write control (after `POST /applications`/
+    `POST /interviews`). The only existing update path, `UPDATE_
+    APPLICATION_STATUS` via free-text capture, resolves which
+    application to change from a narrated phrase -- a real mobile
+    client changing the status of a row it's already looking at on
+    the Career pipeline board neither needs nor wants that."""
+
+    new_status: str
+
+
 class CreateCalendarEventRequest(BaseModel):
     """`DEC-206` (product rebuild) -- the real request shape for `POST
     /calendar/events`, the first structured, extraction-skipping entry
@@ -1665,6 +1678,47 @@ async def schedule_interview_endpoint(
         raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
     except asyncpg.PostgresError as exc:
         raise HTTPException(status_code=502, detail="Couldn't schedule that interview -- please try again.") from exc
+
+    return _quick_capture_result_to_dict(result)
+
+
+@app.put("/applications/{application_id}/status")
+async def update_application_status_endpoint(
+    application_id: str,
+    body: UpdateApplicationStatusRequest,
+    pool: asyncpg.Pool = Depends(_get_db_pool),
+    google_sub: str = Depends(_require_auth),
+) -> dict:
+    """`DEC-216` (product rebuild Part C, Priority 2) -- real, new.
+    Closes the gap `UpdateApplicationStatusRequest`'s own docstring
+    names: a real, structured, DIRECT-by-id entry point into the SAME
+    real `capture_action_from_extracted_args()` pipeline, via its new
+    `update_by_id` branch (`resolve_and_build_application_status_
+    proposal_by_id()`) -- never calling Gemini extraction, never
+    resolving a narrated reference. `UPDATE_APPLICATION_STATUS` is
+    real `Stakes.S2`, so the real Judge genuinely reviews this (unlike
+    `POST /applications`/`POST /interviews`'s own `S1` precedent)."""
+    internal_user_id = await _resolve_internal_user_id_or_404(pool, google_sub)
+    settings = get_settings()
+    critic_call = make_groq_critic_call(api_key=settings.groq_api_key)
+    judge_call = make_gemini_judge_call(api_key=settings.gemini_api_key)
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                result = await capture_action_from_extracted_args(
+                    conn,
+                    user_id=internal_user_id,
+                    args={"domain": "career", "operation": "update_by_id", "application_id": application_id, **body.model_dump()},
+                    critic_call=critic_call,
+                    judge_call=judge_call,
+                )
+    except QuickCaptureError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except InfrastructureFailure as exc:
+        raise HTTPException(status_code=503, detail="The Gate's reviewer is temporarily unavailable -- please try again shortly.") from exc
+    except asyncpg.PostgresError as exc:
+        raise HTTPException(status_code=502, detail="Couldn't update that application's status -- please try again.") from exc
 
     return _quick_capture_result_to_dict(result)
 
