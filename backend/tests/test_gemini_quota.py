@@ -52,6 +52,7 @@ async def test_reserve_gemini_quota_slot_fails_open_when_redis_is_not_configured
     class _FakeSettings:
         upstash_redis_url = None
         upstash_redis_rest_token = None
+        gemini_quota_epoch = ""
 
     monkeypatch.setattr("quorum_backend.core.gemini_quota.get_settings", lambda: _FakeSettings())
 
@@ -65,6 +66,7 @@ async def test_reserve_gemini_quota_slot_fails_open_when_a_real_redis_call_itsel
     class _FakeSettings:
         upstash_redis_url = "https://real-looking-but-unreachable.example.invalid"
         upstash_redis_rest_token = "fake-token-never-sent-anywhere-real"
+        gemini_quota_epoch = ""
 
     monkeypatch.setattr("quorum_backend.core.gemini_quota.get_settings", lambda: _FakeSettings())
 
@@ -86,6 +88,7 @@ async def test_reserve_gemini_quota_slot_never_swallows_a_genuine_bug_in_this_mo
     class _FakeSettings:
         upstash_redis_url = "https://real-looking.example.invalid"
         upstash_redis_rest_token = "fake-token-never-sent-anywhere-real"
+        gemini_quota_epoch = ""
 
     async def _broken_redis_command(*_parts, **_kwargs):
         raise TypeError("a genuine bug in this module's own code, not a real Redis failure")
@@ -111,6 +114,7 @@ async def test_reserve_gemini_quota_slot_raises_when_the_mocked_count_exceeds_th
     class _FakeSettings:
         upstash_redis_url = "https://real-looking.example.invalid"
         upstash_redis_rest_token = "fake-token-never-sent-anywhere-real"
+        gemini_quota_epoch = ""
 
     calls: list[tuple[str, ...]] = []
 
@@ -136,6 +140,7 @@ async def test_reserve_gemini_quota_slot_never_calls_decr_when_within_the_real_l
     class _FakeSettings:
         upstash_redis_url = "https://real-looking.example.invalid"
         upstash_redis_rest_token = "fake-token-never-sent-anywhere-real"
+        gemini_quota_epoch = ""
 
     calls: list[tuple[str, ...]] = []
 
@@ -155,6 +160,7 @@ async def test_reserve_gemini_quota_slot_sets_a_real_expiry_only_on_the_real_key
     class _FakeSettings:
         upstash_redis_url = "https://real-looking.example.invalid"
         upstash_redis_rest_token = "fake-token-never-sent-anywhere-real"
+        gemini_quota_epoch = ""
 
     calls: list[tuple[str, ...]] = []
 
@@ -335,7 +341,7 @@ async def test_redis_command_percent_encodes_a_real_path_traversal_style_model_n
 
 async def test_get_gemini_quota_usage_returns_none_when_redis_is_not_configured(monkeypatch):
     monkeypatch.setattr("quorum_backend.core.gemini_quota.get_settings", lambda: type(
-        "S", (), {"upstash_redis_url": None, "upstash_redis_rest_token": None}
+        "S", (), {"upstash_redis_url": None, "upstash_redis_rest_token": None, "gemini_quota_epoch": ""}
     )())
     assert await get_gemini_quota_usage(model="any-model") is None
 
