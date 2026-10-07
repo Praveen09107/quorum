@@ -1694,6 +1694,39 @@ async def resolve_and_build_task_update_proposal(conn: asyncpg.Connection, *, us
     return validate_and_build_task_proposal(merged_args, existing_task_id=existing_task_id)
 
 
+async def resolve_and_build_task_update_proposal_by_id(conn: asyncpg.Connection, *, user_id: str, task_id: str, args: dict) -> ActionProposal:
+    """`DEC-214` (product rebuild Part C, Priority 2) -- the real,
+    structured sibling of `resolve_and_build_task_update_proposal()`
+    immediately above. A real mobile client editing a task it's
+    already looking at KNOWS the real `task_id` directly -- routing it
+    through `_resolve_single_reference()`'s own free-text, narrated-
+    reference matching (built for a genuinely different real input:
+    "push the deadline to Friday" with no id attached) would be
+    needless, fragile indirection for a caller that already has the
+    real answer. Same real ownership check (`WHERE task_id = $1 AND
+    user_id = $2`), same real partial-merge contract -- only HOW the
+    real row is found differs."""
+    row = await conn.fetchrow(
+        "SELECT title, estimated_hours, deadline FROM tasks WHERE task_id = $1 AND user_id = $2",
+        uuid.UUID(task_id), uuid.UUID(user_id),
+    )
+    if row is None:
+        raise DownstreamTranslationError(f"Real task {task_id!r} does not exist, or isn't yours.")
+    new_title = args.get("title")
+    new_estimated_hours = args.get("estimated_hours")
+    new_deadline_iso = args.get("deadline_iso")
+    merged_args = {
+        "title": new_title if isinstance(new_title, str) and new_title.strip() else row["title"],
+        "estimated_hours": (
+            new_estimated_hours
+            if isinstance(new_estimated_hours, (int, float)) and not isinstance(new_estimated_hours, bool)
+            else float(row["estimated_hours"])
+        ),
+        "deadline_iso": new_deadline_iso if new_deadline_iso else (row["deadline"].isoformat() if row["deadline"] else None),
+    }
+    return validate_and_build_task_proposal(merged_args, existing_task_id=task_id)
+
+
 async def resolve_and_build_task_deletion_proposal(conn: asyncpg.Connection, *, user_id: str, args: dict) -> ActionProposal:
     candidates = await _fetch_open_task_candidates(conn, user_id=user_id)
     existing_task_id = _resolve_single_reference(candidates, args.get("reference_description"))
@@ -2060,6 +2093,14 @@ async def capture_action_from_extracted_args(
             proposal = validate_and_build_task_proposal(args)
         except (DownstreamTranslationError, KeyError, ValueError, TypeError) as exc:
             raise QuickCaptureError(f"Real extraction produced an unusable task: {exc}") from exc
+    elif domain == "tasks" and operation == "update_by_id":
+        # `DEC-214` (product rebuild Part C, Priority 2) -- the real,
+        # structured `PUT /tasks/{task_id}` entry point. Real, direct
+        # id, never a narrated `reference_description` to resolve.
+        try:
+            proposal = await resolve_and_build_task_update_proposal_by_id(conn, user_id=user_id, task_id=args["task_id"], args=args)
+        except (DownstreamTranslationError, KeyError, ValueError, TypeError) as exc:
+            raise QuickCaptureError(f"Couldn't apply that task update: {exc}") from exc
     elif domain == "tasks" and operation == "update":
         try:
             proposal = await resolve_and_build_task_update_proposal(conn, user_id=user_id, args=args)

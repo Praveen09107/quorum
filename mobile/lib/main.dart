@@ -123,6 +123,7 @@ import 'package:quorum_mobile/api/trust_api.dart';
 import 'package:quorum_mobile/api/create_application_api.dart';
 import 'package:quorum_mobile/api/create_calendar_event_api.dart';
 import 'package:quorum_mobile/api/create_task_api.dart';
+import 'package:quorum_mobile/api/update_task_api.dart';
 import 'package:quorum_mobile/api/schedule_interview_api.dart';
 import 'package:quorum_mobile/api/create_expense_api.dart';
 import 'package:quorum_mobile/api/update_budget_api.dart';
@@ -370,6 +371,14 @@ class _QuorumAppState extends State<QuorumApp> {
             // real tap-to-complete/cancel existed, but no way to
             // CREATE a task without free-text capture.
             createTask: createCreateTaskFetcher(
+              getAccessToken: _authController.getValidAccessToken,
+              client: _httpClient,
+            ),
+            // `DEC-214` (product rebuild Part C, Priority 2) --
+            // Tasks' second real write control, closing the gap a
+            // direct walkthrough found: a task could be created or
+            // completed/cancelled, but never edited.
+            editTask: createUpdateTaskFetcher(
               getAccessToken: _authController.getValidAccessToken,
               client: _httpClient,
             ),

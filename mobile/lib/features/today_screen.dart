@@ -42,6 +42,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:quorum_mobile/api/create_task_api.dart';
+import 'package:quorum_mobile/api/update_task_api.dart';
 import 'package:quorum_mobile/features/gate_verdict/gate_verdict_card.dart';
 import 'package:quorum_mobile/features/computed_state.dart';
 import 'package:quorum_mobile/features/predictive_risk/predictive_risk_logic.dart';
@@ -110,6 +111,11 @@ class TodayScreen extends StatelessWidget {
   /// honest gating.
   final CreateTaskFetcher? createTask;
 
+  /// `DEC-214` (product rebuild Part C, Priority 2) -- Tasks' second
+  /// real write control. Optional and additive, matching every
+  /// sibling fetcher's own honest gating.
+  final UpdateTaskFetcher? editTask;
+
   /// REAL, NEW (the redesign's own real "This week across your agents"
   /// work) -- see `WeekSummaryStrip`'s own docstring for the full real
   /// reasoning. Deferred, same pattern as every other real/external
@@ -127,6 +133,7 @@ class TodayScreen extends StatelessWidget {
     this.completeTask,
     this.cancelTask,
     this.createTask,
+    this.editTask,
     this.fetchWeekSummary,
   });
 
@@ -159,6 +166,7 @@ class TodayScreen extends StatelessWidget {
                         onComplete: completeTask,
                         onCancel: cancelTask,
                         onCreateTask: createTask,
+                        onEditTask: editTask,
                       ),
                     ),
                   ),
@@ -256,6 +264,13 @@ class TasksLoader extends StatefulWidget {
   /// gating.
   final CreateTaskFetcher? onCreateTask;
 
+  /// `DEC-214` (product rebuild Part C, Priority 2) -- Tasks' second
+  /// real write control, closing the gap a direct walkthrough found:
+  /// a task could be created or completed/cancelled, but never
+  /// EDITED. Optional, matching every sibling field's own honest
+  /// gating.
+  final UpdateTaskFetcher? onEditTask;
+
   const TasksLoader({
     super.key,
     required this.fetch,
@@ -263,6 +278,7 @@ class TasksLoader extends StatefulWidget {
     this.onComplete,
     this.onCancel,
     this.onCreateTask,
+    this.onEditTask,
   });
 
   @override
@@ -312,6 +328,23 @@ class TasksLoaderState extends State<TasksLoader> {
     if (result.executed) _reload();
   }
 
+  Future<void> _openEditTaskSheet(TaskData task) async {
+    final onEditTask = widget.onEditTask;
+    if (onEditTask == null) return;
+    final result = await showModalBottomSheet<UpdateTaskResult>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _EditTaskSheet(onEditTask: onEditTask, task: task),
+    );
+    if (result == null || !mounted) return;
+    await showGateVerdictSheet(context, decision: result.decision, stakes: result.stakes, findings: result.findings, objections: result.objections);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result.executed ? 'Updated "${result.title}".' : 'The Gate declined that edit (${result.decision}).')),
+    );
+    if (result.executed) _reload();
+  }
+
   @override
   Widget build(BuildContext context) {
     // `DEC-210` (product rebuild Part C, visual pass): `TasksScreen`
@@ -339,6 +372,7 @@ class TasksLoaderState extends State<TasksLoader> {
             fetchPredictiveRisk: widget.fetchPredictiveRisk,
             onComplete: widget.onComplete == null ? null : (taskId) => _wrapAndReload(widget.onComplete, taskId),
             onCancel: widget.onCancel == null ? null : (taskId) => _wrapAndReload(widget.onCancel, taskId),
+            onEdit: widget.onEditTask == null ? null : _openEditTaskSheet,
           );
         },
       ),
@@ -449,6 +483,119 @@ class _NewTaskSheetState extends State<_NewTaskSheet> {
           FilledButton(
             onPressed: _submitting ? null : _submit,
             child: _submitting ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Add task'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// `DEC-214` (product rebuild Part C, Priority 2) -- the real form
+/// behind Tasks' second write control. Matches `_NewTaskSheet`'s own
+/// established shape, pre-filled with the real task's own current
+/// values -- a real partial update: an unchanged field is sent back
+/// exactly as it was, never blanked.
+class _EditTaskSheet extends StatefulWidget {
+  final UpdateTaskFetcher onEditTask;
+  final TaskData task;
+
+  const _EditTaskSheet({required this.onEditTask, required this.task});
+
+  @override
+  State<_EditTaskSheet> createState() => _EditTaskSheetState();
+}
+
+class _EditTaskSheetState extends State<_EditTaskSheet> {
+  late final _titleController = TextEditingController(text: widget.task.title);
+  late final _hoursController = TextEditingController(text: widget.task.estimatedHours.toString());
+  late DateTime? _deadline = widget.task.deadline;
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _hoursController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDeadline() async {
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _deadline ?? DateTime.now().add(const Duration(days: 1)),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (date == null || !mounted) return;
+    setState(() => _deadline = date);
+  }
+
+  Future<void> _submit() async {
+    final title = _titleController.text.trim();
+    final hours = double.tryParse(_hoursController.text.trim());
+    if (title.isEmpty) {
+      setState(() => _error = 'Enter a real, non-empty title first.');
+      return;
+    }
+    if (hours == null || hours <= 0) {
+      setState(() => _error = 'Enter a real, positive number of hours.');
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final result = await widget.onEditTask(taskId: widget.task.taskId, title: title, estimatedHours: hours, deadline: _deadline);
+      if (!mounted) return;
+      Navigator.of(context).pop(result);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final deadline = _deadline;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: QuorumSpacing.lg,
+        right: QuorumSpacing.lg,
+        top: QuorumSpacing.lg,
+        bottom: MediaQuery.of(context).viewInsets.bottom + QuorumSpacing.lg,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Edit task', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: QuorumSpacing.md),
+          TextField(controller: _titleController, decoration: const InputDecoration(labelText: 'Title')),
+          const SizedBox(height: QuorumSpacing.sm),
+          TextField(
+            controller: _hoursController,
+            decoration: const InputDecoration(labelText: 'Estimated hours'),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          ),
+          const SizedBox(height: QuorumSpacing.sm),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(deadline == null ? 'No deadline' : 'Due ${deadline.toIso8601String().split('T').first}'),
+            trailing: const Icon(Icons.event_outlined),
+            onTap: _pickDeadline,
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: QuorumSpacing.sm),
+            Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ],
+          const SizedBox(height: QuorumSpacing.md),
+          FilledButton(
+            onPressed: _submitting ? null : _submit,
+            child: _submitting ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Save changes'),
           ),
         ],
       ),
